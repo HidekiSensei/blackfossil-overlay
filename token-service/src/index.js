@@ -28,6 +28,10 @@ const PROXIMITY_ROOM     = process.env.PROXIMITY_ROOM ?? 'proximity';
 // Game-Server (Nyors) für Positionsdaten
 const PANEL_BASE_URL     = process.env.PANEL_BASE_URL ?? 'http://100.117.32.93:8765';
 const PANEL_ADMIN_TOKEN  = process.env.PANEL_ADMIN_TOKEN ?? '';
+// Discord-Rollen-Check (für Admin/Owner-Rechte, z.B. Kalibrierung)
+const DISCORD_BOT_TOKEN  = process.env.DISCORD_BOT_TOKEN ?? '';
+const DISCORD_GUILD_ID   = process.env.DISCORD_GUILD_ID ?? '';
+const ADMIN_ROLE_NAMES   = (process.env.ADMIN_ROLE_NAMES ?? 'Owner,Admin').split(',').map((s) => s.trim());
 // Deep-Link zurück in die Electron-App
 const APP_REDIRECT       = process.env.APP_REDIRECT   ?? 'blackfossil://auth';
 
@@ -45,6 +49,25 @@ function lookupSteamId(discordId) {
   } catch (err) {
     console.error('accounts.json Lesefehler:', err.message);
     return null;
+  }
+}
+
+// ── Discord-Rollen-Check ────────────────────────────────────────────────────
+async function isDiscordAdmin(discordId) {
+  if (!DISCORD_BOT_TOKEN || !DISCORD_GUILD_ID) return false;
+  try {
+    const headers = { Authorization: `Bot ${DISCORD_BOT_TOKEN}` };
+    const [mRes, rRes] = await Promise.all([
+      fetch(`https://discord.com/api/guilds/${DISCORD_GUILD_ID}/members/${discordId}`, { headers }),
+      fetch(`https://discord.com/api/guilds/${DISCORD_GUILD_ID}/roles`, { headers }),
+    ]);
+    if (!mRes.ok || !rRes.ok) return false;
+    const member = await mRes.json();
+    const roles = await rRes.json();
+    const adminRoleIds = new Set(roles.filter((r) => ADMIN_ROLE_NAMES.includes(r.name)).map((r) => r.id));
+    return (member.roles || []).some((id) => adminRoleIds.has(id));
+  } catch {
+    return false;
   }
 }
 
@@ -113,9 +136,12 @@ app.get('/auth/callback', async (req, res) => {
       ));
     }
 
+    // Admin/Owner-Status anhand Discord-Rolle
+    const admin = await isDiscordAdmin(user.id);
+
     // App-Session ausstellen (30 Tage)
     const session = jwt.sign(
-      { steamId, discordId: user.id, name: user.global_name || user.username },
+      { steamId, discordId: user.id, name: user.global_name || user.username, admin },
       SESSION_SECRET,
       { expiresIn: '30d' }
     );
@@ -160,6 +186,7 @@ app.get('/token', async (req, res) => {
     room: PROXIMITY_ROOM,
     identity: payload.steamId,
     name: payload.name,
+    admin: !!payload.admin,
   });
 });
 

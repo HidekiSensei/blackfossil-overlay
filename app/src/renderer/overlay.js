@@ -12,6 +12,7 @@ let heatmapMode = false;
 let sessionToken = null;
 let calibPairs = [];
 let armedRef = null;
+let isAdmin = false;
 
 // ── Mikro-Status-Icons ──────────────────────────────────────────────────────
 const ICONS = {
@@ -132,6 +133,7 @@ function onMapClick(e) {
 
 // ── Kalibrierung (3-Punkt-Klick, affin) ──────────────────────────────────────
 function toggleCalib(force) {
+  if (!isAdmin) { calibMode = false; el('calibPanel').style.display = 'none'; return; }
   calibMode = force !== undefined ? force : !calibMode;
   el('calibPanel').style.display = calibMode ? 'block' : 'none';
   el('calibBtn').style.background = calibMode ? '#8b5cf6' : 'var(--panel)';
@@ -221,6 +223,8 @@ async function connectWithSession(session) {
     if (res.status === 401) { window.bf.logout(); return; }
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
     const data = await res.json();
+    isAdmin = !!data.admin;
+    el('calibBtn').style.display = isAdmin ? 'block' : 'none';
     await connect(data);
   } catch (err) {
     setMicState('disconnected', `Fehler: ${err.message}`);
