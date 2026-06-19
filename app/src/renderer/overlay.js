@@ -14,6 +14,9 @@ let calibPairs = [];
 let armedRef = null;
 let isAdmin = false;
 
+// Proximity: Hörradius in Welt-Einheiten (cm). Innerhalb = volle Lautstärke fällt linear auf 0.
+const HEAR_RANGE = 45000;
+
 // ── Mikro-Status-Icons ──────────────────────────────────────────────────────
 const ICONS = {
   mic: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z"/><path d="M19 10v2a7 7 0 0 1-14 0v-2"/><line x1="12" y1="19" x2="12" y2="23"/><line x1="8" y1="23" x2="16" y2="23"/></svg>',
@@ -84,12 +87,27 @@ function startPositionPolling() {
         players = data.players || [];
         me = players.find((p) => p.isYou) || null;
         updateZoneBox();
+        updateProximityVolumes();
         if (mapOpen) renderBigMap();
       }
     } catch {}
   };
   poll();
   setInterval(poll, 1500);
+}
+
+// ── Proximity: Lautstärke pro Spieler nach Distanz ──────────────────────────
+function updateProximityVolumes() {
+  if (!room) return;
+  for (const p of room.remoteParticipants.values()) {
+    const pos = players.find((pl) => pl.steamId === p.identity);
+    let vol = 1;
+    if (me && pos) {
+      const d = Math.hypot(pos.x - me.x, pos.y - me.y);
+      vol = Math.max(0, 1 - d / HEAR_RANGE);
+    }
+    try { p.setVolume(vol); } catch {}
+  }
 }
 
 function updateZoneBox() {
@@ -240,6 +258,7 @@ async function connect({ token, url }) {
     .on(RoomEvent.TrackSubscribed, (track) => {
       if (track.kind === Track.Kind.Audio) {
         const a = track.attach(); a.autoplay = true; document.body.appendChild(a);
+        updateProximityVolumes();
       }
     });
   await room.connect(url, token);
