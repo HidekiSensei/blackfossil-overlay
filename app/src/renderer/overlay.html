@@ -51,8 +51,25 @@
       <button id="heatBtn" style="position:absolute;top:12px;right:12px;width:auto;padding:8px 14px;
         background:var(--panel);border:1px solid var(--border);color:#eee;border-radius:8px;
         font-size:13px;font-weight:600;cursor:pointer">🔥 Heatmap</button>
+      <button id="calibBtn" style="position:absolute;top:12px;left:12px;width:auto;padding:8px 14px;
+        background:var(--panel);border:1px solid var(--border);color:#eee;border-radius:8px;
+        font-size:13px;font-weight:600;cursor:pointer">🔧 Kalibrieren</button>
+
+      <!-- Kalibrierungs-Panel -->
+      <div id="calibPanel" style="display:none;position:absolute;top:56px;left:12px;width:280px;
+        background:var(--panel);border:1px solid var(--border);border-radius:10px;padding:14px;font-size:12px">
+        <div style="font-weight:700;margin-bottom:6px">🔧 Kalibrierung</div>
+        <div style="color:var(--muted);margin-bottom:10px;line-height:1.4">
+          Wähle einen bekannten Punkt, dann klicke auf der Karte wo er ist. Mindestens 3 Punkte.</div>
+        <div id="calibRefs" style="max-height:220px;overflow:auto;display:flex;flex-direction:column;gap:4px"></div>
+        <div id="calibCount" style="margin-top:8px;color:var(--muted)">0 Punkte gesetzt</div>
+        <div style="display:flex;gap:6px;margin-top:8px">
+          <button id="calibSolve" style="flex:1;padding:8px;font-size:12px;border-radius:6px;border:0;background:var(--accent);color:#fff;cursor:pointer">Berechnen</button>
+          <button id="calibReset" style="flex:1;padding:8px;font-size:12px;border-radius:6px;border:1px solid var(--border);background:transparent;color:var(--muted);cursor:pointer">Reset</button>
+        </div>
+      </div>
     </div>
-    <div class="hint">F7 zum Schließen · Klicken zum Wegpunkt setzen · C zum Kalibrieren</div>
+    <div class="hint">F7 schließen · Klick = Wegpunkt · 🔧 = Karte kalibrieren</div>
   </div>
 
   <!-- Settings -->

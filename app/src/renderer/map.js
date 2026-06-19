@@ -23,30 +23,59 @@ export const ZONES = {
   },
 };
 
-// ── Kalibrierung (Welt → normalisiert [0..1] auf dem Kartenbild) ─────────────
-const DEFAULTS = { cx: 0, cy: 0, scale: 8.3e-7, flipY: true };
+// ── Kalibrierung als affine Abbildung Welt → normalisiert [0..1] ─────────────
+// nx = a*wx + b*wy + e ;  ny = c*wx + d*wy + f
+// Affin löst Achsentausch, Spiegelung, Drehung und Skalierung auf einmal.
+const DEFAULTS = { a: 8.3e-7, b: 0, e: 0.5, c: 0, d: -8.3e-7, f: 0.5 };
 let cal = loadCal();
 
 function loadCal() {
-  try { return { ...DEFAULTS, ...JSON.parse(localStorage.getItem('bf-cal')) }; }
+  try { return { ...DEFAULTS, ...JSON.parse(localStorage.getItem('bf-cal-affine')) }; }
   catch { return { ...DEFAULTS }; }
 }
 export function getCal() { return cal; }
-export function setCal(patch) { cal = { ...cal, ...patch }; localStorage.setItem('bf-cal', JSON.stringify(cal)); }
-export function resetCal() { cal = { ...DEFAULTS }; localStorage.setItem('bf-cal', JSON.stringify(cal)); }
+export function setCalAffine(m) { cal = { ...m }; localStorage.setItem('bf-cal-affine', JSON.stringify(cal)); }
+export function resetCal() { cal = { ...DEFAULTS }; localStorage.setItem('bf-cal-affine', JSON.stringify(cal)); }
 
-// Welt → normalisiert (0..1, 0=oben/links)
 export function worldToNorm(wx, wy) {
-  const nx = (wx - cal.cx) * cal.scale + 0.5;
-  const ny = cal.flipY ? 0.5 - (wy - cal.cy) * cal.scale : 0.5 + (wy - cal.cy) * cal.scale;
-  return { nx, ny };
+  return { nx: cal.a * wx + cal.b * wy + cal.e, ny: cal.c * wx + cal.d * wy + cal.f };
 }
 
-// normalisiert → Welt (für Wegpunkte)
+// normalisiert → Welt (Inverse der 2x2-Matrix)
 export function normToWorld(nx, ny) {
-  const wx = (nx - 0.5) / cal.scale + cal.cx;
-  const wy = cal.flipY ? (0.5 - ny) / cal.scale + cal.cy : (ny - 0.5) / cal.scale + cal.cy;
-  return { x: wx, y: wy };
+  const det = cal.a * cal.d - cal.b * cal.c;
+  if (Math.abs(det) < 1e-18) return { x: 0, y: 0 };
+  const u = nx - cal.e, v = ny - cal.f;
+  return { x: (cal.d * u - cal.b * v) / det, y: (-cal.c * u + cal.a * v) / det };
+}
+
+// Affine aus 3 Korrespondenzen lösen: pairs = [{world:{x,y}, norm:{nx,ny}}]
+export function solveAffine(pairs) {
+  if (pairs.length < 3) return false;
+  const [p0, p1, p2] = pairs;
+  // Löse für (a,b,e) aus nx, und (c,d,f) aus ny — gleiches 3x3-System
+  const M = [
+    [p0.world.x, p0.world.y, 1],
+    [p1.world.x, p1.world.y, 1],
+    [p2.world.x, p2.world.y, 1],
+  ];
+  const solX = solve3(M, [p0.norm.nx, p1.norm.nx, p2.norm.nx]);
+  const solY = solve3(M, [p0.norm.ny, p1.norm.ny, p2.norm.ny]);
+  if (!solX || !solY) return false;
+  setCalAffine({ a: solX[0], b: solX[1], e: solX[2], c: solY[0], d: solY[1], f: solY[2] });
+  return true;
+}
+
+// 3x3 lineares Gleichungssystem (Cramer)
+function solve3(M, r) {
+  const det = (m) =>
+    m[0][0]*(m[1][1]*m[2][2]-m[1][2]*m[2][1]) -
+    m[0][1]*(m[1][0]*m[2][2]-m[1][2]*m[2][0]) +
+    m[0][2]*(m[1][0]*m[2][1]-m[1][1]*m[2][0]);
+  const D = det(M);
+  if (Math.abs(D) < 1e-12) return null;
+  const col = (i) => M.map((row, k) => row.map((v, j) => (j === i ? r[k] : v)));
+  return [det(col(0))/D, det(col(1))/D, det(col(2))/D];
 }
 
 // ── Kartenbild laden ─────────────────────────────────────────────────────────

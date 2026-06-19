@@ -1,5 +1,5 @@
 import { Room, RoomEvent, Track, ParticipantEvent } from 'livekit-client';
-import { loadMapImage, drawFullMap, drawMinimap, drawHeatmap, normToWorld, zoneAt, getCal, setCal, resetCal } from './map.js';
+import { loadMapImage, drawFullMap, drawMinimap, drawHeatmap, normToWorld, zoneAt, resetCal, solveAffine, ZONES } from './map.js';
 
 const el = (id) => document.getElementById(id);
 
@@ -10,6 +10,8 @@ let waypoints = [];
 let calibMode = false;
 let heatmapMode = false;
 let sessionToken = null;
+let calibPairs = [];
+let armedRef = null;
 
 // ── Mikro-Status-Icons ──────────────────────────────────────────────────────
 const ICONS = {
@@ -49,16 +51,17 @@ async function init() {
     el('heatBtn').style.background = heatmapMode ? '#8b5cf6' : 'var(--panel)';
     renderBigMap();
   };
+  el('calibBtn').onclick = () => toggleCalib();
+  el('calibSolve').onclick = () => solveCalibration();
+  el('calibReset').onclick = () => { resetCal(); calibPairs = []; armedRef = null; renderCalibList(); renderBigMap(); };
 
   window.bf.onHotkey(handleHotkey);
 
   // Kartenbild laden
   await loadMapImage('assets/map.jpg');
 
-  // Wegpunkt setzen per Klick auf die große Karte
+  // Wegpunkt setzen / Kalibrierungs-Klick auf der große Karte
   el('bigMapCanvas').addEventListener('click', onMapClick);
-  // Kalibrier-Tasten (nur bei offener Karte aktiv)
-  window.addEventListener('keydown', onCalibKey);
 
   // Render-Loops
   setInterval(renderMinimap, 200);
@@ -109,44 +112,62 @@ function renderBigMap() {
 }
 
 function onMapClick(e) {
-  if (calibMode) return;
   const cv = el('bigMapCanvas');
   const rect = cv.getBoundingClientRect();
   const nx = (e.clientX - rect.left) / rect.width;
   const ny = (e.clientY - rect.top) / rect.height;
+
+  if (calibMode) {
+    if (!armedRef) return; // erst einen Referenzpunkt wählen
+    calibPairs.push({ world: { x: armedRef.x, y: armedRef.y }, norm: { nx, ny }, label: armedRef.label });
+    armedRef = null;
+    renderCalibList();
+    renderBigMap();
+    return;
+  }
   const w = normToWorld(nx, ny);
-  waypoints = [{ x: w.x, y: w.y }]; // ein Wegpunkt (ersetzt vorherigen)
+  waypoints = [{ x: w.x, y: w.y }];
   renderBigMap();
 }
 
-// ── Kalibrierung (Taste C auf der großen Karte) ──────────────────────────────
-function onCalibKey(e) {
-  if (!mapOpen) return;
-  if (e.key === 'c' || e.key === 'C') { calibMode = !calibMode; renderBigMap(); return; }
-  if (!calibMode) return;
-  const cal = getCal();
-  const panStep = 8000, zoomStep = 1.05;
-  if (e.key === 'ArrowLeft')  setCal({ cx: cal.cx - panStep });
-  else if (e.key === 'ArrowRight') setCal({ cx: cal.cx + panStep });
-  else if (e.key === 'ArrowUp')    setCal({ cy: cal.cy + panStep });
-  else if (e.key === 'ArrowDown')  setCal({ cy: cal.cy - panStep });
-  else if (e.key === '+' || e.key === '=') setCal({ scale: cal.scale * zoomStep });
-  else if (e.key === '-') setCal({ scale: cal.scale / zoomStep });
-  else if (e.key === 'r' || e.key === 'R') resetCal();
-  else return;
-  e.preventDefault();
+// ── Kalibrierung (3-Punkt-Klick, affin) ──────────────────────────────────────
+function toggleCalib(force) {
+  calibMode = force !== undefined ? force : !calibMode;
+  el('calibPanel').style.display = calibMode ? 'block' : 'none';
+  el('calibBtn').style.background = calibMode ? '#8b5cf6' : 'var(--panel)';
+  if (calibMode) { calibPairs = []; armedRef = null; renderCalibList(); }
   renderBigMap();
 }
 
-function drawCalibOverlay(ctx, w, h) {
-  const cal = getCal();
-  ctx.fillStyle = 'rgba(0,0,0,0.7)'; ctx.fillRect(10, 10, 320, 96);
-  ctx.fillStyle = '#fbbf24'; ctx.font = '13px system-ui'; ctx.textAlign = 'left';
-  ctx.fillText('🔧 KALIBRIERUNG (C zum Beenden)', 22, 32);
-  ctx.fillStyle = '#eee'; ctx.font = '12px system-ui';
-  ctx.fillText('Pfeile = verschieben · +/- = zoomen · R = reset', 22, 52);
-  ctx.fillText(`cx=${cal.cx|0}  cy=${cal.cy|0}  scale=${cal.scale.toExponential(3)}`, 22, 72);
-  ctx.fillText('Schiebe bis dein Punkt (lila) zu deiner echten Position passt', 22, 92);
+function refCandidates() {
+  const list = [];
+  for (const p of players) if (!p.isDead) list.push({ label: `👤 ${p.name}`, x: p.x, y: p.y });
+  for (const [k, z] of Object.entries(ZONES))
+    z.points.forEach((pt, i) => list.push({ label: `${z.label}-${'ABCD'[i]}`, x: pt.x, y: pt.y }));
+  return list;
+}
+
+function renderCalibList() {
+  const used = new Set(calibPairs.map((p) => p.label));
+  el('calibRefs').innerHTML = '';
+  for (const ref of refCandidates()) {
+    const b = document.createElement('button');
+    const isUsed = used.has(ref.label);
+    const isArmed = armedRef && armedRef.label === ref.label;
+    b.textContent = (isUsed ? '✓ ' : isArmed ? '➤ ' : '') + ref.label;
+    b.style.cssText = `padding:6px 8px;font-size:12px;border-radius:6px;text-align:left;cursor:pointer;
+      border:1px solid ${isArmed ? '#8b5cf6' : 'var(--border)'};
+      background:${isUsed ? 'rgba(34,197,94,0.15)' : isArmed ? 'rgba(139,92,246,0.2)' : 'transparent'};color:#eee`;
+    b.onclick = () => { armedRef = ref; renderCalibList(); };
+    el('calibRefs').appendChild(b);
+  }
+  el('calibCount').textContent = `${calibPairs.length} Punkte gesetzt` + (armedRef ? ` · klicke wo "${armedRef.label}" ist` : '');
+}
+
+function solveCalibration() {
+  if (calibPairs.length < 3) { el('calibCount').textContent = 'Mindestens 3 Punkte nötig!'; return; }
+  if (solveAffine(calibPairs)) { toggleCalib(false); }
+  else el('calibCount').textContent = 'Punkte zu nah beieinander — andere wählen.';
 }
 
 function applyHotkeyLabels() {
@@ -180,7 +201,7 @@ function toggleMap(force) {
   mapOpen = force !== undefined ? force : !mapOpen;
   el('bigMap').style.display = mapOpen ? 'flex' : 'none';
   if (mapOpen) renderBigMap();
-  else calibMode = false;
+  else toggleCalib(false);
   updateInteractive();
 }
 
