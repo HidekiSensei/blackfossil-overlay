@@ -1,0 +1,19 @@
+{
+  "name": "blackfossil-overlay",
+  "version": "0.1.0",
+  "description": "BlackFossil Overlay — Proximity Chat, Map & Minimap für The Isle",
+  "main": "src/main.js",
+  "scripts": {
+    "build:renderer": "esbuild src/renderer/renderer.js --bundle --outfile=src/renderer/bundle.js --format=iife --platform=browser",
+    "watch:renderer": "npm run build:renderer -- --watch",
+    "start": "npm run build:renderer && electron .",
+    "dev": "npm run build:renderer && electron ."
+  },
+  "dependencies": {
+    "livekit-client": "^2.9.4"
+  },
+  "devDependencies": {
+    "electron": "^33.2.1",
+    "esbuild": "^0.24.2"
+  }
+}
