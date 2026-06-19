@@ -1,6 +1,14 @@
 import { Room, RoomEvent, Track, ParticipantEvent } from 'livekit-client';
+import { loadMapImage, drawFullMap, drawMinimap, normToWorld, zoneAt, getCal, setCal, resetCal } from './map.js';
 
 const el = (id) => document.getElementById(id);
+
+// ── Karten-/Positions-State ─────────────────────────────────────────────────
+let players = [];
+let me = null;
+let waypoints = [];
+let calibMode = false;
+let sessionToken = null;
 
 // ── Mikro-Status-Icons ──────────────────────────────────────────────────────
 const ICONS = {
@@ -38,11 +46,99 @@ async function init() {
 
   window.bf.onHotkey(handleHotkey);
 
-  drawMinimap();
-  // Auto-Connect mit gespeicherter Session
+  // Kartenbild laden
+  await loadMapImage('assets/map.jpg');
+
+  // Wegpunkt setzen per Klick auf die große Karte
+  el('bigMapCanvas').addEventListener('click', onMapClick);
+  // Kalibrier-Tasten (nur bei offener Karte aktiv)
+  window.addEventListener('keydown', onCalibKey);
+
+  // Render-Loops
+  setInterval(renderMinimap, 200);
+
+  // Auto-Connect + Positions-Polling
   const session = await window.bf.getSession();
-  if (session) connectWithSession(session);
+  if (session) { sessionToken = session; connectWithSession(session); startPositionPolling(); }
   else setMicState('disconnected', 'Keine Session');
+}
+
+// ── Positionen pollen ───────────────────────────────────────────────────────
+function startPositionPolling() {
+  const poll = async () => {
+    if (!sessionToken) return;
+    try {
+      const res = await fetch(`${config.tokenBase}/positions`, { headers: { Authorization: `Bearer ${sessionToken}` } });
+      if (res.ok) {
+        const data = await res.json();
+        players = data.players || [];
+        me = players.find((p) => p.isYou) || null;
+        updateZoneBox();
+        if (mapOpen) renderBigMap();
+      }
+    } catch {}
+  };
+  poll();
+  setInterval(poll, 1500);
+}
+
+function updateZoneBox() {
+  if (!me) { el('zoneBox').textContent = 'Zone: —'; return; }
+  const z = zoneAt(me.x, me.y);
+  el('zoneBox').textContent = z ? `Zone: ${z}` : 'Zone: Frei';
+  el('zoneBox').style.color = z === 'PVP' ? '#ef4444' : z === 'PVE' ? '#22c55e' : '#b3a9cc';
+}
+
+// ── Rendering ────────────────────────────────────────────────────────────────
+function renderMinimap() {
+  const cv = el('minimap');
+  drawMinimap({ ctx: cv.getContext('2d'), w: cv.width, h: cv.height }, players, me);
+}
+function renderBigMap() {
+  const cv = el('bigMapCanvas');
+  drawFullMap({ ctx: cv.getContext('2d'), w: cv.width, h: cv.height }, players, waypoints);
+  if (calibMode) drawCalibOverlay(cv.getContext('2d'), cv.width, cv.height);
+}
+
+function onMapClick(e) {
+  if (calibMode) return;
+  const cv = el('bigMapCanvas');
+  const rect = cv.getBoundingClientRect();
+  const nx = (e.clientX - rect.left) / rect.width;
+  const ny = (e.clientY - rect.top) / rect.height;
+  const w = normToWorld(nx, ny);
+  waypoints = [{ x: w.x, y: w.y }]; // ein Wegpunkt (ersetzt vorherigen)
+  renderBigMap();
+}
+
+// ── Kalibrierung (Taste C auf der großen Karte) ──────────────────────────────
+function onCalibKey(e) {
+  if (!mapOpen) return;
+  if (e.key === 'c' || e.key === 'C') { calibMode = !calibMode; renderBigMap(); return; }
+  if (!calibMode) return;
+  const cal = getCal();
+  const panStep = 8000, zoomStep = 1.05;
+  if (e.key === 'ArrowLeft')  setCal({ cx: cal.cx - panStep });
+  else if (e.key === 'ArrowRight') setCal({ cx: cal.cx + panStep });
+  else if (e.key === 'ArrowUp')    setCal({ cy: cal.cy + panStep });
+  else if (e.key === 'ArrowDown')  setCal({ cy: cal.cy - panStep });
+  else if (e.key === '+' || e.key === '=') setCal({ scale: cal.scale * zoomStep });
+  else if (e.key === '-') setCal({ scale: cal.scale / zoomStep });
+  else if (e.key === 'r' || e.key === 'R') resetCal();
+  else return;
+  e.preventDefault();
+  renderBigMap();
+}
+
+function drawCalibOverlay(ctx, w, h) {
+  const cal = getCal();
+  ctx.fillStyle = 'rgba(0,0,0,0.7)'; ctx.fillRect(10, 10, 320, 96);
+  ctx.fillStyle = '#fbbf24'; ctx.font = '13px system-ui'; ctx.textAlign = 'left';
+  ctx.fillText('🔧 KALIBRIERUNG (C zum Beenden)', 22, 32);
+  ctx.fillStyle = '#eee'; ctx.font = '12px system-ui';
+  ctx.fillText('Pfeile = verschieben · +/- = zoomen · R = reset', 22, 52);
+  ctx.fillText(`cx=${cal.cx|0}  cy=${cal.cy|0}  scale=${cal.scale.toExponential(3)}`, 22, 72);
+  ctx.fillText('Schiebe bis dein Punkt (lila) zu deiner echten Position passt', 22, 92);
 }
 
 function applyHotkeyLabels() {
@@ -75,7 +171,8 @@ function toggleSettings(force) {
 function toggleMap(force) {
   mapOpen = force !== undefined ? force : !mapOpen;
   el('bigMap').style.display = mapOpen ? 'flex' : 'none';
-  if (mapOpen) drawBigMap();
+  if (mapOpen) renderBigMap();
+  else calibMode = false;
   updateInteractive();
 }
 
@@ -128,28 +225,6 @@ async function toggleMic() {
   await room.localParticipant.setMicrophoneEnabled(micEnabled);
   el('micBtn').textContent = micEnabled ? 'Mikro aus' : 'Mikro an';
   refreshMicState();
-}
-
-// ── Map-Platzhalter (echte Karte folgt in der nächsten Phase) ──────────────
-function drawMinimap() {
-  const c = el('minimap').getContext('2d');
-  c.clearRect(0, 0, 200, 200);
-  c.fillStyle = 'rgba(40,30,70,0.5)';
-  c.beginPath(); c.arc(100, 100, 98, 0, Math.PI * 2); c.fill();
-  // eigener Standort (Platzhalter Mitte)
-  c.fillStyle = '#8b5cf6';
-  c.beginPath(); c.arc(100, 100, 6, 0, Math.PI * 2); c.fill();
-  c.fillStyle = '#b3a9cc'; c.font = '11px system-ui'; c.textAlign = 'center';
-  c.fillText('Minimap', 100, 180);
-}
-
-function drawBigMap() {
-  const c = el('bigMapCanvas').getContext('2d');
-  c.clearRect(0, 0, 1000, 1000);
-  c.fillStyle = '#b3a9cc'; c.font = '20px system-ui'; c.textAlign = 'center';
-  c.fillText('🗺️ Große Karte', 500, 480);
-  c.font = '14px system-ui';
-  c.fillText('Kartenbild, Zonen & Wegpunkte folgen in der nächsten Phase', 500, 520);
 }
 
 init();

@@ -25,6 +25,9 @@ const LIVEKIT_API_SECRET = process.env.LIVEKIT_API_SECRET;
 const SESSION_SECRET     = process.env.SESSION_SECRET;
 const ACCOUNTS_PATH      = process.env.ACCOUNTS_PATH  ?? '/opt/blackfossil-bot/data/accounts.json';
 const PROXIMITY_ROOM     = process.env.PROXIMITY_ROOM ?? 'proximity';
+// Game-Server (Nyors) für Positionsdaten
+const PANEL_BASE_URL     = process.env.PANEL_BASE_URL ?? 'http://100.117.32.93:8765';
+const PANEL_ADMIN_TOKEN  = process.env.PANEL_ADMIN_TOKEN ?? '';
 // Deep-Link zurück in die Electron-App
 const APP_REDIRECT       = process.env.APP_REDIRECT   ?? 'blackfossil://auth';
 
@@ -158,6 +161,39 @@ app.get('/token', async (req, res) => {
     identity: payload.steamId,
     name: payload.name,
   });
+});
+
+// ── 4) Spielerpositionen relayen (Welt-Koordinaten) ────────────────────────
+app.get('/positions', async (req, res) => {
+  const auth = req.headers.authorization ?? '';
+  const sessionToken = auth.startsWith('Bearer ') ? auth.slice(7) : null;
+  if (!sessionToken) return res.status(401).json({ error: 'Keine Session' });
+
+  let payload;
+  try { payload = jwt.verify(sessionToken, SESSION_SECRET); }
+  catch { return res.status(401).json({ error: 'Session ungültig' }); }
+
+  try {
+    const r = await fetch(`${PANEL_BASE_URL}/players`, {
+      headers: { Authorization: `Bearer ${PANEL_ADMIN_TOKEN}` },
+      signal: AbortSignal.timeout(8000),
+    });
+    if (!r.ok) throw new Error(`Game-Server HTTP ${r.status}`);
+    const data = await r.json();
+    const players = (data.Players ?? []).map((p) => ({
+      steamId: p.steamId,
+      name: p.playerName,
+      dino: p.dinoClass,
+      x: p.location?.x ?? 0,
+      y: p.location?.y ?? 0,
+      heading: p.lookDirection ?? 0,
+      isDead: !!p.isDead,
+      isYou: p.steamId === payload.steamId,
+    }));
+    res.json({ players, you: payload.steamId });
+  } catch (err) {
+    res.status(502).json({ error: err.message });
+  }
 });
 
 // ── Health ───────────────────────────────────────────────────────────────
