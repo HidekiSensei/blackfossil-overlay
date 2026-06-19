@@ -122,7 +122,8 @@ app.get('/auth/callback', async (req, res) => {
     res.send(htmlPage(
       '✅ Erfolgreich angemeldet!',
       'Du kannst dieses Fenster schließen und zur BlackFossil-App zurückkehren.',
-      redirect
+      redirect,
+      session
     ));
   } catch (err) {
     console.error('Callback-Fehler:', err);
@@ -162,15 +163,22 @@ app.get('/token', async (req, res) => {
 // ── Health ───────────────────────────────────────────────────────────────
 app.get('/auth/health', (_req, res) => res.json({ ok: true }));
 
-function htmlPage(title, msg, redirect) {
+function htmlPage(title, msg, redirect, fallbackSession) {
+  const fallback = fallbackSession ? `
+    <details style="margin-top:18px;text-align:left">
+      <summary style="cursor:pointer;color:#8b5cf6">App öffnet sich nicht? Session manuell kopieren</summary>
+      <textarea readonly onclick="this.select()" style="width:100%;height:80px;margin-top:8px;
+        background:#120d24;color:#b3a9cc;border:1px solid #3a2d5c;border-radius:6px;
+        font-size:11px;padding:8px">${fallbackSession}</textarea>
+    </details>` : '';
   return `<!doctype html><html lang="de"><head><meta charset="utf8">
   <meta name="viewport" content="width=device-width,initial-scale=1">
   <title>BlackFossil</title>
   <style>body{font-family:system-ui;background:#0f0a1e;color:#eee;display:flex;
   align-items:center;justify-content:center;height:100vh;margin:0;text-align:center}
-  .card{background:#1a1330;padding:40px;border-radius:16px;max-width:420px;border:1px solid #3a2d5c}
+  .card{background:#1a1330;padding:40px;border-radius:16px;max-width:440px;border:1px solid #3a2d5c}
   h1{font-size:22px;margin:0 0 12px}p{color:#b3a9cc;line-height:1.5}</style></head>
-  <body><div class="card"><h1>${title}</h1><p>${msg}</p></div>
+  <body><div class="card"><h1>${title}</h1><p>${msg}</p>${fallback}</div>
   ${redirect ? `<script>setTimeout(()=>{location.href=${JSON.stringify(redirect)}},800)</script>` : ''}
   </body></html>`;
 }
