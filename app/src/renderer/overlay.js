@@ -1,5 +1,5 @@
 import { Room, RoomEvent, Track, ParticipantEvent } from 'livekit-client';
-import { loadMapImage, drawFullMap, drawMinimap, normToWorld, zoneAt, getCal, setCal, resetCal } from './map.js';
+import { loadMapImage, drawFullMap, drawMinimap, drawHeatmap, normToWorld, zoneAt, getCal, setCal, resetCal } from './map.js';
 
 const el = (id) => document.getElementById(id);
 
@@ -8,6 +8,7 @@ let players = [];
 let me = null;
 let waypoints = [];
 let calibMode = false;
+let heatmapMode = false;
 let sessionToken = null;
 
 // ── Mikro-Status-Icons ──────────────────────────────────────────────────────
@@ -43,6 +44,11 @@ async function init() {
   el('micBtn').onclick = () => toggleMic();
   el('logoutBtn').onclick = () => window.bf.logout();
   el('closeBtn').onclick = () => toggleSettings(false);
+  el('heatBtn').onclick = () => {
+    heatmapMode = !heatmapMode;
+    el('heatBtn').style.background = heatmapMode ? '#8b5cf6' : 'var(--panel)';
+    renderBigMap();
+  };
 
   window.bf.onHotkey(handleHotkey);
 
@@ -96,8 +102,10 @@ function renderMinimap() {
 }
 function renderBigMap() {
   const cv = el('bigMapCanvas');
-  drawFullMap({ ctx: cv.getContext('2d'), w: cv.width, h: cv.height }, players, waypoints);
-  if (calibMode) drawCalibOverlay(cv.getContext('2d'), cv.width, cv.height);
+  const view = { ctx: cv.getContext('2d'), w: cv.width, h: cv.height };
+  if (heatmapMode) drawHeatmap(view, players, me);
+  else drawFullMap(view, players, waypoints);
+  if (calibMode) drawCalibOverlay(view.ctx, cv.width, cv.height);
 }
 
 function onMapClick(e) {

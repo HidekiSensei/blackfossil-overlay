@@ -46,8 +46,13 @@
 
   <!-- Große Map -->
   <div id="bigMap">
-    <canvas id="bigMapCanvas" width="1000" height="1000"></canvas>
-    <div class="hint">F7 zum Schließen · Klicken zum Wegpunkt setzen</div>
+    <div style="position:relative">
+      <canvas id="bigMapCanvas" width="1000" height="1000"></canvas>
+      <button id="heatBtn" style="position:absolute;top:12px;right:12px;width:auto;padding:8px 14px;
+        background:var(--panel);border:1px solid var(--border);color:#eee;border-radius:8px;
+        font-size:13px;font-weight:600;cursor:pointer">🔥 Heatmap</button>
+    </div>
+    <div class="hint">F7 zum Schließen · Klicken zum Wegpunkt setzen · C zum Kalibrieren</div>
   </div>
 
   <!-- Settings -->

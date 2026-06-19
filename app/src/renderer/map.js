@@ -81,11 +81,47 @@ export function drawFullMap(view, players, waypoints = []) {
     const { nx, ny } = worldToNorm(wp.x, wp.y);
     drawWaypoint(ctx, nx * w, ny * h);
   }
+  // Nur die eigene Position anzeigen (keine fremden Spielerpunkte)
+  const self = players.find((p) => p.isYou);
+  if (self && !self.isDead) {
+    const { nx, ny } = worldToNorm(self.x, self.y);
+    drawPlayer(ctx, nx * w, ny * h, self, 1);
+  }
+}
+
+// ── Heatmap (Aktivitäts-Dichte, keine exakten Positionen) ───────────────────
+export function drawHeatmap(view, players, me) {
+  const { ctx, w, h } = view;
+  ctx.clearRect(0, 0, w, h);
+  if (mapReady) { ctx.drawImage(mapImg, 0, 0, w, h); ctx.fillStyle = 'rgba(8,5,18,0.45)'; ctx.fillRect(0, 0, w, h); }
+  else { ctx.fillStyle = '#15102a'; ctx.fillRect(0, 0, w, h); }
+
+  // Dichte-Blobs additiv übereinanderlegen
+  ctx.save();
+  ctx.globalCompositeOperation = 'lighter';
+  const radius = w * 0.05;
   for (const p of players) {
     if (p.isDead) continue;
     const { nx, ny } = worldToNorm(p.x, p.y);
-    drawPlayer(ctx, nx * w, ny * h, p, 1);
+    const px = nx * w, py = ny * h;
+    const g = ctx.createRadialGradient(px, py, 0, px, py, radius);
+    g.addColorStop(0, 'rgba(255,80,0,0.55)');
+    g.addColorStop(0.5, 'rgba(255,180,0,0.22)');
+    g.addColorStop(1, 'rgba(255,255,0,0)');
+    ctx.fillStyle = g;
+    ctx.beginPath(); ctx.arc(px, py, radius, 0, Math.PI * 2); ctx.fill();
   }
+  ctx.restore();
+
+  drawZones(ctx, (nx, ny) => ({ px: nx * w, py: ny * h }));
+  // eigene Position bleibt sichtbar
+  if (me && !me.isDead) {
+    const { nx, ny } = worldToNorm(me.x, me.y);
+    drawPlayer(ctx, nx * w, ny * h, { ...me, isYou: true }, 1);
+  }
+
+  ctx.fillStyle = '#fbbf24'; ctx.font = 'bold 13px system-ui'; ctx.textAlign = 'left';
+  ctx.fillText(`🔥 Heatmap · ${players.filter(p => !p.isDead).length} aktiv`, 14, 24);
 }
 
 // ── Minimap (zentriert auf eigene Position, gezoomt) ──────────────────────────
@@ -114,11 +150,7 @@ export function drawMinimap(view, players, me, zoom = 0.16) {
   } else { ctx.fillStyle = 'rgba(40,30,70,0.5)'; ctx.fillRect(0,0,w,h); }
 
   drawZones(ctx, (nx, ny) => toPx(nx, ny));
-  for (const p of players) {
-    if (p.isDead || p.isYou) continue;
-    const { px, py } = toPx(...Object.values(worldToNorm(p.x, p.y)));
-    drawPlayer(ctx, px, py, p, 0.8);
-  }
+  // keine fremden Spielerpunkte auf der Minimap
   ctx.restore();
 
   // eigener Punkt immer in der Mitte (über der Maske)
