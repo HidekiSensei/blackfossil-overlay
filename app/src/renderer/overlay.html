@@ -11,10 +11,12 @@
     /* Minimap oben rechts */
     #minimapWrap { position: absolute; top: 20px; right: 20px; }
     #minimap { width: 200px; height: 200px; border-radius: 50%; border: 2px solid var(--border); background: rgba(15,10,30,0.55); }
-    #micIndicator { margin-top: 10px; display: flex; align-items: center; gap: 8px; justify-content: center;
+    #micIndicator { margin-top: 10px; display: flex; align-items: center; gap: 9px; justify-content: center;
       background: var(--panel); border: 1px solid var(--border); border-radius: 10px; padding: 8px 12px; font-size: 13px; }
-    .dot { width: 10px; height: 10px; border-radius: 50%; background: #666; }
-    .dot.on { background: var(--on); } .dot.warn { background: var(--warn); } .dot.off { background: var(--off); }
+    #micIcon { display: inline-flex; width: 20px; height: 20px; transition: color 0.15s; }
+    #micIcon svg { width: 20px; height: 20px; }
+    .mic-idle { color: #eee; } .mic-connecting { color: var(--warn); }
+    .mic-speaking { color: var(--on); } .mic-muted { color: var(--off); } .mic-disconnected { color: var(--off); }
     #zoneBox { margin-top: 8px; text-align: center; background: var(--panel); border: 1px solid var(--border);
       border-radius: 10px; padding: 6px 10px; font-size: 12px; color: var(--muted); }
 
@@ -38,7 +40,7 @@
   <!-- Minimap + Mikro -->
   <div id="minimapWrap">
     <canvas id="minimap" width="200" height="200"></canvas>
-    <div id="micIndicator"><span id="micDot" class="dot off"></span><span id="micText">Verbinde…</span></div>
+    <div id="micIndicator"><span id="micIcon" class="mic-connecting"></span><span id="micText">Verbinde…</span></div>
     <div id="zoneBox">Zone: —</div>
   </div>
 
