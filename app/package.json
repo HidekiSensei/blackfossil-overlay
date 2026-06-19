@@ -2,18 +2,48 @@
   "name": "blackfossil-overlay",
   "version": "0.1.0",
   "description": "BlackFossil Overlay — Proximity Chat, Map & Minimap für The Isle",
+  "author": "BlackFossil",
   "main": "src/main.js",
   "scripts": {
     "build:renderer": "esbuild src/renderer/login.js src/renderer/overlay.js --bundle --outdir=src/renderer/dist --format=iife --platform=browser",
     "watch:renderer": "npm run build:renderer -- --watch",
     "start": "npm run build:renderer && electron .",
-    "dev": "npm run build:renderer && electron ."
+    "dev": "npm run build:renderer && electron .",
+    "dist": "npm run build:renderer && electron-builder --win --publish never"
   },
   "dependencies": {
     "livekit-client": "^2.9.4"
   },
   "devDependencies": {
     "electron": "^33.2.1",
+    "electron-builder": "^25.1.8",
     "esbuild": "^0.24.2"
+  },
+  "build": {
+    "appId": "de.blackfossil.overlay",
+    "productName": "BlackFossil Overlay",
+    "directories": { "output": "release" },
+    "files": [
+      "src/main.js",
+      "src/preload.js",
+      "src/renderer/*.html",
+      "src/renderer/dist/**",
+      "src/renderer/assets/**",
+      "package.json"
+    ],
+    "protocols": [
+      { "name": "BlackFossil", "schemes": ["blackfossil"] }
+    ],
+    "win": {
+      "target": [{ "target": "nsis", "arch": ["x64"] }]
+    },
+    "nsis": {
+      "oneClick": true,
+      "perMachine": false,
+      "allowToChangeInstallationDirectory": false
+    },
+    "publish": [
+      { "provider": "github", "owner": "HidekiSensei", "repo": "blackfossil-overlay" }
+    ]
   }
 }
