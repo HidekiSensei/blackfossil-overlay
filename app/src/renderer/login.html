@@ -1,0 +1,39 @@
+<!doctype html>
+<html lang="de">
+<head>
+  <meta charset="utf-8" />
+  <title>BlackFossil Login</title>
+  <style>
+    :root { --bg:#0f0a1e; --card:#1a1330; --border:#3a2d5c; --accent:#8b5cf6; --text:#eee; --muted:#b3a9cc; }
+    * { box-sizing: border-box; }
+    body { font-family: system-ui, sans-serif; background: var(--bg); color: var(--text); margin: 0; padding: 24px; }
+    h1 { font-size: 18px; margin: 0 0 4px; }
+    .sub { color: var(--muted); font-size: 12px; margin-bottom: 20px; }
+    .card { background: var(--card); border: 1px solid var(--border); border-radius: 12px; padding: 20px; }
+    button { background: var(--accent); color:#fff; border:0; border-radius:8px; padding:10px 16px; font-size:14px; cursor:pointer; font-weight:600; width:100%; }
+    button.secondary { background: transparent; border:1px solid var(--border); color: var(--muted); margin-top:6px; }
+    .status { font-size: 13px; color: var(--muted); margin-bottom: 10px; }
+    .dot { display:inline-block; width:9px; height:9px; border-radius:50%; background:#ef4444; margin-right:6px; }
+    input { width:100%; padding:8px; border-radius:6px; border:1px solid var(--border); background:#120d24; color:var(--text); font-size:12px; margin-top:6px; }
+    details { margin-top: 14px; }
+    summary { cursor: pointer; color: var(--muted); font-size: 13px; }
+    #err { color:#ef4444; font-size:12px; margin-top:8px; min-height:16px; }
+  </style>
+</head>
+<body>
+  <h1>🦖 BlackFossil Overlay</h1>
+  <div class="sub">Proximity Chat · Map · Minimap</div>
+  <div class="card">
+    <div class="status"><span class="dot"></span>Nicht angemeldet</div>
+    <p class="sub">Melde dich mit Discord an. Danach öffnet sich das Overlay.</p>
+    <button id="loginBtn">Mit Discord anmelden</button>
+    <details>
+      <summary>Manuell anmelden (Fallback)</summary>
+      <input id="manualSession" placeholder="Session-Token einfügen…" />
+      <button class="secondary" id="manualBtn">Übernehmen</button>
+    </details>
+    <div id="err"></div>
+  </div>
+  <script src="dist/login.js"></script>
+</body>
+</html>

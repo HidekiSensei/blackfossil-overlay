@@ -4,7 +4,7 @@
   "description": "BlackFossil Overlay — Proximity Chat, Map & Minimap für The Isle",
   "main": "src/main.js",
   "scripts": {
-    "build:renderer": "esbuild src/renderer/renderer.js --bundle --outfile=src/renderer/bundle.js --format=iife --platform=browser",
+    "build:renderer": "esbuild src/renderer/login.js src/renderer/overlay.js --bundle --outdir=src/renderer/dist --format=iife --platform=browser",
     "watch:renderer": "npm run build:renderer -- --watch",
     "start": "npm run build:renderer && electron .",
     "dev": "npm run build:renderer && electron ."

@@ -165,22 +165,39 @@ app.get('/auth/health', (_req, res) => res.json({ ok: true }));
 
 function htmlPage(title, msg, redirect, fallbackSession) {
   const fallback = fallbackSession ? `
-    <details style="margin-top:18px;text-align:left">
-      <summary style="cursor:pointer;color:#8b5cf6">App öffnet sich nicht? Session manuell kopieren</summary>
-      <textarea readonly onclick="this.select()" style="width:100%;height:80px;margin-top:8px;
+    <div style="margin-top:20px;text-align:left">
+      <p style="font-size:13px;margin-bottom:8px">Falls die App sich nicht automatisch anmeldet:</p>
+      <textarea id="tok" readonly style="width:100%;height:90px;
         background:#120d24;color:#b3a9cc;border:1px solid #3a2d5c;border-radius:6px;
-        font-size:11px;padding:8px">${fallbackSession}</textarea>
-    </details>` : '';
+        font-size:11px;padding:8px;resize:none">${fallbackSession}</textarea>
+      <button onclick="copyTok()" style="width:100%;margin-top:8px;background:#8b5cf6;color:#fff;
+        border:0;border-radius:8px;padding:12px;font-size:14px;font-weight:600;cursor:pointer">
+        📋 Token kopieren</button>
+      <button onclick="location.href=${JSON.stringify(redirect)}" style="width:100%;margin-top:8px;
+        background:transparent;color:#b3a9cc;border:1px solid #3a2d5c;border-radius:8px;
+        padding:10px;font-size:13px;cursor:pointer">App öffnen</button>
+      <div id="copied" style="color:#22c55e;font-size:13px;margin-top:8px;height:18px"></div>
+    </div>
+    <script>
+      function copyTok(){
+        var t=document.getElementById('tok');
+        t.select(); t.setSelectionRange(0,99999);
+        navigator.clipboard.writeText(t.value).then(function(){
+          document.getElementById('copied').textContent='✅ Kopiert! Füge ihn in der App ein.';
+        }).catch(function(){
+          document.execCommand('copy');
+          document.getElementById('copied').textContent='✅ Kopiert!';
+        });
+      }
+    </script>` : '';
   return `<!doctype html><html lang="de"><head><meta charset="utf8">
   <meta name="viewport" content="width=device-width,initial-scale=1">
   <title>BlackFossil</title>
   <style>body{font-family:system-ui;background:#0f0a1e;color:#eee;display:flex;
-  align-items:center;justify-content:center;height:100vh;margin:0;text-align:center}
-  .card{background:#1a1330;padding:40px;border-radius:16px;max-width:440px;border:1px solid #3a2d5c}
+  align-items:center;justify-content:center;min-height:100vh;margin:0;text-align:center;padding:20px}
+  .card{background:#1a1330;padding:36px;border-radius:16px;max-width:440px;border:1px solid #3a2d5c}
   h1{font-size:22px;margin:0 0 12px}p{color:#b3a9cc;line-height:1.5}</style></head>
-  <body><div class="card"><h1>${title}</h1><p>${msg}</p>${fallback}</div>
-  ${redirect ? `<script>setTimeout(()=>{location.href=${JSON.stringify(redirect)}},800)</script>` : ''}
-  </body></html>`;
+  <body><div class="card"><h1>${title}</h1><p>${msg}</p>${fallback}</div></body></html>`;
 }
 
 app.listen(PORT, '127.0.0.1', () => {
