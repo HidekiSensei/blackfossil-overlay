@@ -8,4 +8,7 @@ contextBridge.exposeInMainWorld('bf', {
   logout: () => ipcRenderer.send('logout'),
   setInteractive: (v) => ipcRenderer.send('set-interactive', v),
   onHotkey: (cb) => ipcRenderer.on('hotkey', (_e, action) => cb(action)),
+  getHotkeys: () => ipcRenderer.invoke('get-hotkeys'),
+  setHotkey: (action, key) => ipcRenderer.invoke('set-hotkey', action, key),
+  resetHotkeys: () => ipcRenderer.invoke('reset-hotkeys'),
 });

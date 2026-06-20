@@ -50,7 +50,6 @@ let mapOpen = false;
 
 async function init() {
   config = await window.bf.getConfig();
-  applyHotkeyLabels();
 
   el('connBtn').onclick = () => toggleConnect();
   el('micBtn').onclick = () => toggleMic();
@@ -107,6 +106,20 @@ async function init() {
     updateProximityVolumes();
   });
 
+  // Voice-Modus
+  el('vmodeVoice').onclick = () => setVoiceMode('voice');
+  el('vmodePtt').onclick = () => setVoiceMode('ptt');
+  el('vmodePtm').onclick = () => setVoiceMode('ptm');
+  setVoiceMode(localStorage.getItem('bf-voice-mode') || 'voice', true);
+
+  // Feature-Panels schließen
+  document.querySelectorAll('.closeFeature').forEach((b) => { b.onclick = () => closeAllFeatures(); });
+
+  // Tastenbelegung
+  await renderHotkeys();
+  el('resetHkBtn').onclick = async () => { await window.bf.resetHotkeys(); await renderHotkeys(); };
+  window.addEventListener('keydown', onRebindKey);
+
   // Render-Loops
   setInterval(renderMinimap, 200);
 
@@ -126,6 +139,7 @@ function startPositionPolling() {
         const data = await res.json();
         players = data.players || [];
         me = players.find((p) => p.isYou) || null;
+        el('serverBanner').style.display = me ? 'none' : 'block';
         updateZoneBox();
         updateProximityVolumes();
         if (mapOpen) renderBigMap();
@@ -435,26 +449,128 @@ function shareCalibration() {
     .catch(() => {});
 }
 
-function applyHotkeyLabels() {
-  const h = config.hotkeys || {};
-  if (h['connect-toggle']) el('hk-connect').textContent = h['connect-toggle'];
-  if (h['mic-toggle']) el('hk-mic').textContent = h['mic-toggle'];
-  if (h['settings-toggle']) el('hk-settings').textContent = h['settings-toggle'];
-  if (h['map-toggle']) el('hk-map').textContent = h['map-toggle'];
-}
-
 // ── Hotkeys ─────────────────────────────────────────────────────────────────
 function handleHotkey(action) {
-  if (action === 'connect-toggle') toggleConnect();
+  if (action === 'voice-connect') toggleConnect();
   else if (action === 'mic-toggle') toggleMic();
   else if (action === 'settings-toggle') toggleSettings();
   else if (action === 'map-toggle') toggleMap();
   else if (action === 'zone-capture') captureZonePoint();
+  else if (action === 'dino-info') toggleFeature('dinoInfo');
+  else if (action === 'skin-editor') toggleFeature('skinEditor');
+  else if (action === 'garage') toggleFeature('garage');
+  else if (action === 'market') toggleFeature('market');
+}
+
+// ── Tastenbelegung (rebindbar) ───────────────────────────────────────────────
+const HK_LABELS = {
+  'map-toggle': 'Große Karte',
+  'dino-info': 'Dino-Info',
+  'skin-editor': 'Skin Editor',
+  'garage': 'Garage',
+  'market': 'Dino-Markt',
+  'settings-toggle': 'Einstellungen',
+  'voice-connect': 'Voice verbinden/trennen',
+  'mic-toggle': 'Mikro an/aus',
+  'zone-capture': 'Zonen-Punkt (Owner)',
+};
+let listeningAction = null;
+
+async function renderHotkeys() {
+  const hk = await window.bf.getHotkeys();
+  const list = el('hotkeyList');
+  list.innerHTML = '';
+  for (const [action, label] of Object.entries(HK_LABELS)) {
+    if (action === 'zone-capture' && !isAdmin) continue;
+    const row = document.createElement('div');
+    row.className = 'hk-row';
+    const span = document.createElement('span');
+    span.textContent = label;
+    const btn = document.createElement('button');
+    btn.textContent = hk[action] || '—';
+    btn.dataset.action = action;
+    btn.onclick = () => startRebind(action, btn);
+    row.append(span, btn);
+    list.appendChild(row);
+  }
+}
+
+function startRebind(action, btn) {
+  listeningAction = action;
+  document.querySelectorAll('#hotkeyList button').forEach((b) => b.classList.remove('listening'));
+  btn.classList.add('listening');
+  btn.textContent = '… Taste drücken';
+}
+
+function accelFromEvent(e) {
+  if (['Control', 'Alt', 'Shift', 'Meta'].includes(e.key)) return undefined;
+  const parts = [];
+  if (e.ctrlKey) parts.push('CommandOrControl');
+  if (e.altKey) parts.push('Alt');
+  if (e.shiftKey) parts.push('Shift');
+  let k = e.key;
+  if (k === ' ') k = 'Space';
+  else if (/^[a-z]$/i.test(k)) k = k.toUpperCase();
+  else if (k.length === 1) k = k.toUpperCase();
+  parts.push(k);
+  return parts.join('+');
+}
+
+async function onRebindKey(e) {
+  if (!listeningAction) return;
+  e.preventDefault();
+  if (e.key === 'Escape') { listeningAction = null; await renderHotkeys(); return; }
+  let accel;
+  if (e.key === 'Backspace' || e.key === 'Delete') accel = ''; // Taste entfernen
+  else { accel = accelFromEvent(e); if (accel === undefined) return; }
+  await window.bf.setHotkey(listeningAction, accel);
+  listeningAction = null;
+  await renderHotkeys();
+}
+
+// ── Voice-Modus ──────────────────────────────────────────────────────────────
+let voiceMode = 'voice';
+function setVoiceMode(mode, silent) {
+  voiceMode = mode;
+  localStorage.setItem('bf-voice-mode', mode);
+  for (const m of ['voice', 'ptt', 'ptm']) {
+    const b = el('vmode' + (m === 'voice' ? 'Voice' : m === 'ptt' ? 'Ptt' : 'Ptm'));
+    b.classList.toggle('active', m === mode);
+    b.classList.toggle('secondary', m !== mode);
+  }
+  applyVoiceMode();
+  if (!silent && (mode === 'ptt' || mode === 'ptm')) {
+    // PTT/Push-to-Mute brauchen einen globalen Tasten-Hook (kommt in Phase 3)
+  }
+}
+function applyVoiceMode() {
+  // 'voice' = Sprachaktivierung (Mikro folgt dem An/Aus-Status). PTT/PTM folgen in Phase 3.
+}
+
+// ── Feature-Panels ───────────────────────────────────────────────────────────
+let featureOpen = null;
+function toggleFeature(id) {
+  if (featureOpen === id) { closeAllFeatures(); return; }
+  closeAllFeatures(true);
+  featureOpen = id;
+  if (id === 'dinoInfo') renderDinoInfo();
+  el(id).style.display = 'block';
+  updateInteractive();
+}
+function closeAllFeatures(skipInteractive) {
+  ['dinoInfo', 'skinEditor', 'garage', 'market'].forEach((id) => { el(id).style.display = 'none'; });
+  featureOpen = null;
+  if (!skipInteractive) updateInteractive();
+}
+function renderDinoInfo() {
+  // Platzhalter — wird in Phase 2 mit animierten Vital-Balken gefüllt
+  el('dinoInfo').innerHTML = '<h2>📊 Dino-Info</h2><p>Vitale Statistiken & Elder-Checker — kommt in Phase 2.</p><button class="closeFeature secondary">Schließen</button>';
+  el('dinoInfo').querySelector('.closeFeature').onclick = () => closeAllFeatures();
 }
 
 function updateInteractive() {
-  // Maus nur durchlassen wenn weder Settings noch Map offen sind
-  window.bf.setInteractive(settingsOpen || mapOpen);
+  // Maus durchlassen nur wenn Overlay-UI geschlossen ist
+  window.bf.setInteractive(settingsOpen || mapOpen || !!featureOpen);
 }
 
 function toggleSettings(force) {
@@ -496,6 +612,7 @@ async function connectWithSession(session) {
     isAdmin = !!data.admin;
     el('calibBtn').style.display = isAdmin ? 'block' : 'none';
     el('zoneBtn').style.display = isAdmin ? 'block' : 'none';
+    renderHotkeys();
     await connect(data);
   } catch (err) {
     setMicState('disconnected', `Fehler: ${err.message}`);

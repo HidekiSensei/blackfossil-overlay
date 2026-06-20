@@ -34,6 +34,25 @@
     .btnrow { display: flex; gap: 8px; margin-top: 16px; }
     button { background: var(--accent); color: #fff; border: 0; border-radius: 8px; padding: 9px 14px; font-size: 13px; font-weight: 600; cursor: pointer; flex: 1; }
     button.secondary { background: transparent; border: 1px solid var(--border); color: var(--muted); }
+    #settings { width: 420px; }
+    .sec-title { font-size: 13px; font-weight: 700; color: var(--accent); letter-spacing: 0.3px; }
+    .vmode { font-size: 12px; padding: 8px 6px; }
+    .vmode.active { background: var(--accent); color: #fff; border-color: var(--accent); }
+    .hk-row { display: flex; justify-content: space-between; align-items: center; padding: 6px 0; font-size: 13px; border-bottom: 1px solid rgba(255,255,255,0.06); }
+    .hk-row button { flex: none; padding: 4px 12px; font-size: 12px; background: #120d24; border: 1px solid var(--border); color: #eee; min-width: 64px; }
+    .hk-row button.listening { background: var(--warn); color: #000; }
+
+    /* Server-Banner */
+    #serverBanner { position: absolute; top: 16px; left: 50%; transform: translateX(-50%); display: none;
+      background: rgba(180,30,30,0.92); color: #fff; padding: 10px 18px; border-radius: 10px; font-size: 13px;
+      font-weight: 600; border: 1px solid #ef4444; max-width: 60vw; text-align: center; }
+
+    /* Feature-Panels */
+    .feature-panel { position: absolute; top: 50%; left: 50%; transform: translate(-50%,-50%); display: none;
+      background: var(--panel); border: 1px solid var(--border); border-radius: 14px; padding: 24px; width: 440px; max-height: 80vh; overflow: auto; }
+    .feature-panel h2 { font-size: 17px; margin-bottom: 12px; }
+    .feature-panel p { color: var(--muted); font-size: 14px; line-height: 1.5; margin-bottom: 16px; }
+    .closeFeature { width: 100%; }
   </style>
 </head>
 <body>
@@ -102,31 +121,53 @@
         <button id="resetViewBtn" style="width:auto;padding:8px 12px;background:var(--panel);border:1px solid var(--border);color:var(--muted);border-radius:8px;font-size:13px;cursor:pointer">Reset</button>
       </div>
     </div>
-    <div class="hint">F7 schließen · Mausrad = Zoom · Ziehen = verschieben · Klick = Wegpunkt</div>
+    <div class="hint">M schließen · Mausrad = Zoom · Ziehen = verschieben · Klick = Wegpunkt</div>
   </div>
 
   <!-- Settings -->
   <div id="settings">
-    <h2>⚙️ Voice & Overlay</h2>
-    <div class="kv"><span>Verbinden / Trennen</span><kbd id="hk-connect">F8</kbd></div>
-    <div class="kv"><span>Mikro an/aus</span><kbd id="hk-mic">F9</kbd></div>
-    <div class="kv"><span>Einstellungen</span><kbd id="hk-settings">F10</kbd></div>
-    <div class="kv"><span>Große Map</span><kbd id="hk-map">F7</kbd></div>
-    <div style="margin-top:14px">
-      <div style="display:flex;justify-content:space-between;font-size:13px;margin-bottom:4px">
-        <span>🔊 Hörweite (Proximity)</span><span id="rangeVal" style="color:var(--muted)">450 m</span>
+    <h2>⚙️ Einstellungen</h2>
+    <div style="max-height:62vh;overflow:auto;padding-right:6px">
+
+      <div class="sec-title">🎙️ Voice</div>
+      <div class="btnrow" style="margin-top:6px">
+        <button id="connBtn">Verbinden</button>
+        <button id="micBtn" class="secondary">Mikro an</button>
       </div>
-      <input id="rangeSlider" type="range" min="10000" max="120000" step="5000" value="45000" style="width:100%" />
-    </div>
-    <div class="btnrow">
-      <button id="connBtn">Verbinden</button>
-      <button id="micBtn" class="secondary">Mikro an</button>
+      <div style="margin-top:12px">
+        <div style="font-size:13px;margin-bottom:5px">Mikrofon-Modus</div>
+        <div style="display:flex;gap:6px">
+          <button class="vmode" data-mode="voice" id="vmodeVoice">Sprachaktivierung</button>
+          <button class="vmode secondary" data-mode="ptt" id="vmodePtt">Push-to-Talk</button>
+          <button class="vmode secondary" data-mode="ptm" id="vmodePtm">Push-to-Mute</button>
+        </div>
+      </div>
+      <div style="margin-top:14px">
+        <div style="display:flex;justify-content:space-between;font-size:13px;margin-bottom:4px">
+          <span>🔊 Hörweite (Proximity)</span><span id="rangeVal" style="color:var(--muted)">450 m</span>
+        </div>
+        <input id="rangeSlider" type="range" min="10000" max="120000" step="5000" value="45000" style="width:100%" />
+      </div>
+
+      <div class="sec-title" style="margin-top:18px">⌨️ Tastenbelegung</div>
+      <div id="hotkeyList" style="margin-top:6px"></div>
+      <button id="resetHkBtn" class="secondary" style="margin-top:8px;width:100%">Tasten zurücksetzen</button>
+
     </div>
     <div class="btnrow">
       <button id="logoutBtn" class="secondary">Abmelden</button>
-      <button id="closeBtn" class="secondary">Schließen (F10)</button>
+      <button id="closeBtn" class="secondary">Schließen</button>
     </div>
   </div>
+
+  <!-- Server-Banner (oben mittig) -->
+  <div id="serverBanner">⚠️ Nicht auf dem BlackFossil-Server — verbinde dich im Spiel, um Karte & Proximity zu nutzen.</div>
+
+  <!-- Feature-Panels (Platzhalter / werden gefüllt) -->
+  <div id="dinoInfo" class="feature-panel"></div>
+  <div id="skinEditor" class="feature-panel"><h2>🎨 Skin Editor</h2><p>Wird in Kürze verfügbar sein.</p><button class="closeFeature secondary">Schließen</button></div>
+  <div id="garage" class="feature-panel"><h2>🚗 Garage</h2><p>Ein- und Ausparken deiner Dinos — kommt in Phase 4.</p><button class="closeFeature secondary">Schließen</button></div>
+  <div id="market" class="feature-panel"><h2>🦖 Dino-Markt</h2><p>Dinos kaufen & verkaufen — kommt in Phase 4.</p><button class="closeFeature secondary">Schließen</button></div>
 
   <script src="dist/overlay.js"></script>
 </body>

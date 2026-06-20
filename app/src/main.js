@@ -4,15 +4,27 @@ const fs = require('node:fs');
 
 const TOKEN_BASE = 'https://voice.blackfossil.de';
 const SESSION_FILE = path.join(app.getPath('userData'), 'session.json');
+const HOTKEYS_FILE = path.join(app.getPath('userData'), 'hotkeys.json');
 
-// Standard-Hotkeys (später konfigurierbar)
-const HOTKEYS = {
-  'connect-toggle': 'F8',
-  'mic-toggle':     'F9',
-  'settings-toggle':'F10',
-  'map-toggle':     'F7',
-  'zone-capture':   'F6',
+// Standard-Hotkeys (vom Nutzer überschreibbar)
+const DEFAULT_HOTKEYS = {
+  'map-toggle':      'M',
+  'dino-info':       'F5',
+  'zone-capture':    'F6',
+  'skin-editor':     'F7',
+  'garage':          'F8',
+  'market':          'F9',
+  'settings-toggle': 'F10',
+  'voice-connect':   'F11',
+  'mic-toggle':      'F4',
 };
+let HOTKEYS = loadHotkeys();
+
+function loadHotkeys() {
+  try { return { ...DEFAULT_HOTKEYS, ...JSON.parse(fs.readFileSync(HOTKEYS_FILE, 'utf8')) }; }
+  catch { return { ...DEFAULT_HOTKEYS }; }
+}
+function saveHotkeys() { try { fs.writeFileSync(HOTKEYS_FILE, JSON.stringify(HOTKEYS)); } catch {} }
 
 let loginWindow = null;
 let overlayWindow = null;
@@ -92,7 +104,9 @@ function openOverlay() {
 
 // ── Hotkeys ─────────────────────────────────────────────────────────────────
 function registerHotkeys() {
+  globalShortcut.unregisterAll();
   for (const [action, key] of Object.entries(HOTKEYS)) {
+    if (!key) continue; // nicht belegt
     try {
       globalShortcut.register(key, () => {
         if (overlayWindow) overlayWindow.webContents.send('hotkey', action);
@@ -105,6 +119,19 @@ function unregisterHotkeys() { globalShortcut.unregisterAll(); }
 // ── IPC ──────────────────────────────────────────────────────────────────
 ipcMain.handle('get-session', () => loadSession());
 ipcMain.handle('get-config', () => ({ tokenBase: TOKEN_BASE, hotkeys: HOTKEYS }));
+ipcMain.handle('get-hotkeys', () => HOTKEYS);
+ipcMain.handle('set-hotkey', (_e, action, key) => {
+  HOTKEYS[action] = key;            // key kann '' sein = unbelegt
+  saveHotkeys();
+  registerHotkeys();
+  return HOTKEYS;
+});
+ipcMain.handle('reset-hotkeys', () => {
+  HOTKEYS = { ...DEFAULT_HOTKEYS };
+  saveHotkeys();
+  registerHotkeys();
+  return HOTKEYS;
+});
 ipcMain.on('session-ready', (_e, token) => onSessionObtained(token));
 ipcMain.on('open-login', () => shell.openExternal(`${TOKEN_BASE}/auth/login`));
 ipcMain.on('logout', () => {
