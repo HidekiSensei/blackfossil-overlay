@@ -1,5 +1,5 @@
 import { Room, RoomEvent, Track, ParticipantEvent } from 'livekit-client';
-import { loadMapImage, drawFullMap, drawMinimap, drawHeatmap, normToWorld, zoneAt, resetCal, solveAffine, ZONES } from './map.js';
+import { loadMapImage, drawFullMap, drawMinimap, drawHeatmap, normToWorld, worldToNorm, zoneAt, resetCal, solveAffine, ZONES } from './map.js';
 
 const el = (id) => document.getElementById(id);
 
@@ -15,7 +15,11 @@ let armedRef = null;
 let isAdmin = false;
 
 // Proximity: Hörradius in Welt-Einheiten (cm). Innerhalb = volle Lautstärke fällt linear auf 0.
-const HEAR_RANGE = 45000;
+let HEAR_RANGE = parseInt(localStorage.getItem('bf-hear-range') || '45000');
+
+// Karten-Ansicht (Zoom/Pan)
+let mapZoom = 1, mapPanX = 0, mapPanY = 0;
+let dragging = false, dragMoved = false, lastDragX = 0, lastDragY = 0;
 
 // ── Mikro-Status-Icons ──────────────────────────────────────────────────────
 const ICONS = {
@@ -64,8 +68,28 @@ async function init() {
   // Kartenbild laden
   await loadMapImage('assets/map.jpg');
 
-  // Wegpunkt setzen / Kalibrierungs-Klick auf der große Karte
-  el('bigMapCanvas').addEventListener('click', onMapClick);
+  // Karten-Interaktion
+  const cv = el('bigMapCanvas');
+  cv.addEventListener('click', onMapClick);
+  cv.addEventListener('wheel', onMapWheel, { passive: false });
+  cv.addEventListener('mousedown', onMapMouseDown);
+  window.addEventListener('mousemove', onMapMouseMove);
+  window.addEventListener('mouseup', () => { dragging = false; });
+  el('centerBtn').onclick = () => centerOnMe();
+  el('zoomInBtn').onclick = () => zoomBy(1.3);
+  el('zoomOutBtn').onclick = () => zoomBy(1 / 1.3);
+  el('resetViewBtn').onclick = () => { mapZoom = 1; mapPanX = 0; mapPanY = 0; renderBigMap(); };
+
+  // Hörradius-Regler
+  const slider = el('rangeSlider');
+  slider.value = String(HEAR_RANGE);
+  updateRangeLabel();
+  slider.addEventListener('input', () => {
+    HEAR_RANGE = parseInt(slider.value);
+    localStorage.setItem('bf-hear-range', String(HEAR_RANGE));
+    updateRangeLabel();
+    updateProximityVolumes();
+  });
 
   // Render-Loops
   setInterval(renderMinimap, 200);
@@ -111,10 +135,16 @@ function updateProximityVolumes() {
 }
 
 function updateZoneBox() {
-  if (!me) { el('zoneBox').textContent = 'Zone: —'; return; }
+  if (!me) { el('zoneBox').textContent = 'Zone: —'; el('zoneBox').style.color = '#b3a9cc'; return; }
   const z = zoneAt(me.x, me.y);
-  el('zoneBox').textContent = z ? `Zone: ${z}` : 'Zone: Frei';
+  const coords = `X ${(me.x / 1000) | 0}k  Y ${(me.y / 1000) | 0}k`;
+  el('zoneBox').innerHTML = `${z ? 'Zone: ' + z : 'Zone: Frei'}<br><span style="font-size:11px;opacity:0.7">${coords}</span>`;
   el('zoneBox').style.color = z === 'PVP' ? '#ef4444' : z === 'PVE' ? '#22c55e' : '#b3a9cc';
+}
+
+function updateRangeLabel() {
+  // grobe Umrechnung Welt-cm → Meter (1 m = 100 cm)
+  el('rangeVal').textContent = `${Math.round(HEAR_RANGE / 100)} m`;
 }
 
 // ── Rendering ────────────────────────────────────────────────────────────────
@@ -124,17 +154,30 @@ function renderMinimap() {
 }
 function renderBigMap() {
   const cv = el('bigMapCanvas');
-  const view = { ctx: cv.getContext('2d'), w: cv.width, h: cv.height };
+  const ctx = cv.getContext('2d');
+  // Komplett löschen (Bildschirm-Koordinaten), dann Zoom/Pan anwenden
+  ctx.setTransform(1, 0, 0, 1, 0, 0);
+  ctx.clearRect(0, 0, cv.width, cv.height);
+  ctx.setTransform(mapZoom, 0, 0, mapZoom, mapPanX, mapPanY);
+  const view = { ctx, w: cv.width, h: cv.height };
   if (heatmapMode) drawHeatmap(view, players, me);
   else drawFullMap(view, players, waypoints);
-  if (calibMode) drawCalibOverlay(view.ctx, cv.width, cv.height);
+  ctx.setTransform(1, 0, 0, 1, 0, 0);
+  if (calibMode) drawCalibOverlay(ctx, cv.width, cv.height);
+}
+
+// Bildschirm-Event → normalisierte Kartenkoordinate (berücksichtigt Zoom/Pan)
+function eventToNorm(e) {
+  const cv = el('bigMapCanvas');
+  const rect = cv.getBoundingClientRect();
+  const cxp = ((e.clientX - rect.left) / rect.width) * cv.width;
+  const cyp = ((e.clientY - rect.top) / rect.height) * cv.height;
+  return { nx: (cxp - mapPanX) / mapZoom / cv.width, ny: (cyp - mapPanY) / mapZoom / cv.height };
 }
 
 function onMapClick(e) {
-  const cv = el('bigMapCanvas');
-  const rect = cv.getBoundingClientRect();
-  const nx = (e.clientX - rect.left) / rect.width;
-  const ny = (e.clientY - rect.top) / rect.height;
+  if (dragMoved) { dragMoved = false; return; } // war ein Ziehen, kein Klick
+  const { nx, ny } = eventToNorm(e);
 
   if (calibMode) {
     if (!armedRef) return; // erst einen Referenzpunkt wählen
@@ -146,6 +189,70 @@ function onMapClick(e) {
   }
   const w = normToWorld(nx, ny);
   waypoints = [{ x: w.x, y: w.y }];
+  renderBigMap();
+}
+
+// ── Zoom / Pan ───────────────────────────────────────────────────────────────
+function clampPan() {
+  const cv = el('bigMapCanvas');
+  const minX = cv.width - cv.width * mapZoom;
+  const minY = cv.height - cv.height * mapZoom;
+  mapPanX = Math.min(0, Math.max(minX, mapPanX));
+  mapPanY = Math.min(0, Math.max(minY, mapPanY));
+}
+
+function onMapWheel(e) {
+  e.preventDefault();
+  const cv = el('bigMapCanvas');
+  const rect = cv.getBoundingClientRect();
+  const cxp = ((e.clientX - rect.left) / rect.width) * cv.width;
+  const cyp = ((e.clientY - rect.top) / rect.height) * cv.height;
+  const factor = e.deltaY < 0 ? 1.15 : 1 / 1.15;
+  const newZoom = Math.min(8, Math.max(1, mapZoom * factor));
+  // Punkt unter dem Cursor stabil halten
+  mapPanX = cxp - (cxp - mapPanX) / mapZoom * newZoom;
+  mapPanY = cyp - (cyp - mapPanY) / mapZoom * newZoom;
+  mapZoom = newZoom;
+  clampPan();
+  renderBigMap();
+}
+
+function zoomBy(factor) {
+  const cv = el('bigMapCanvas');
+  const cx = cv.width / 2, cy = cv.height / 2;
+  const newZoom = Math.min(8, Math.max(1, mapZoom * factor));
+  mapPanX = cx - (cx - mapPanX) / mapZoom * newZoom;
+  mapPanY = cy - (cy - mapPanY) / mapZoom * newZoom;
+  mapZoom = newZoom;
+  clampPan();
+  renderBigMap();
+}
+
+function onMapMouseDown(e) {
+  dragging = true; dragMoved = false;
+  lastDragX = e.clientX; lastDragY = e.clientY;
+}
+function onMapMouseMove(e) {
+  if (!dragging) return;
+  const cv = el('bigMapCanvas');
+  const rect = cv.getBoundingClientRect();
+  const sx = cv.width / rect.width, sy = cv.height / rect.height;
+  const dx = (e.clientX - lastDragX) * sx, dy = (e.clientY - lastDragY) * sy;
+  if (Math.abs(dx) > 2 || Math.abs(dy) > 2) dragMoved = true;
+  mapPanX += dx; mapPanY += dy;
+  lastDragX = e.clientX; lastDragY = e.clientY;
+  clampPan();
+  renderBigMap();
+}
+
+function centerOnMe() {
+  if (!me) return;
+  const cv = el('bigMapCanvas');
+  const { nx, ny } = worldToNorm(me.x, me.y);
+  mapZoom = Math.max(mapZoom, 3);
+  mapPanX = cv.width / 2 - nx * cv.width * mapZoom;
+  mapPanY = cv.height / 2 - ny * cv.height * mapZoom;
+  clampPan();
   renderBigMap();
 }
 

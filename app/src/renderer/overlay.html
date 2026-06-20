@@ -70,8 +70,15 @@
           <button id="calibReset" style="flex:1;padding:8px;font-size:12px;border-radius:6px;border:1px solid var(--border);background:transparent;color:var(--muted);cursor:pointer">Reset</button>
         </div>
       </div>
+      <!-- Zoom/Pan-Steuerung -->
+      <div style="position:absolute;bottom:12px;left:50%;transform:translateX(-50%);display:flex;gap:6px">
+        <button id="centerBtn" style="width:auto;padding:8px 12px;background:var(--panel);border:1px solid var(--border);color:#eee;border-radius:8px;font-size:13px;cursor:pointer">⌖ Auf mich zentrieren</button>
+        <button id="zoomInBtn" style="width:auto;padding:8px 12px;background:var(--panel);border:1px solid var(--border);color:#eee;border-radius:8px;font-size:15px;cursor:pointer">＋</button>
+        <button id="zoomOutBtn" style="width:auto;padding:8px 12px;background:var(--panel);border:1px solid var(--border);color:#eee;border-radius:8px;font-size:15px;cursor:pointer">－</button>
+        <button id="resetViewBtn" style="width:auto;padding:8px 12px;background:var(--panel);border:1px solid var(--border);color:var(--muted);border-radius:8px;font-size:13px;cursor:pointer">Reset</button>
+      </div>
     </div>
-    <div class="hint">F7 schließen · Klick = Wegpunkt · 🔧 = Karte kalibrieren</div>
+    <div class="hint">F7 schließen · Mausrad = Zoom · Ziehen = verschieben · Klick = Wegpunkt</div>
   </div>
 
   <!-- Settings -->
@@ -81,6 +88,12 @@
     <div class="kv"><span>Mikro an/aus</span><kbd id="hk-mic">F9</kbd></div>
     <div class="kv"><span>Einstellungen</span><kbd id="hk-settings">F10</kbd></div>
     <div class="kv"><span>Große Map</span><kbd id="hk-map">F7</kbd></div>
+    <div style="margin-top:14px">
+      <div style="display:flex;justify-content:space-between;font-size:13px;margin-bottom:4px">
+        <span>🔊 Hörweite (Proximity)</span><span id="rangeVal" style="color:var(--muted)">450 m</span>
+      </div>
+      <input id="rangeSlider" type="range" min="10000" max="120000" step="5000" value="45000" style="width:100%" />
+    </div>
     <div class="btnrow">
       <button id="connBtn">Verbinden</button>
       <button id="micBtn" class="secondary">Mikro an</button>

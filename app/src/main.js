@@ -70,7 +70,7 @@ function openOverlay() {
   overlayWindow = new BrowserWindow({
     x: bounds.x, y: bounds.y, width: bounds.width, height: bounds.height,
     transparent: true, frame: false, resizable: false, movable: false,
-    skipTaskbar: true, hasShadow: false, fullscreenable: false,
+    skipTaskbar: true, hasShadow: false, fullscreenable: false, focusable: false,
     webPreferences: { preload: path.join(__dirname, 'preload.js'), contextIsolation: true },
   });
   overlayWindow.setAlwaysOnTop(true, 'screen-saver');
@@ -109,9 +109,19 @@ ipcMain.on('logout', () => {
   if (overlayWindow) { overlayWindow.close(); overlayWindow = null; }
   if (!loginWindow) createLoginWindow();
 });
-// Overlay schaltet Klick-Durchlässigkeit (z.B. wenn Map/Settings offen)
+// Overlay schaltet Klick-Durchlässigkeit + Fokus.
+// interactive = Map/Settings offen → Overlay nimmt Fokus, damit das Spiel
+// keine Eingaben mehr bekommt (kein Zubeißen/Drehen). Sonst Maus durchreichen.
 ipcMain.on('set-interactive', (_e, interactive) => {
-  if (overlayWindow) overlayWindow.setIgnoreMouseEvents(!interactive, { forward: true });
+  if (!overlayWindow) return;
+  overlayWindow.setIgnoreMouseEvents(!interactive, { forward: true });
+  if (interactive) {
+    overlayWindow.setFocusable(true);
+    overlayWindow.focus();
+  } else {
+    overlayWindow.blur();            // gibt den Fokus zurück ans Spiel
+    overlayWindow.setFocusable(false);
+  }
 });
 
 // ── App-Start ─────────────────────────────────────────────────────────────

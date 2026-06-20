@@ -104,8 +104,6 @@ function orderPolygon(points) {
 // view: { ctx, w, h }   players: [{x,y,heading,isYou,name,dino,isDead}]
 export function drawFullMap(view, players, waypoints = []) {
   const { ctx, w, h } = view;
-  ctx.clearRect(0, 0, w, h);
-
   if (mapReady) ctx.drawImage(mapImg, 0, 0, w, h);
   else { ctx.fillStyle = '#15102a'; ctx.fillRect(0, 0, w, h); ctx.fillStyle = '#6b5b8c'; ctx.font = '16px system-ui'; ctx.textAlign = 'center'; ctx.fillText('Kartenbild fehlt (assets/map.jpg)', w/2, h/2); }
 
@@ -125,7 +123,6 @@ export function drawFullMap(view, players, waypoints = []) {
 // ── Heatmap (Aktivitäts-Dichte, keine exakten Positionen) ───────────────────
 export function drawHeatmap(view, players, me) {
   const { ctx, w, h } = view;
-  ctx.clearRect(0, 0, w, h);
   if (mapReady) { ctx.drawImage(mapImg, 0, 0, w, h); ctx.fillStyle = 'rgba(8,5,18,0.45)'; ctx.fillRect(0, 0, w, h); }
   else { ctx.fillStyle = '#15102a'; ctx.fillRect(0, 0, w, h); }
 
