@@ -96,6 +96,24 @@
     @keyframes shimmer { from { background-position: 200% 0; } to { background-position: -200% 0; } }
     @keyframes pulseGlow { 0%,100% { box-shadow: 0 0 0 rgba(245,158,11,0); } 50% { box-shadow: 0 0 14px rgba(245,158,11,0.6); } }
     .elder-glow { animation: pulseGlow 2s ease-in-out infinite; }
+
+    /* Dino-Karten-Grid */
+    .dino-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(140px, 1fr)); gap: 12px; margin: 10px 0; }
+    .dino-card { background: rgba(255,255,255,0.04); border: 1px solid var(--border); border-radius: 12px; overflow: hidden;
+      cursor: pointer; transition: transform 0.12s, border-color 0.12s; }
+    .dino-card:hover { transform: translateY(-3px); border-color: var(--accent); }
+    .dino-card .prev { height: 80px; display: block; }
+    .dino-card .body { padding: 8px 10px; }
+    .dino-card .nm { font-weight: 700; font-size: 13px; display: flex; align-items: center; gap: 4px; }
+    .dino-card .mt { font-size: 11px; color: var(--muted); margin-top: 2px; }
+    .dino-card .pal { display: flex; gap: 0; height: 5px; }
+    .dino-card .pal span { flex: 1; }
+    .price-tag { background: rgba(251,191,36,0.15); color: #fbbf24; font-weight: 700; font-size: 12px; padding: 4px 8px; border-radius: 6px; text-align: center; }
+
+    /* Dino-Detail */
+    #dinoDetail { display: none; position: absolute; inset: 0; background: rgba(8,5,18,0.7); z-index: 40; align-items: center; justify-content: center; }
+    #dinoDetail .box { background: var(--panel); border: 1px solid var(--border); border-radius: 16px; padding: 22px; width: clamp(360px, 30vw, 480px); max-height: 86vh; overflow: auto; }
+    .mut-chip { display: inline-block; font-size: 11px; padding: 3px 8px; border-radius: 12px; background: rgba(139,92,246,0.18); border: 1px solid var(--border); margin: 2px; }
   </style>
 </head>
 <body>
@@ -216,6 +234,9 @@
 
   <!-- Server-Banner (oben mittig) -->
   <div id="serverBanner">⚠️ Nicht auf dem BlackFossil-Server — verbinde dich im Spiel, um Karte & Proximity zu nutzen.</div>
+
+  <!-- Dino-Detailansicht (über Garage/Markt) -->
+  <div id="dinoDetail"><div class="box"></div></div>
 
   <!-- Feature-Panels (Platzhalter / werden gefüllt) -->
   <div id="dinoInfo" class="feature-panel"></div>

@@ -360,21 +360,34 @@ async function fetchPlayers() {
   return (await r.json()).Players ?? [];
 }
 
+// Karten-Daten aus einem Garage-/Markt-Slot (Farben, Vitals, Mutationen)
+function slotCard(slot) {
+  const sn = slot.snapshot ?? {};
+  return {
+    id: slot.id,
+    label: slot.label ?? null,
+    savedAt: slot.savedAt,
+    dino: sn.dinoClass ?? '?',
+    gender: sn.gender ?? '',
+    grow: sn.grow ?? 0,
+    isElder: !!sn.isElder,
+    isPrime: !!sn.isPrime,
+    health: sn.health ?? 0, hunger: sn.hunger ?? 0, thirst: sn.thirst ?? 0, stamina: sn.stamina ?? 0, blood: sn.blood ?? 0,
+    patternIndex: sn.patternIndex ?? 0,
+    colors: {
+      body: sn.bodyColor, markings: sn.markingsColor, underbelly: sn.underbellyColor,
+      flank: sn.flankColor, detail: sn.detailColor, eyes: sn.eyesColor, male: sn.maleDisplayColor,
+    },
+    mutations: sn.mutations ?? { base: [], parent: [], elder: [] },
+  };
+}
+
 // Garage anzeigen
 app.get('/garage', (req, res) => {
   const s = sessionFrom(req);
   if (!s) return res.status(401).json({ error: 'Keine Session' });
   const garage = readJson(GARAGE_FILE, {});
-  const slots = (garage[s.steamId] ?? []).map((slot) => ({
-    id: slot.id,
-    label: slot.label ?? null,
-    savedAt: slot.savedAt,
-    dino: slot.snapshot?.dinoClass ?? '?',
-    gender: slot.snapshot?.gender ?? '',
-    grow: slot.snapshot?.grow ?? 0,
-    isElder: !!slot.snapshot?.isElder,
-  }));
-  res.json({ slots });
+  res.json({ slots: (garage[s.steamId] ?? []).map(slotCard) });
 });
 
 // Aktuellen Dino einparken
@@ -444,16 +457,7 @@ app.get('/market', (req, res) => {
   const market = readJson(MARKETPLACE_FILE, []);
   res.json({
     points: getPoints(s.steamId),
-    offers: market.map((o) => ({
-      id: o.id,
-      dino: o.snapshot?.dinoClass ?? '?',
-      gender: o.snapshot?.gender ?? '',
-      grow: o.snapshot?.grow ?? 0,
-      isElder: !!o.snapshot?.isElder,
-      label: o.label ?? null,
-      price: o.price,
-      mine: o.sellerSteamId === s.steamId,
-    })),
+    offers: market.map((o) => ({ ...slotCard(o), price: o.price, mine: o.sellerSteamId === s.steamId })),
   });
 });
 

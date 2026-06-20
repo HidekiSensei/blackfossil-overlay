@@ -641,163 +641,140 @@ function renderDinoInfo() {
 function stopDinoInfo() { if (dinoTimer) { clearInterval(dinoTimer); dinoTimer = null; } }
 
 // ── Garage (Ein-/Ausparken) ─────────────────────────────────────────────────
+// ── Geteilte Dino-Karten (Garage & Markt) ──────────────────────────────────
+function gc(v) { return Math.max(0, Math.min(255, Math.round(255 * Math.pow(Math.max(0, v || 0), 1 / 2.2)))); }
+function colorCss(rgb) { return rgb ? `rgb(${gc(rgb[0])},${gc(rgb[1])},${gc(rgb[2])})` : '#555'; }
+function shade(rgb, f) { return rgb ? `rgb(${Math.round(gc(rgb[0]) * f)},${Math.round(gc(rgb[1]) * f)},${Math.round(gc(rgb[2]) * f)})` : '#444'; }
+const DINO_SIL = 'M3 30 C7 24 11 22 17 23 L21 13 C23 9 27 9 28 13 L27 23 C33 22 43 21 50 25 C55 27 60 26 62 30 C58 31 55 30 51 31 L50 37 L46 37 L45 31 C40 32 34 32 30 31 L30 37 L26 37 L25 31 C18 32 9 33 3 30 Z';
+let svgId = 0;
+function dinoPreviewSVG(card) {
+  const c = card.colors || {}; const gid = 'g' + (svgId++);
+  return `<svg class="prev" viewBox="0 0 64 40" preserveAspectRatio="xMidYMid slice" xmlns="http://www.w3.org/2000/svg">
+    <defs><linearGradient id="${gid}" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="${colorCss(c.body)}"/><stop offset="1" stop-color="${shade(c.body, 0.55)}"/></linearGradient></defs>
+    <rect width="64" height="40" fill="url(#${gid})"/>
+    <path d="${DINO_SIL}" fill="${shade(c.body, 0.82)}" stroke="${colorCss(c.markings)}" stroke-width="0.6"/>
+    <circle cx="25" cy="15.5" r="1.3" fill="${colorCss(c.eyes)}"/></svg>`;
+}
+function paletteHTML(c) { const k = ['body', 'markings', 'underbelly', 'flank', 'detail', 'eyes']; return `<div class="pal">${k.map((x) => `<span style="background:${colorCss((c || {})[x])}"></span>`).join('')}</div>`; }
+function dinoCardEl(card, onClick) {
+  const d = document.createElement('div'); d.className = 'dino-card';
+  d.innerHTML = dinoPreviewSVG(card) + `<div class="body"><div class="nm">${card.dino}${card.isElder ? ' 👑' : ''}</div><div class="mt">${card.gender || ''} · ${Math.round((card.grow || 0) * 100)}%</div></div>` + paletteHTML(card.colors);
+  d.onclick = onClick; return d;
+}
+function vitalsHTML(card) {
+  const v = [['Gesundheit', 'health', '#22c55e'], ['Blut', 'blood', '#dc2626'], ['Ausdauer', 'stamina', '#eab308'], ['Hunger', 'hunger', '#f97316'], ['Durst', 'thirst', '#3b82f6']];
+  return v.map(([l, k, c]) => { const p = Math.round((card[k] || 0) * 100); return `<div style="margin:6px 0"><div style="display:flex;justify-content:space-between;font-size:11px"><span>${l}</span><span style="color:var(--muted)">${p}%</span></div><div class="stat-track"><div class="stat-fill" style="width:${p}%;background:${c}"></div></div></div>`; }).join('');
+}
+function mutHTML(m) { const a = [...(m?.base || []), ...(m?.parent || []), ...(m?.elder || [])].filter(Boolean); return a.length ? a.map((x) => `<span class="mut-chip">${x}</span>`).join('') : '<span style="color:var(--muted);font-size:12px">Keine Mutationen</span>'; }
+function closeDinoDetail() { el('dinoDetail').style.display = 'none'; }
+function showDinoDetail(card, ctx) {
+  const box = el('dinoDetail').querySelector('.box');
+  let action = '';
+  if (ctx.mode === 'garage') action = `<button id="ddUnpark" style="width:100%;margin-top:14px">⬆️ Ausparken</button>`;
+  else if (ctx.mode === 'market') action = ctx.mine ? `<div class="price-tag" style="margin-top:14px">Dein Angebot · ${(ctx.price || 0).toLocaleString('de-DE')} Pkt.</div>` : `<button id="ddBuy" style="width:100%;margin-top:14px">🦖 Kaufen — ${(ctx.price || 0).toLocaleString('de-DE')} Pkt.</button>`;
+  box.innerHTML = `<div style="display:flex;gap:14px;align-items:center;margin-bottom:14px"><div style="width:100px;height:62px;border-radius:10px;overflow:hidden;flex:none">${dinoPreviewSVG(card)}</div><div><div style="font-size:18px;font-weight:700">${card.dino}${card.isElder ? ' 👑' : ''}</div><div style="font-size:12px;color:var(--muted)">${card.gender || ''} · ${Math.round((card.grow || 0) * 100)}% Wachstum${card.isPrime ? ' · ⭐ Prime' : ''}</div></div></div><div class="sec-title">Vitals</div>${vitalsHTML(card)}<div class="sec-title" style="margin-top:12px">Mutationen</div><div style="margin-top:6px">${mutHTML(card.mutations)}</div>${action}<button class="secondary" id="ddClose" style="width:100%;margin-top:8px">Schließen</button>`;
+  el('dinoDetail').style.display = 'flex';
+  box.querySelector('#ddClose').onclick = closeDinoDetail;
+  const u = box.querySelector('#ddUnpark'); if (u) u.onclick = () => { closeDinoDetail(); unparkById(card.id); };
+  const b = box.querySelector('#ddBuy'); if (b) b.onclick = () => { closeDinoDetail(); buyOfferId(card.id); };
+}
+
+// Gemeinsame POST-Aktion mit Toast-Feedback
+async function apiAction(path, body, okMsg, reload) {
+  try {
+    const res = await fetch(`${config.tokenBase}${path}`, { method: 'POST', headers: { Authorization: `Bearer ${sessionToken}`, 'Content-Type': 'application/json' }, body: JSON.stringify(body || {}) });
+    const d = await res.json(); if (!res.ok) throw new Error(d.error || 'Fehler');
+    showToast(okMsg.replace('{dino}', d.dino || ''), 'success'); pollHud(); if (reload) await reload();
+  } catch (err) { showToast(err.message, 'error'); }
+}
+const unparkById = (id) => apiAction('/garage/unpark', { slotId: id }, '⬆️ {dino} ausgeparkt', loadGarage);
+const buyOfferId = (id) => apiAction('/market/buy', { offerId: id }, '🦖 {dino} gekauft!', loadMarket);
+
+// ── Garage (Karten-Grid) ─────────────────────────────────────────────────────
 async function renderGarage() {
-  el('garage').innerHTML = `
-    <h2>🚗 Garage</h2>
-    <p style="margin-bottom:12px">Parke deinen aktuellen Dino ein oder hole einen gespeicherten zurück.</p>
-    <button id="parkBtn" style="width:100%;margin-bottom:14px">⬇️ Aktuellen Dino einparken</button>
-    <div id="garageList" style="display:flex;flex-direction:column;gap:8px"></div>
-    <button class="closeFeature secondary" style="margin-top:14px">Schließen (F8)</button>`;
+  el('garage').innerHTML = `<h2>🚗 Garage</h2>
+    <button id="parkBtn" style="width:100%;margin:6px 0 14px">⬇️ Aktuellen Dino einparken</button>
+    <div id="garageGrid" class="dino-grid"></div>
+    <button class="closeFeature secondary" style="margin-top:8px">Schließen (F8)</button>`;
   el('garage').querySelector('.closeFeature').onclick = () => closeAllFeatures();
-  el('parkBtn').onclick = () => parkDino();
+  el('parkBtn').onclick = () => apiAction('/garage/park', {}, '🚗 {dino} eingeparkt', loadGarage);
   await loadGarage();
 }
-
 async function loadGarage() {
-  const list = el('garageList');
-  list.innerHTML = '<div style="color:var(--muted);font-size:13px">Lade…</div>';
+  const grid = el('garageGrid'); if (!grid) return;
+  grid.innerHTML = '<div style="color:var(--muted);font-size:13px">Lade…</div>';
   try {
     const res = await fetch(`${config.tokenBase}/garage`, { headers: { Authorization: `Bearer ${sessionToken}` } });
-    const data = await res.json();
-    const slots = data.slots || [];
-    if (!slots.length) { list.innerHTML = '<div style="color:var(--muted);font-size:13px">Garage leer.</div>'; return; }
-    list.innerHTML = '';
-    for (const s of slots) {
-      const row = document.createElement('div');
-      row.style.cssText = 'display:flex;justify-content:space-between;align-items:center;background:rgba(255,255,255,0.04);border:1px solid var(--border);border-radius:8px;padding:10px 12px';
-      row.innerHTML = `<div><div style="font-weight:600">${s.dino}${s.isElder ? ' 👑' : ''}</div>
-        <div style="font-size:11px;color:var(--muted)">${s.gender} · ${Math.round((s.grow || 0) * 100)}% Wachstum${s.label ? ' · ' + s.label : ''}</div></div>`;
-      const btn = document.createElement('button');
-      btn.textContent = '⬆️ Ausparken';
-      btn.style.cssText = 'flex:none;padding:7px 12px;font-size:12px';
-      btn.onclick = () => unparkDino(s.id, btn);
-      row.appendChild(btn);
-      list.appendChild(row);
-    }
-  } catch {
-    list.innerHTML = '<div style="color:#ef4444;font-size:13px">Garage konnte nicht geladen werden.</div>';
-  }
+    const slots = (await res.json()).slots || [];
+    grid.innerHTML = slots.length ? '' : '<div style="color:var(--muted);font-size:13px">Garage leer.</div>';
+    for (const s of slots) grid.appendChild(dinoCardEl(s, () => showDinoDetail(s, { mode: 'garage' })));
+  } catch { grid.innerHTML = '<div style="color:#ef4444;font-size:13px">Garage konnte nicht geladen werden.</div>'; }
 }
 
-async function parkDino() {
-  const btn = el('parkBtn');
-  btn.disabled = true; btn.textContent = 'Parke ein…';
-  try {
-    const res = await fetch(`${config.tokenBase}/garage/park`, { method: 'POST', headers: { Authorization: `Bearer ${sessionToken}`, 'Content-Type': 'application/json' }, body: '{}' });
-    const d = await res.json();
-    if (!res.ok) throw new Error(d.error || 'Fehler');
-    showToast(`🚗 ${d.dino} eingeparkt`, 'success');
-    btn.disabled = false; btn.textContent = '⬇️ Aktuellen Dino einparken';
-    await loadGarage();
-  } catch (err) {
-    showToast(err.message, 'error');
-    btn.disabled = false; btn.textContent = '⬇️ Aktuellen Dino einparken';
-  }
-}
-
-async function unparkDino(slotId, btn) {
-  btn.disabled = true; btn.textContent = 'Parke aus…';
-  try {
-    const res = await fetch(`${config.tokenBase}/garage/unpark`, { method: 'POST', headers: { Authorization: `Bearer ${sessionToken}`, 'Content-Type': 'application/json' }, body: JSON.stringify({ slotId }) });
-    const d = await res.json();
-    if (!res.ok) throw new Error(d.error || 'Fehler');
-    showToast(`⬆️ ${d.dino} ausgeparkt`, 'success');
-    await loadGarage();
-  } catch (err) {
-    showToast(err.message, 'error');
-    btn.disabled = false; btn.textContent = '⬆️ Ausparken';
-  }
-}
-
-// ── Dino-Markt (kaufen / verkaufen) ─────────────────────────────────────────
+// ── Dino-Markt (Karten-Grid + Angebot erstellen) ───────────────────────────
+let marketView = 'offers'; // 'offers' | 'create'
 async function renderMarket() {
   el('market').innerHTML = `
     <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px">
       <h2 style="margin:0">🦖 Dino-Markt</h2>
-      <span id="mkPoints" style="font-size:13px;color:#fbbf24;font-weight:700">… Punkte</span>
+      <span id="mkPoints" class="price-tag">… Pkt.</span>
     </div>
-    <div class="sec-title">Angebote</div>
-    <div id="mkOffers" style="display:flex;flex-direction:column;gap:8px;margin:8px 0 16px"></div>
-    <div class="sec-title">Deine Dinos verkaufen</div>
-    <div id="mkSell" style="display:flex;flex-direction:column;gap:8px;margin-top:8px"></div>
+    <div style="display:flex;gap:6px;margin-bottom:12px">
+      <button id="mkTabOffers" style="flex:1">Angebote</button>
+      <button id="mkTabCreate" class="secondary" style="flex:1">➕ Angebot erstellen</button>
+    </div>
+    <div id="mkBody"></div>
     <button class="closeFeature secondary" style="margin-top:14px">Schließen (F9)</button>`;
   el('market').querySelector('.closeFeature').onclick = () => closeAllFeatures();
+  el('mkTabOffers').onclick = () => { marketView = 'offers'; loadMarket(); };
+  el('mkTabCreate').onclick = () => { marketView = 'create'; loadMarket(); };
+  marketView = 'offers';
   await loadMarket();
 }
-
 async function loadMarket() {
+  const tabO = el('mkTabOffers'), tabC = el('mkTabCreate'); if (!tabO) return;
+  tabO.className = marketView === 'offers' ? '' : 'secondary';
+  tabC.className = marketView === 'create' ? '' : 'secondary';
+  const body = el('mkBody'); body.innerHTML = '<div style="color:var(--muted);font-size:13px">Lade…</div>';
   try {
-    const [mRes, gRes] = await Promise.all([
-      fetch(`${config.tokenBase}/market`, { headers: { Authorization: `Bearer ${sessionToken}` } }),
-      fetch(`${config.tokenBase}/garage`, { headers: { Authorization: `Bearer ${sessionToken}` } }),
+    const [m, g] = await Promise.all([
+      fetch(`${config.tokenBase}/market`, { headers: { Authorization: `Bearer ${sessionToken}` } }).then((r) => r.json()),
+      fetch(`${config.tokenBase}/garage`, { headers: { Authorization: `Bearer ${sessionToken}` } }).then((r) => r.json()),
     ]);
-    const m = await mRes.json();
-    const g = await gRes.json();
-    el('mkPoints').textContent = `${(m.points || 0).toLocaleString('de-DE')} Punkte`;
-
-    // Angebote
-    const offers = el('mkOffers');
-    offers.innerHTML = (m.offers || []).length ? '' : '<div style="color:var(--muted);font-size:13px">Keine Angebote.</div>';
-    for (const o of m.offers || []) {
-      const row = document.createElement('div');
-      row.style.cssText = 'display:flex;justify-content:space-between;align-items:center;background:rgba(255,255,255,0.04);border:1px solid var(--border);border-radius:8px;padding:9px 12px';
-      row.innerHTML = `<div><div style="font-weight:600">${o.dino}${o.isElder ? ' 👑' : ''}</div>
-        <div style="font-size:11px;color:var(--muted)">${o.gender} · ${Math.round((o.grow||0)*100)}% · <b style="color:#fbbf24">${o.price.toLocaleString('de-DE')} Pkt.</b></div></div>`;
-      const btn = document.createElement('button');
-      btn.style.cssText = 'flex:none;padding:7px 12px;font-size:12px';
-      if (o.mine) { btn.textContent = 'Dein Angebot'; btn.disabled = true; btn.className = 'secondary'; }
-      else { btn.textContent = 'Kaufen'; btn.onclick = () => buyOffer(o.id, btn); }
-      row.appendChild(btn); offers.appendChild(row);
+    el('mkPoints').textContent = `${(m.points || 0).toLocaleString('de-DE')} Pkt.`;
+    if (marketView === 'offers') {
+      const offers = m.offers || [];
+      if (!offers.length) { body.innerHTML = '<div style="color:var(--muted);font-size:13px">Keine Angebote.</div>'; return; }
+      const grid = document.createElement('div'); grid.className = 'dino-grid'; body.innerHTML = ''; body.appendChild(grid);
+      for (const o of offers) {
+        const card = dinoCardEl(o, () => showDinoDetail(o, { mode: 'market', price: o.price, mine: o.mine }));
+        const tag = document.createElement('div'); tag.className = 'price-tag'; tag.style.borderRadius = '0';
+        tag.textContent = `${o.price.toLocaleString('de-DE')} Pkt.${o.mine ? ' (deins)' : ''}`;
+        card.appendChild(tag); grid.appendChild(card);
+      }
+    } else {
+      const slots = g.slots || [];
+      if (!slots.length) { body.innerHTML = '<div style="color:var(--muted);font-size:13px">Garage leer — nichts zu verkaufen.</div>'; return; }
+      body.innerHTML = '<p style="color:var(--muted);font-size:13px;margin-bottom:8px">Wähle einen Dino zum Verkaufen.</p>';
+      const grid = document.createElement('div'); grid.className = 'dino-grid'; body.appendChild(grid);
+      for (const s of slots) grid.appendChild(dinoCardEl(s, () => showSellDialog(s)));
     }
-
-    // Eigene Dinos verkaufen
-    const sell = el('mkSell');
-    sell.innerHTML = (g.slots || []).length ? '' : '<div style="color:var(--muted);font-size:13px">Garage leer.</div>';
-    for (const s of g.slots || []) {
-      const row = document.createElement('div');
-      row.style.cssText = 'background:rgba(255,255,255,0.04);border:1px solid var(--border);border-radius:8px;padding:9px 12px';
-      row.innerHTML = `<div style="display:flex;justify-content:space-between;align-items:center">
-        <div><div style="font-weight:600">${s.dino}${s.isElder ? ' 👑' : ''}</div>
-        <div style="font-size:11px;color:var(--muted)">${s.gender} · ${Math.round((s.grow||0)*100)}%</div></div>
-        <div style="display:flex;gap:6px">
-          <button data-srv style="flex:none;padding:6px 10px;font-size:12px" class="secondary">An Server (500)</button>
-          <button data-ply style="flex:none;padding:6px 10px;font-size:12px">An Spieler</button>
-        </div></div>
-        <div data-pricerow style="display:none;margin-top:8px;gap:6px;display:none">
-          <input data-price type="number" min="1" placeholder="Preis in Punkten" style="flex:1;padding:6px;border-radius:6px;border:1px solid var(--border);background:#120d24;color:#eee;font-size:12px">
-          <button data-confirm style="flex:none;padding:6px 12px;font-size:12px">Listen</button>
-        </div>`;
-      row.querySelector('[data-srv]').onclick = (e) => sellServer(s.id, e.target);
-      const priceRow = row.querySelector('[data-pricerow]');
-      row.querySelector('[data-ply]').onclick = () => { priceRow.style.display = 'flex'; };
-      row.querySelector('[data-confirm]').onclick = (e) => sellPlayer(s.id, row.querySelector('[data-price]').value, e.target);
-      sell.appendChild(row);
-    }
-  } catch {
-    el('mkOffers').innerHTML = '<div style="color:#ef4444;font-size:13px">Markt konnte nicht geladen werden.</div>';
-  }
+  } catch { body.innerHTML = '<div style="color:#ef4444;font-size:13px">Markt konnte nicht geladen werden.</div>'; }
 }
-
-async function mkPost(path, body, btn, okText) {
-  btn.disabled = true; const old = btn.textContent; btn.textContent = '…';
-  try {
-    const res = await fetch(`${config.tokenBase}${path}`, { method: 'POST', headers: { Authorization: `Bearer ${sessionToken}`, 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
-    const d = await res.json();
-    if (!res.ok) throw new Error(d.error || 'Fehler');
-    showToast(okText || 'Erledigt', 'success');
-    pollHud();
-    await loadMarket();
-  } catch (err) {
-    showToast(err.message, 'error');
-    btn.disabled = false; btn.textContent = old;
-  }
+function showSellDialog(card) {
+  const box = el('dinoDetail').querySelector('.box');
+  box.innerHTML = `<div style="display:flex;gap:14px;align-items:center;margin-bottom:14px"><div style="width:100px;height:62px;border-radius:10px;overflow:hidden;flex:none">${dinoPreviewSVG(card)}</div><div><div style="font-size:18px;font-weight:700">${card.dino}${card.isElder ? ' 👑' : ''}</div><div style="font-size:12px;color:var(--muted)">${card.gender || ''} · ${Math.round((card.grow || 0) * 100)}%</div></div></div>
+    <button id="sdServer" style="width:100%;margin-bottom:8px">💰 An Server verkaufen (+500)</button>
+    <div style="display:flex;gap:6px;margin-bottom:8px">
+      <input id="sdPrice" type="number" min="1" placeholder="Preis in Punkten" style="flex:1;padding:9px;border-radius:8px;border:1px solid var(--border);background:#120d24;color:#eee;font-size:13px">
+      <button id="sdPlayer" style="flex:none;padding:9px 14px">An Spieler listen</button>
+    </div>
+    <button class="secondary" id="sdClose" style="width:100%">Abbrechen</button>`;
+  el('dinoDetail').style.display = 'flex';
+  box.querySelector('#sdClose').onclick = closeDinoDetail;
+  box.querySelector('#sdServer').onclick = () => { closeDinoDetail(); apiAction('/market/sell-server', { slotId: card.id }, '💰 An Server verkauft (+500)', loadMarket); };
+  box.querySelector('#sdPlayer').onclick = () => { const p = parseInt(box.querySelector('#sdPrice').value); if (!p || p <= 0) { showToast('Bitte gültigen Preis eingeben', 'error'); return; } closeDinoDetail(); apiAction('/market/sell-player', { slotId: card.id, price: p }, '🏷️ Angebot erstellt', loadMarket); };
 }
-const buyOffer = (id, btn) => mkPost('/market/buy', { offerId: id }, btn, '🦖 Dino gekauft!');
-const sellServer = (id, btn) => mkPost('/market/sell-server', { slotId: id }, btn, '💰 An Server verkauft (+500)');
-const sellPlayer = (id, price, btn) => {
-  if (!price || parseInt(price) <= 0) { showToast('Bitte gültigen Preis eingeben', 'error'); return; }
-  mkPost('/market/sell-player', { slotId: id, price: parseInt(price) }, btn, '🏷️ Angebot erstellt');
-};
 
 async function updateDinoInfo() {
   let d = null;
