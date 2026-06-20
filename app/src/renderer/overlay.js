@@ -263,7 +263,9 @@ function toggleCalib(force) {
   calibMode = force !== undefined ? force : !calibMode;
   el('calibPanel').style.display = calibMode ? 'block' : 'none';
   el('calibBtn').style.background = calibMode ? '#8b5cf6' : 'var(--panel)';
-  if (calibMode) { calibPairs = []; armedRef = null; renderCalibList(); }
+  // Punkte NICHT zurücksetzen — bleiben erhalten auch wenn man die Karte
+  // zwischendurch schließt (zum Fliegen). Nur der Reset-Button löscht.
+  if (calibMode) renderCalibList();
   renderBigMap();
 }
 
@@ -276,20 +278,18 @@ function refCandidates() {
 }
 
 function renderCalibList() {
-  const used = new Set(calibPairs.map((p) => p.label));
   el('calibRefs').innerHTML = '';
   for (const ref of refCandidates()) {
     const b = document.createElement('button');
-    const isUsed = used.has(ref.label);
     const isArmed = armedRef && armedRef.label === ref.label;
-    b.textContent = (isUsed ? '✓ ' : isArmed ? '➤ ' : '') + ref.label;
+    b.textContent = (isArmed ? '➤ ' : '') + ref.label;
     b.style.cssText = `padding:6px 8px;font-size:12px;border-radius:6px;text-align:left;cursor:pointer;
       border:1px solid ${isArmed ? '#8b5cf6' : 'var(--border)'};
-      background:${isUsed ? 'rgba(34,197,94,0.15)' : isArmed ? 'rgba(139,92,246,0.2)' : 'transparent'};color:#eee`;
+      background:${isArmed ? 'rgba(139,92,246,0.2)' : 'transparent'};color:#eee`;
     b.onclick = () => { armedRef = ref; renderCalibList(); };
     el('calibRefs').appendChild(b);
   }
-  el('calibCount').textContent = `${calibPairs.length} Punkte gesetzt` + (armedRef ? ` · klicke wo "${armedRef.label}" ist` : '');
+  el('calibCount').textContent = `${calibPairs.length} Punkt(e) gesetzt` + (armedRef ? ` · jetzt auf der Karte klicken wo du stehst` : '');
 }
 
 function solveCalibration() {
@@ -366,8 +366,13 @@ function toggleSettings(force) {
 function toggleMap(force) {
   mapOpen = force !== undefined ? force : !mapOpen;
   el('bigMap').style.display = mapOpen ? 'flex' : 'none';
-  if (mapOpen) renderBigMap();
-  else toggleCalib(false);
+  if (mapOpen) {
+    // Kalibrier-Panel wieder einblenden falls Kalibrierung noch aktiv ist
+    if (calibMode) { el('calibPanel').style.display = 'block'; renderCalibList(); }
+    renderBigMap();
+  }
+  // Kalibrierung NICHT abbrechen beim Schließen — Punkte bleiben erhalten,
+  // damit man zwischen den Punkten fliegen kann.
   updateInteractive();
 }
 
