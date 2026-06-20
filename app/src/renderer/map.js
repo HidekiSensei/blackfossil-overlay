@@ -49,18 +49,22 @@ export function normToWorld(nx, ny) {
   return { x: (cal.d * u - cal.b * v) / det, y: (-cal.c * u + cal.a * v) / det };
 }
 
-// Affine aus 3 Korrespondenzen lösen: pairs = [{world:{x,y}, norm:{nx,ny}}]
+// Affine per Least-Squares über ALLE Korrespondenzen lösen (>=3, mehr = genauer)
+// pairs = [{world:{x,y}, norm:{nx,ny}}]
 export function solveAffine(pairs) {
   if (pairs.length < 3) return false;
-  const [p0, p1, p2] = pairs;
-  // Löse für (a,b,e) aus nx, und (c,d,f) aus ny — gleiches 3x3-System
-  const M = [
-    [p0.world.x, p0.world.y, 1],
-    [p1.world.x, p1.world.y, 1],
-    [p2.world.x, p2.world.y, 1],
-  ];
-  const solX = solve3(M, [p0.norm.nx, p1.norm.nx, p2.norm.nx]);
-  const solY = solve3(M, [p0.norm.ny, p1.norm.ny, p2.norm.ny]);
+  // Normalgleichungen aufbauen (getrennt für nx und ny, gleiche 3x3-Matrix)
+  let Sxx = 0, Sxy = 0, Sx = 0, Syy = 0, Sy = 0, N = 0;
+  let Sxnx = 0, Synx = 0, Snx = 0, Sxny = 0, Syny = 0, Sny = 0;
+  for (const p of pairs) {
+    const x = p.world.x, y = p.world.y, nx = p.norm.nx, ny = p.norm.ny;
+    Sxx += x * x; Sxy += x * y; Sx += x; Syy += y * y; Sy += y; N += 1;
+    Sxnx += x * nx; Synx += y * nx; Snx += nx;
+    Sxny += x * ny; Syny += y * ny; Sny += ny;
+  }
+  const M = [[Sxx, Sxy, Sx], [Sxy, Syy, Sy], [Sx, Sy, N]];
+  const solX = solve3(M, [Sxnx, Synx, Snx]);
+  const solY = solve3(M, [Sxny, Syny, Sny]);
   if (!solX || !solY) return false;
   setCalAffine({ a: solX[0], b: solX[1], e: solX[2], c: solY[0], d: solY[1], f: solY[2] });
   return true;
