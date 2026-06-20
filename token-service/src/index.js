@@ -418,6 +418,93 @@ app.post('/garage/unpark', express.json(), async (req, res) => {
   }
 });
 
+// ── 8) Dino-Markt (Bot-seitige JSON-Daten) ──────────────────────────────────
+const MARKETPLACE_FILE = `${BOT_DATA_DIR}/marketplace.json`;
+const POINTS_FILE = `${BOT_DATA_DIR}/points.json`;
+const SERVER_SELL_PRICE = parseInt(process.env.SERVER_SELL_PRICE ?? '500');
+
+function getPoints(steamId) { return readJson(POINTS_FILE, {})[steamId] ?? 0; }
+function setPointsVal(steamId, v) { const p = readJson(POINTS_FILE, {}); p[steamId] = Math.max(0, Math.round(v)); writeJsonFile(POINTS_FILE, p); }
+
+// Marktplatz + eigener Kontostand
+app.get('/market', (req, res) => {
+  const s = sessionFrom(req);
+  if (!s) return res.status(401).json({ error: 'Keine Session' });
+  const market = readJson(MARKETPLACE_FILE, []);
+  res.json({
+    points: getPoints(s.steamId),
+    offers: market.map((o) => ({
+      id: o.id,
+      dino: o.snapshot?.dinoClass ?? '?',
+      gender: o.snapshot?.gender ?? '',
+      grow: o.snapshot?.grow ?? 0,
+      isElder: !!o.snapshot?.isElder,
+      label: o.label ?? null,
+      price: o.price,
+      mine: o.sellerSteamId === s.steamId,
+    })),
+  });
+});
+
+// An den Server verkaufen (Festpreis)
+app.post('/market/sell-server', express.json(), (req, res) => {
+  const s = sessionFrom(req);
+  if (!s) return res.status(401).json({ error: 'Keine Session' });
+  const slotId = req.body?.slotId;
+  const garage = readJson(GARAGE_FILE, {});
+  const slots = garage[s.steamId] ?? [];
+  const slot = slots.find((x) => x.id === slotId);
+  if (!slot) return res.status(404).json({ error: 'Slot nicht gefunden' });
+  setPointsVal(s.steamId, getPoints(s.steamId) + SERVER_SELL_PRICE);
+  garage[s.steamId] = slots.filter((x) => x.id !== slotId);
+  writeJsonFile(GARAGE_FILE, garage);
+  res.json({ ok: true, earned: SERVER_SELL_PRICE, points: getPoints(s.steamId) });
+});
+
+// An Spieler verkaufen (Marktplatz-Listing)
+app.post('/market/sell-player', express.json(), (req, res) => {
+  const s = sessionFrom(req);
+  if (!s) return res.status(401).json({ error: 'Keine Session' });
+  const { slotId, price } = req.body ?? {};
+  const p = parseInt(price);
+  if (!Number.isFinite(p) || p <= 0) return res.status(400).json({ error: 'Ungültiger Preis' });
+  const garage = readJson(GARAGE_FILE, {});
+  const slots = garage[s.steamId] ?? [];
+  const slot = slots.find((x) => x.id === slotId);
+  if (!slot) return res.status(404).json({ error: 'Slot nicht gefunden' });
+  const market = readJson(MARKETPLACE_FILE, []);
+  market.push({ ...slot, sellerSteamId: s.steamId, price: p });
+  writeJsonFile(MARKETPLACE_FILE, market);
+  garage[s.steamId] = slots.filter((x) => x.id !== slotId);
+  writeJsonFile(GARAGE_FILE, garage);
+  res.json({ ok: true });
+});
+
+// Kaufen
+app.post('/market/buy', express.json(), (req, res) => {
+  const s = sessionFrom(req);
+  if (!s) return res.status(401).json({ error: 'Keine Session' });
+  const offerId = req.body?.offerId;
+  const market = readJson(MARKETPLACE_FILE, []);
+  const offer = market.find((o) => o.id === offerId);
+  if (!offer) return res.status(404).json({ error: 'Angebot nicht gefunden' });
+  if (offer.sellerSteamId === s.steamId) return res.status(400).json({ error: 'Eigenes Angebot' });
+  const buyerPoints = getPoints(s.steamId);
+  if (buyerPoints < offer.price) return res.status(402).json({ error: 'Nicht genug Punkte' });
+
+  // Punkte verschieben
+  setPointsVal(s.steamId, buyerPoints - offer.price);
+  setPointsVal(offer.sellerSteamId, getPoints(offer.sellerSteamId) + offer.price);
+  // Token in Käufer-Garage
+  const garage = readJson(GARAGE_FILE, {});
+  if (!garage[s.steamId]) garage[s.steamId] = [];
+  garage[s.steamId].push({ id: genId(), savedAt: Date.now(), snapshot: offer.snapshot, ...(offer.label ? { label: offer.label } : {}) });
+  writeJsonFile(GARAGE_FILE, garage);
+  // Vom Markt nehmen
+  writeJsonFile(MARKETPLACE_FILE, market.filter((o) => o.id !== offerId));
+  res.json({ ok: true, points: getPoints(s.steamId), dino: offer.snapshot?.dinoClass });
+});
+
 // ── Health ───────────────────────────────────────────────────────────────
 app.get('/auth/health', (_req, res) => res.json({ ok: true }));
 

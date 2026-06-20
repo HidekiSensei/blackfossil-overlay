@@ -564,6 +564,7 @@ function toggleFeature(id) {
   featureOpen = id;
   if (id === 'dinoInfo') renderDinoInfo();
   else if (id === 'garage') renderGarage();
+  else if (id === 'market') renderMarket();
   el(id).style.display = 'block';
   updateInteractive();
 }
@@ -674,6 +675,94 @@ async function unparkDino(slotId, btn) {
     setTimeout(() => loadGarage(), 2500);
   }
 }
+
+// ── Dino-Markt (kaufen / verkaufen) ─────────────────────────────────────────
+async function renderMarket() {
+  el('market').innerHTML = `
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px">
+      <h2 style="margin:0">🦖 Dino-Markt</h2>
+      <span id="mkPoints" style="font-size:13px;color:#fbbf24;font-weight:700">… Punkte</span>
+    </div>
+    <div class="sec-title">Angebote</div>
+    <div id="mkOffers" style="display:flex;flex-direction:column;gap:8px;margin:8px 0 16px"></div>
+    <div class="sec-title">Deine Dinos verkaufen</div>
+    <div id="mkSell" style="display:flex;flex-direction:column;gap:8px;margin-top:8px"></div>
+    <button class="closeFeature secondary" style="margin-top:14px">Schließen (F9)</button>`;
+  el('market').querySelector('.closeFeature').onclick = () => closeAllFeatures();
+  await loadMarket();
+}
+
+async function loadMarket() {
+  try {
+    const [mRes, gRes] = await Promise.all([
+      fetch(`${config.tokenBase}/market`, { headers: { Authorization: `Bearer ${sessionToken}` } }),
+      fetch(`${config.tokenBase}/garage`, { headers: { Authorization: `Bearer ${sessionToken}` } }),
+    ]);
+    const m = await mRes.json();
+    const g = await gRes.json();
+    el('mkPoints').textContent = `${(m.points || 0).toLocaleString('de-DE')} Punkte`;
+
+    // Angebote
+    const offers = el('mkOffers');
+    offers.innerHTML = (m.offers || []).length ? '' : '<div style="color:var(--muted);font-size:13px">Keine Angebote.</div>';
+    for (const o of m.offers || []) {
+      const row = document.createElement('div');
+      row.style.cssText = 'display:flex;justify-content:space-between;align-items:center;background:rgba(255,255,255,0.04);border:1px solid var(--border);border-radius:8px;padding:9px 12px';
+      row.innerHTML = `<div><div style="font-weight:600">${o.dino}${o.isElder ? ' 👑' : ''}</div>
+        <div style="font-size:11px;color:var(--muted)">${o.gender} · ${Math.round((o.grow||0)*100)}% · <b style="color:#fbbf24">${o.price.toLocaleString('de-DE')} Pkt.</b></div></div>`;
+      const btn = document.createElement('button');
+      btn.style.cssText = 'flex:none;padding:7px 12px;font-size:12px';
+      if (o.mine) { btn.textContent = 'Dein Angebot'; btn.disabled = true; btn.className = 'secondary'; }
+      else { btn.textContent = 'Kaufen'; btn.onclick = () => buyOffer(o.id, btn); }
+      row.appendChild(btn); offers.appendChild(row);
+    }
+
+    // Eigene Dinos verkaufen
+    const sell = el('mkSell');
+    sell.innerHTML = (g.slots || []).length ? '' : '<div style="color:var(--muted);font-size:13px">Garage leer.</div>';
+    for (const s of g.slots || []) {
+      const row = document.createElement('div');
+      row.style.cssText = 'background:rgba(255,255,255,0.04);border:1px solid var(--border);border-radius:8px;padding:9px 12px';
+      row.innerHTML = `<div style="display:flex;justify-content:space-between;align-items:center">
+        <div><div style="font-weight:600">${s.dino}${s.isElder ? ' 👑' : ''}</div>
+        <div style="font-size:11px;color:var(--muted)">${s.gender} · ${Math.round((s.grow||0)*100)}%</div></div>
+        <div style="display:flex;gap:6px">
+          <button data-srv style="flex:none;padding:6px 10px;font-size:12px" class="secondary">An Server (500)</button>
+          <button data-ply style="flex:none;padding:6px 10px;font-size:12px">An Spieler</button>
+        </div></div>
+        <div data-pricerow style="display:none;margin-top:8px;gap:6px;display:none">
+          <input data-price type="number" min="1" placeholder="Preis in Punkten" style="flex:1;padding:6px;border-radius:6px;border:1px solid var(--border);background:#120d24;color:#eee;font-size:12px">
+          <button data-confirm style="flex:none;padding:6px 12px;font-size:12px">Listen</button>
+        </div>`;
+      row.querySelector('[data-srv]').onclick = (e) => sellServer(s.id, e.target);
+      const priceRow = row.querySelector('[data-pricerow]');
+      row.querySelector('[data-ply]').onclick = () => { priceRow.style.display = 'flex'; };
+      row.querySelector('[data-confirm]').onclick = (e) => sellPlayer(s.id, row.querySelector('[data-price]').value, e.target);
+      sell.appendChild(row);
+    }
+  } catch {
+    el('mkOffers').innerHTML = '<div style="color:#ef4444;font-size:13px">Markt konnte nicht geladen werden.</div>';
+  }
+}
+
+async function mkPost(path, body, btn, okText) {
+  btn.disabled = true; const old = btn.textContent; btn.textContent = '…';
+  try {
+    const res = await fetch(`${config.tokenBase}${path}`, { method: 'POST', headers: { Authorization: `Bearer ${sessionToken}`, 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+    const d = await res.json();
+    if (!res.ok) throw new Error(d.error || 'Fehler');
+    await loadMarket();
+  } catch (err) {
+    btn.disabled = false; btn.textContent = `❌ ${err.message}`.slice(0, 20);
+    setTimeout(() => { btn.textContent = old; }, 2200);
+  }
+}
+const buyOffer = (id, btn) => mkPost('/market/buy', { offerId: id }, btn);
+const sellServer = (id, btn) => mkPost('/market/sell-server', { slotId: id }, btn);
+const sellPlayer = (id, price, btn) => {
+  if (!price || parseInt(price) <= 0) { btn.textContent = 'Preis?'; return; }
+  mkPost('/market/sell-player', { slotId: id, price: parseInt(price) }, btn);
+};
 
 async function updateDinoInfo() {
   let d = null;
