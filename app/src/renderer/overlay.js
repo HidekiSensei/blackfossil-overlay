@@ -563,6 +563,7 @@ function toggleFeature(id) {
   closeAllFeatures(true);
   featureOpen = id;
   if (id === 'dinoInfo') renderDinoInfo();
+  else if (id === 'garage') renderGarage();
   el(id).style.display = 'block';
   updateInteractive();
 }
@@ -605,6 +606,74 @@ function renderDinoInfo() {
 }
 
 function stopDinoInfo() { if (dinoTimer) { clearInterval(dinoTimer); dinoTimer = null; } }
+
+// ── Garage (Ein-/Ausparken) ─────────────────────────────────────────────────
+async function renderGarage() {
+  el('garage').innerHTML = `
+    <h2>🚗 Garage</h2>
+    <p style="margin-bottom:12px">Parke deinen aktuellen Dino ein oder hole einen gespeicherten zurück.</p>
+    <button id="parkBtn" style="width:100%;margin-bottom:14px">⬇️ Aktuellen Dino einparken</button>
+    <div id="garageList" style="display:flex;flex-direction:column;gap:8px"></div>
+    <button class="closeFeature secondary" style="margin-top:14px">Schließen (F8)</button>`;
+  el('garage').querySelector('.closeFeature').onclick = () => closeAllFeatures();
+  el('parkBtn').onclick = () => parkDino();
+  await loadGarage();
+}
+
+async function loadGarage() {
+  const list = el('garageList');
+  list.innerHTML = '<div style="color:var(--muted);font-size:13px">Lade…</div>';
+  try {
+    const res = await fetch(`${config.tokenBase}/garage`, { headers: { Authorization: `Bearer ${sessionToken}` } });
+    const data = await res.json();
+    const slots = data.slots || [];
+    if (!slots.length) { list.innerHTML = '<div style="color:var(--muted);font-size:13px">Garage leer.</div>'; return; }
+    list.innerHTML = '';
+    for (const s of slots) {
+      const row = document.createElement('div');
+      row.style.cssText = 'display:flex;justify-content:space-between;align-items:center;background:rgba(255,255,255,0.04);border:1px solid var(--border);border-radius:8px;padding:10px 12px';
+      row.innerHTML = `<div><div style="font-weight:600">${s.dino}${s.isElder ? ' 👑' : ''}</div>
+        <div style="font-size:11px;color:var(--muted)">${s.gender} · ${Math.round((s.grow || 0) * 100)}% Wachstum${s.label ? ' · ' + s.label : ''}</div></div>`;
+      const btn = document.createElement('button');
+      btn.textContent = '⬆️ Ausparken';
+      btn.style.cssText = 'flex:none;padding:7px 12px;font-size:12px';
+      btn.onclick = () => unparkDino(s.id, btn);
+      row.appendChild(btn);
+      list.appendChild(row);
+    }
+  } catch {
+    list.innerHTML = '<div style="color:#ef4444;font-size:13px">Garage konnte nicht geladen werden.</div>';
+  }
+}
+
+async function parkDino() {
+  const btn = el('parkBtn');
+  btn.disabled = true; btn.textContent = 'Parke ein…';
+  try {
+    const res = await fetch(`${config.tokenBase}/garage/park`, { method: 'POST', headers: { Authorization: `Bearer ${sessionToken}`, 'Content-Type': 'application/json' }, body: '{}' });
+    const d = await res.json();
+    if (!res.ok) throw new Error(d.error || 'Fehler');
+    btn.textContent = `✅ ${d.dino} eingeparkt`;
+    setTimeout(() => { btn.disabled = false; btn.textContent = '⬇️ Aktuellen Dino einparken'; }, 1500);
+    await loadGarage();
+  } catch (err) {
+    btn.disabled = false; btn.textContent = `❌ ${err.message}`;
+    setTimeout(() => { btn.textContent = '⬇️ Aktuellen Dino einparken'; }, 2500);
+  }
+}
+
+async function unparkDino(slotId, btn) {
+  btn.disabled = true; btn.textContent = 'Parke aus…';
+  try {
+    const res = await fetch(`${config.tokenBase}/garage/unpark`, { method: 'POST', headers: { Authorization: `Bearer ${sessionToken}`, 'Content-Type': 'application/json' }, body: JSON.stringify({ slotId }) });
+    const d = await res.json();
+    if (!res.ok) throw new Error(d.error || 'Fehler');
+    await loadGarage();
+  } catch (err) {
+    btn.disabled = false; btn.textContent = `❌ ${err.message}`.slice(0, 22);
+    setTimeout(() => loadGarage(), 2500);
+  }
+}
 
 async function updateDinoInfo() {
   let d = null;

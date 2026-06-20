@@ -324,6 +324,100 @@ app.post('/zones', express.json(), (req, res) => {
   }
 });
 
+// ── 7) Garage (Bot-seitige JSON-Daten, gemeinsam genutzt) ───────────────────
+const BOT_DATA_DIR = process.env.BOT_DATA_DIR ?? '/opt/blackfossil-bot/data';
+const GARAGE_FILE = `${BOT_DATA_DIR}/garage.json`;
+
+function readJson(file, fallback) {
+  try { return JSON.parse(readFileSync(file, 'utf8')); } catch { return fallback; }
+}
+function writeJsonFile(file, data) { writeFileSync(file, JSON.stringify(data, null, 2)); }
+function genId() { return `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`; }
+
+function sessionFrom(req) {
+  const auth = req.headers.authorization ?? '';
+  const t = auth.startsWith('Bearer ') ? auth.slice(7) : null;
+  if (!t) return null;
+  try { return jwt.verify(t, SESSION_SECRET); } catch { return null; }
+}
+async function fetchPlayers() {
+  const r = await fetch(`${PANEL_BASE_URL}/players`, {
+    headers: { Authorization: `Bearer ${PANEL_ADMIN_TOKEN}` },
+    signal: AbortSignal.timeout(8000),
+  });
+  if (!r.ok) throw new Error(`Game-Server HTTP ${r.status}`);
+  return (await r.json()).Players ?? [];
+}
+
+// Garage anzeigen
+app.get('/garage', (req, res) => {
+  const s = sessionFrom(req);
+  if (!s) return res.status(401).json({ error: 'Keine Session' });
+  const garage = readJson(GARAGE_FILE, {});
+  const slots = (garage[s.steamId] ?? []).map((slot) => ({
+    id: slot.id,
+    label: slot.label ?? null,
+    savedAt: slot.savedAt,
+    dino: slot.snapshot?.dinoClass ?? '?',
+    gender: slot.snapshot?.gender ?? '',
+    grow: slot.snapshot?.grow ?? 0,
+    isElder: !!slot.snapshot?.isElder,
+  }));
+  res.json({ slots });
+});
+
+// Aktuellen Dino einparken
+app.post('/garage/park', express.json(), async (req, res) => {
+  const s = sessionFrom(req);
+  if (!s) return res.status(401).json({ error: 'Keine Session' });
+  try {
+    const players = await fetchPlayers();
+    const snapshot = players.find((p) => p.steamId === s.steamId);
+    if (!snapshot) return res.status(409).json({ error: 'Du bist nicht im Spiel.' });
+    // in Garage sichern
+    const garage = readJson(GARAGE_FILE, {});
+    if (!garage[s.steamId]) garage[s.steamId] = [];
+    garage[s.steamId].push({ id: genId(), savedAt: Date.now(), snapshot });
+    writeJsonFile(GARAGE_FILE, garage);
+    // Dino im Spiel einparken (despawn)
+    const pr = await fetch(`${PANEL_BASE_URL}/players/${encodeURIComponent(s.steamId)}/pack`, {
+      method: 'POST', headers: { Authorization: `Bearer ${PANEL_ADMIN_TOKEN}`, 'Content-Type': 'application/json' }, body: '{}',
+    });
+    if (!pr.ok) throw new Error(`Einparken fehlgeschlagen (${pr.status})`);
+    res.json({ ok: true, dino: snapshot.dinoClass });
+  } catch (err) {
+    res.status(502).json({ error: err.message });
+  }
+});
+
+// Dino aus der Garage ausparken (auf aktuellen Dino)
+app.post('/garage/unpark', express.json(), async (req, res) => {
+  const s = sessionFrom(req);
+  if (!s) return res.status(401).json({ error: 'Keine Session' });
+  const slotId = req.body?.slotId;
+  if (!slotId) return res.status(400).json({ error: 'slotId fehlt' });
+  try {
+    const garage = readJson(GARAGE_FILE, {});
+    const slots = garage[s.steamId] ?? [];
+    const slot = slots.find((x) => x.id === slotId);
+    if (!slot) return res.status(404).json({ error: 'Slot nicht gefunden' });
+
+    const players = await fetchPlayers();
+    if (!players.find((p) => p.steamId === s.steamId)) return res.status(409).json({ error: 'Du musst im Spiel sein (auf einem Dino).' });
+
+    const ur = await fetch(`${PANEL_BASE_URL}/players/${encodeURIComponent(s.steamId)}/unpack`, {
+      method: 'POST', headers: { Authorization: `Bearer ${PANEL_ADMIN_TOKEN}`, 'Content-Type': 'application/json' }, body: JSON.stringify(slot.snapshot),
+    });
+    if (!ur.ok) throw new Error(`Ausparken fehlgeschlagen (${ur.status})`);
+    // aus Garage entfernen
+    garage[s.steamId] = slots.filter((x) => x.id !== slotId);
+    writeJsonFile(GARAGE_FILE, garage);
+    res.json({ ok: true, dino: slot.snapshot?.dinoClass });
+  } catch (err) {
+    res.status(502).json({ error: err.message });
+  }
+});
+
 // ── Health ───────────────────────────────────────────────────────────────
 app.get('/auth/health', (_req, res) => res.json({ ok: true }));
 

@@ -1,6 +1,33 @@
 const { app, BrowserWindow, ipcMain, shell, session, globalShortcut, screen } = require('electron');
 const path = require('node:path');
 const fs = require('node:fs');
+const { exec } = require('node:child_process');
+
+// The-Isle-Client-Prozesse (Overlay erscheint nur wenn das Spiel läuft)
+const GAME_PROCESSES = ['TheIsle-Win64-Shipping.exe', 'TheIsle.exe'];
+function isGameRunning() {
+  return new Promise((resolve) => {
+    if (process.platform !== 'win32') return resolve(true); // Dev (Mac/Linux): immer anzeigen
+    exec('tasklist /NH', { windowsHide: true }, (err, stdout) => {
+      if (err) return resolve(true); // im Zweifel anzeigen
+      const lower = stdout.toLowerCase();
+      resolve(GAME_PROCESSES.some((p) => lower.includes(p.toLowerCase())));
+    });
+  });
+}
+let gameWatchTimer = null;
+function startGameWatch() {
+  if (!overlayWindow) openOverlay();
+  const tick = async () => {
+    const running = await isGameRunning();
+    if (!overlayWindow) return;
+    if (running && !overlayWindow.isVisible()) overlayWindow.showInactive();
+    else if (!running && overlayWindow.isVisible()) overlayWindow.hide();
+  };
+  tick();
+  if (gameWatchTimer) clearInterval(gameWatchTimer);
+  gameWatchTimer = setInterval(tick, 5000);
+}
 
 const TOKEN_BASE = 'https://voice.blackfossil.de';
 const SESSION_FILE = path.join(app.getPath('userData'), 'session.json');
@@ -66,7 +93,7 @@ function clearSession() { try { fs.unlinkSync(SESSION_FILE); } catch {} }
 
 function onSessionObtained(token) {
   saveSession(token);
-  openOverlay();
+  startGameWatch();
   if (loginWindow) { loginWindow.close(); loginWindow = null; }
 }
 
@@ -100,9 +127,11 @@ function openOverlay() {
     cb(permission === 'media' || permission === 'microphone'));
 
   overlayWindow.loadFile(path.join(__dirname, 'renderer', 'overlay.html'));
-  // Ohne Fokus anzeigen, damit das Spiel beim Start nicht den Fokus verliert
-  overlayWindow.once('ready-to-show', () => overlayWindow.showInactive());
-  overlayWindow.on('closed', () => { overlayWindow = null; unregisterHotkeys(); });
+  // Sichtbarkeit steuert der Game-Watcher (zeigt nur wenn The Isle läuft)
+  overlayWindow.on('closed', () => {
+    overlayWindow = null; unregisterHotkeys();
+    if (gameWatchTimer) { clearInterval(gameWatchTimer); gameWatchTimer = null; }
+  });
 
   registerHotkeys();
 }
@@ -202,8 +231,8 @@ app.whenReady().then(() => {
   refreshVoiceKeys();
   startVoiceHook();
   if (pendingDeepLink) { onSessionObtained(pendingDeepLink); pendingDeepLink = null; return; }
-  // Wenn schon eingeloggt → direkt Overlay, sonst Login
-  if (loadSession()) openOverlay();
+  // Wenn schon eingeloggt → Game-Watcher (zeigt Overlay wenn The Isle läuft), sonst Login
+  if (loadSession()) startGameWatch();
   else createLoginWindow();
 });
 
