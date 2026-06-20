@@ -223,6 +223,49 @@ app.get('/positions', async (req, res) => {
   }
 });
 
+// ── 4b) Eigene Dino-Stats ──────────────────────────────────────────────────
+app.get('/me', async (req, res) => {
+  const auth = req.headers.authorization ?? '';
+  const sessionToken = auth.startsWith('Bearer ') ? auth.slice(7) : null;
+  if (!sessionToken) return res.status(401).json({ error: 'Keine Session' });
+  let payload;
+  try { payload = jwt.verify(sessionToken, SESSION_SECRET); }
+  catch { return res.status(401).json({ error: 'Session ungültig' }); }
+
+  try {
+    const r = await fetch(`${PANEL_BASE_URL}/players`, {
+      headers: { Authorization: `Bearer ${PANEL_ADMIN_TOKEN}` },
+      signal: AbortSignal.timeout(8000),
+    });
+    if (!r.ok) throw new Error(`Game-Server HTTP ${r.status}`);
+    const data = await r.json();
+    const p = (data.Players ?? []).find((x) => x.steamId === payload.steamId);
+    if (!p) return res.json({ online: false });
+    res.json({
+      online: true,
+      name: p.playerName,
+      dino: p.dinoClass,
+      gender: p.gender,
+      grow: p.grow,
+      health: p.health,
+      hunger: p.hunger,
+      thirst: p.thirst,
+      stamina: p.stamina,
+      blood: p.blood,
+      carbs: p.carbs,
+      protein: p.protein,
+      lipid: p.lipid,
+      isElder: !!p.isElder,
+      isHatchling: !!p.isHatchling,
+      isPrime: !!p.isPrime,
+      elderStacks: p.elderReplicationStacks ?? 0,
+      isBleeding: !!p.isBleeding,
+    });
+  } catch (err) {
+    res.status(502).json({ error: err.message });
+  }
+});
+
 // ── 5) Karten-Kalibrierung (zentral geteilt) ────────────────────────────────
 const CALIBRATION_FILE = process.env.CALIBRATION_FILE ?? '/opt/token-service/calibration.json';
 

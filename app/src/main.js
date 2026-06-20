@@ -17,7 +17,12 @@ const DEFAULT_HOTKEYS = {
   'settings-toggle': 'F10',
   'voice-connect':   'F11',
   'mic-toggle':      'F4',
+  'voice-ptt':       '',   // Push-to-Talk (gedrückt halten) — unbelegt
+  'voice-ptm':       '',   // Push-to-Mute (gedrückt halten) — unbelegt
 };
+// Diese Aktionen werden über den globalen Tasten-Hook (Halten) gesteuert,
+// nicht über globalShortcut (das nur Tastendruck kennt).
+const HOLD_ACTIONS = ['voice-ptt', 'voice-ptm'];
 let HOTKEYS = loadHotkeys();
 
 function loadHotkeys() {
@@ -106,13 +111,52 @@ function openOverlay() {
 function registerHotkeys() {
   globalShortcut.unregisterAll();
   for (const [action, key] of Object.entries(HOTKEYS)) {
-    if (!key) continue; // nicht belegt
+    if (!key || HOLD_ACTIONS.includes(action)) continue; // unbelegt oder Halten-Aktion
     try {
       globalShortcut.register(key, () => {
         if (overlayWindow) overlayWindow.webContents.send('hotkey', action);
       });
     } catch (err) { console.error(`Hotkey ${key} fehlgeschlagen:`, err); }
   }
+  refreshVoiceKeys();
+}
+
+// ── Globaler Tasten-Hook für Push-to-Talk / Push-to-Mute ────────────────────
+let uiohook = null, UiohookKey = null;
+try { const m = require('uiohook-napi'); uiohook = m.uIOhook; UiohookKey = m.UiohookKey; }
+catch (err) { console.error('uiohook nicht verfügbar:', err.message); }
+
+let pttCode = null, ptmCode = null, pttDown = false, ptmDown = false;
+
+function accelToUiohookCode(accel) {
+  if (!accel || !UiohookKey) return null;
+  const key = accel.split('+').pop(); // Modifier ignorieren, Haupttaste nehmen
+  if (/^[A-Z]$/.test(key)) return UiohookKey[key];
+  if (/^F\d{1,2}$/.test(key)) return UiohookKey[key];
+  if (key === 'Space') return UiohookKey.Space;
+  if (/^\d$/.test(key)) return UiohookKey[key];
+  return null;
+}
+
+function refreshVoiceKeys() {
+  pttCode = accelToUiohookCode(HOTKEYS['voice-ptt']);
+  ptmCode = accelToUiohookCode(HOTKEYS['voice-ptm']);
+}
+
+function startVoiceHook() {
+  if (!uiohook) return;
+  uiohook.on('keydown', (e) => {
+    if (pttCode && e.keycode === pttCode && !pttDown) { pttDown = true; sendVoiceKey('ptt', true); }
+    if (ptmCode && e.keycode === ptmCode && !ptmDown) { ptmDown = true; sendVoiceKey('ptm', true); }
+  });
+  uiohook.on('keyup', (e) => {
+    if (pttCode && e.keycode === pttCode && pttDown) { pttDown = false; sendVoiceKey('ptt', false); }
+    if (ptmCode && e.keycode === ptmCode && ptmDown) { ptmDown = false; sendVoiceKey('ptm', false); }
+  });
+  try { uiohook.start(); } catch (err) { console.error('uiohook start fehlgeschlagen:', err.message); }
+}
+function sendVoiceKey(kind, down) {
+  if (overlayWindow) overlayWindow.webContents.send('voice-key', { kind, down });
 }
 function unregisterHotkeys() { globalShortcut.unregisterAll(); }
 
@@ -155,11 +199,13 @@ ipcMain.on('set-interactive', (_e, interactive) => {
 
 // ── App-Start ─────────────────────────────────────────────────────────────
 app.whenReady().then(() => {
+  refreshVoiceKeys();
+  startVoiceHook();
   if (pendingDeepLink) { onSessionObtained(pendingDeepLink); pendingDeepLink = null; return; }
   // Wenn schon eingeloggt → direkt Overlay, sonst Login
   if (loadSession()) openOverlay();
   else createLoginWindow();
 });
 
-app.on('will-quit', unregisterHotkeys);
+app.on('will-quit', () => { unregisterHotkeys(); try { uiohook && uiohook.stop(); } catch {} });
 app.on('window-all-closed', () => { if (process.platform !== 'darwin') app.quit(); });

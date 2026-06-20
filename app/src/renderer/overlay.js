@@ -15,6 +15,7 @@ let armedRef = null;
 let isAdmin = false;
 let zoneEditMode = false;
 let activeZone = null; // 'pvp' | 'pve'
+let pttHeld = false, ptmHeld = false;
 
 // Proximity: Hörradius in Welt-Einheiten (cm). Innerhalb = volle Lautstärke fällt linear auf 0.
 let HEAR_RANGE = parseInt(localStorage.getItem('bf-hear-range') || '45000');
@@ -74,6 +75,12 @@ async function init() {
   el('zoneSaveBtn').onclick = () => saveZones();
 
   window.bf.onHotkey(handleHotkey);
+
+  // Push-to-Talk / Push-to-Mute (globaler Tasten-Hook)
+  window.bf.onVoiceKey(({ kind, down }) => {
+    if (kind === 'ptt') { pttHeld = down; if (voiceMode === 'ptt') applyMic(); }
+    else if (kind === 'ptm') { ptmHeld = down; if (voiceMode === 'ptm') applyMic(); }
+  });
 
   // Gespeicherte Kalibrier-Punkte laden (überleben App-Neustart)
   try { calibPairs = JSON.parse(localStorage.getItem('bf-calib-pairs') || '[]'); } catch { calibPairs = []; }
@@ -472,6 +479,8 @@ const HK_LABELS = {
   'settings-toggle': 'Einstellungen',
   'voice-connect': 'Voice verbinden/trennen',
   'mic-toggle': 'Mikro an/aus',
+  'voice-ptt': 'Push-to-Talk (halten)',
+  'voice-ptm': 'Push-to-Mute (halten)',
   'zone-capture': 'Zonen-Punkt (Owner)',
 };
 let listeningAction = null;
@@ -544,7 +553,7 @@ function setVoiceMode(mode, silent) {
   }
 }
 function applyVoiceMode() {
-  // 'voice' = Sprachaktivierung (Mikro folgt dem An/Aus-Status). PTT/PTM folgen in Phase 3.
+  applyMic();
 }
 
 // ── Feature-Panels ───────────────────────────────────────────────────────────
@@ -559,13 +568,75 @@ function toggleFeature(id) {
 }
 function closeAllFeatures(skipInteractive) {
   ['dinoInfo', 'skinEditor', 'garage', 'market'].forEach((id) => { el(id).style.display = 'none'; });
+  if (featureOpen === 'dinoInfo') stopDinoInfo();
   featureOpen = null;
   if (!skipInteractive) updateInteractive();
 }
+
+// ── Dino-Info (animierte Vital-Balken + Elder-Checker) ──────────────────────
+let dinoTimer = null;
+const DI_STATS = [
+  { key: 'health',  label: 'Gesundheit', color: '#22c55e' },
+  { key: 'blood',   label: 'Blut',       color: '#dc2626' },
+  { key: 'stamina', label: 'Ausdauer',   color: '#eab308' },
+  { key: 'hunger',  label: 'Hunger',     color: '#f97316' },
+  { key: 'thirst',  label: 'Durst',      color: '#3b82f6' },
+  { key: 'carbs',   label: 'Kohlenhydrate', color: '#a3e635' },
+  { key: 'protein', label: 'Protein',    color: '#f472b6' },
+  { key: 'lipid',   label: 'Fett',       color: '#fbbf24' },
+];
+
 function renderDinoInfo() {
-  // Platzhalter — wird in Phase 2 mit animierten Vital-Balken gefüllt
-  el('dinoInfo').innerHTML = '<h2>📊 Dino-Info</h2><p>Vitale Statistiken & Elder-Checker — kommt in Phase 2.</p><button class="closeFeature secondary">Schließen</button>';
+  const bars = DI_STATS.map((s) => `
+    <div class="stat">
+      <div class="stat-top"><span>${s.label}</span><span class="val" id="di-${s.key}-v">—</span></div>
+      <div class="stat-track"><div class="stat-fill" id="di-${s.key}-f" style="background:${s.color}"></div></div>
+    </div>`).join('');
+  el('dinoInfo').innerHTML = `
+    <div class="di-head"><span class="di-dino" id="di-dino">Dino</span><span class="di-sub" id="di-grow"></span></div>
+    <div class="di-sub" id="di-name"></div>
+    <div class="di-badges" id="di-badges"></div>
+    ${bars}
+    <button class="closeFeature secondary" style="margin-top:8px">Schließen (F5)</button>`;
   el('dinoInfo').querySelector('.closeFeature').onclick = () => closeAllFeatures();
+  updateDinoInfo();
+  if (dinoTimer) clearInterval(dinoTimer);
+  dinoTimer = setInterval(updateDinoInfo, 2000);
+}
+
+function stopDinoInfo() { if (dinoTimer) { clearInterval(dinoTimer); dinoTimer = null; } }
+
+async function updateDinoInfo() {
+  let d = null;
+  try {
+    const res = await fetch(`${config.tokenBase}/me`, { headers: { Authorization: `Bearer ${sessionToken}` } });
+    if (res.ok) d = await res.json();
+  } catch {}
+  if (!d || !d.online) {
+    el('di-dino').textContent = 'Nicht im Spiel';
+    el('di-grow').textContent = '';
+    el('di-name').textContent = 'Verbinde dich mit dem Server, um deine Stats zu sehen.';
+    el('di-badges').innerHTML = '';
+    DI_STATS.forEach((s) => { el(`di-${s.key}-f`).style.width = '0%'; el(`di-${s.key}-v`).textContent = '—'; });
+    return;
+  }
+  el('di-dino').textContent = d.dino || 'Dino';
+  el('di-name').textContent = `${d.gender || ''} · ${d.name || ''}`;
+  el('di-grow').textContent = `Wachstum ${Math.round((d.grow || 0) * 100)}%`;
+
+  // Elder-Checker + Status-Badges
+  const stage = d.isElder ? 'Elder' : d.isHatchling ? 'Hatchling' : 'Adult';
+  el('di-badges').innerHTML =
+    `<span class="di-badge ${d.isElder ? 'elder elder-glow' : 'off'}">${d.isElder ? '👑 ELDER' : 'Kein Elder'}${d.isElder && d.elderStacks ? ' · ' + d.elderStacks + ' Stacks' : ''}</span>` +
+    `<span class="di-badge ${d.isPrime ? 'on' : 'off'}">${d.isPrime ? '⭐ Prime' : 'Kein Prime'}</span>` +
+    `<span class="di-badge off">${stage}</span>` +
+    (d.isBleeding ? `<span class="di-badge" style="background:rgba(220,38,38,0.2);border-color:#dc2626;color:#fca5a5">🩸 Blutet</span>` : '');
+
+  DI_STATS.forEach((s) => {
+    const pct = Math.max(0, Math.min(100, Math.round((d[s.key] ?? 0) * 100)));
+    el(`di-${s.key}-f`).style.width = pct + '%';
+    el(`di-${s.key}-v`).textContent = pct + '%';
+  });
 }
 
 function updateInteractive() {
@@ -595,9 +666,24 @@ function toggleMap(force) {
 
 // ── Voice ─────────────────────────────────────────────────────────────────
 // Setzt das Mikro-Icon je nach aktuellem Zustand
+// Soll das Mikro gerade senden? (abhängig vom Voice-Modus)
+function isMicOn() {
+  if (!room) return false;
+  if (voiceMode === 'ptt') return pttHeld;                 // nur während Taste gehalten
+  if (voiceMode === 'ptm') return micEnabled && !ptmHeld;  // an, außer Taste gehalten
+  return micEnabled;                                       // Sprachaktivierung
+}
+
+// Mikro-Sendezustand an den Voice-Modus angleichen
+async function applyMic() {
+  if (!room) return;
+  try { await room.localParticipant.setMicrophoneEnabled(isMicOn()); } catch {}
+  refreshMicState();
+}
+
 function refreshMicState() {
   if (!room) { setMicState('disconnected'); return; }
-  if (!micEnabled) { setMicState('muted'); return; }
+  if (!isMicOn()) { setMicState('muted'); return; }
   if (room.localParticipant.isSpeaking) { setMicState('speaking'); return; }
   setMicState('idle');
 }
@@ -644,9 +730,8 @@ async function toggleConnect() {
 async function toggleMic() {
   if (!room) return;
   micEnabled = !micEnabled;
-  await room.localParticipant.setMicrophoneEnabled(micEnabled);
   el('micBtn').textContent = micEnabled ? 'Mikro aus' : 'Mikro an';
-  refreshMicState();
+  await applyMic();
 }
 
 init();
