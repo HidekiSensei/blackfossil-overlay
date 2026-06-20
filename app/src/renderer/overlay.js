@@ -293,8 +293,23 @@ function renderCalibList() {
 
 function solveCalibration() {
   if (calibPairs.length < 3) { el('calibCount').textContent = 'Mindestens 3 Punkte nötig!'; return; }
-  if (solveAffine(calibPairs)) { toggleCalib(false); }
-  else el('calibCount').textContent = 'Punkte zu nah beieinander — andere wählen.';
+  if (!solveAffine(calibPairs)) { el('calibCount').textContent = 'Punkte zu nah beieinander — andere wählen.'; return; }
+
+  // Genauigkeit prüfen: wie weit liegen die geklickten Punkte vom berechneten Ergebnis?
+  let err = 0;
+  for (const p of calibPairs) {
+    const got = worldToNorm(p.world.x, p.world.y);
+    err += Math.hypot(got.nx - p.norm.nx, got.ny - p.norm.ny);
+  }
+  const px = Math.round((err / calibPairs.length) * el('bigMapCanvas').width);
+  renderBigMap();
+  if (px <= 20) {
+    el('calibCount').innerHTML = `<span style="color:#22c55e">✅ Kalibriert! Ø Abweichung ~${px}px — sehr gut.</span>`;
+  } else if (px <= 50) {
+    el('calibCount').innerHTML = `<span style="color:#f59e0b">⚠️ Kalibriert, aber ~${px}px Abweichung. Für mehr Genauigkeit weitere Punkte setzen.</span>`;
+  } else {
+    el('calibCount').innerHTML = `<span style="color:#ef4444">❌ ~${px}px Abweichung — ein Punkt ist wohl falsch geklickt. Reset und neu, weit verteilt.</span>`;
+  }
 }
 
 function applyHotkeyLabels() {

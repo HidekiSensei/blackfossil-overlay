@@ -49,24 +49,43 @@ export function normToWorld(nx, ny) {
   return { x: (cal.d * u - cal.b * v) / det, y: (-cal.c * u + cal.a * v) / det };
 }
 
-// Affine per Least-Squares über ALLE Korrespondenzen lösen (>=3, mehr = genauer)
+// Affine per Least-Squares über ALLE Korrespondenzen lösen (>=3, mehr = genauer).
+// Welt-Koordinaten werden zentriert + skaliert (Hartley-Normalisierung), damit
+// die riesigen Zahlen die Berechnung nicht numerisch sprengen.
 // pairs = [{world:{x,y}, norm:{nx,ny}}]
 export function solveAffine(pairs) {
   if (pairs.length < 3) return false;
-  // Normalgleichungen aufbauen (getrennt für nx und ny, gleiche 3x3-Matrix)
+
+  // Schwerpunkt + Skala der Welt-Punkte bestimmen
+  const n = pairs.length;
+  const mx = pairs.reduce((s, p) => s + p.world.x, 0) / n;
+  const my = pairs.reduce((s, p) => s + p.world.y, 0) / n;
+  let scale = Math.sqrt(pairs.reduce((s, p) => s + (p.world.x - mx) ** 2 + (p.world.y - my) ** 2, 0) / n);
+  if (!isFinite(scale) || scale < 1e-6) scale = 1;
+
+  // In normalisiertem Raum lösen: nx = a'·X + b'·Y + e' mit X=(x-mx)/scale
   let Sxx = 0, Sxy = 0, Sx = 0, Syy = 0, Sy = 0, N = 0;
   let Sxnx = 0, Synx = 0, Snx = 0, Sxny = 0, Syny = 0, Sny = 0;
   for (const p of pairs) {
-    const x = p.world.x, y = p.world.y, nx = p.norm.nx, ny = p.norm.ny;
+    const x = (p.world.x - mx) / scale, y = (p.world.y - my) / scale;
+    const nx = p.norm.nx, ny = p.norm.ny;
     Sxx += x * x; Sxy += x * y; Sx += x; Syy += y * y; Sy += y; N += 1;
     Sxnx += x * nx; Synx += y * nx; Snx += nx;
     Sxny += x * ny; Syny += y * ny; Sny += ny;
   }
   const M = [[Sxx, Sxy, Sx], [Sxy, Syy, Sy], [Sx, Sy, N]];
-  const solX = solve3(M, [Sxnx, Synx, Snx]);
-  const solY = solve3(M, [Sxny, Syny, Sny]);
-  if (!solX || !solY) return false;
-  setCalAffine({ a: solX[0], b: solX[1], e: solX[2], c: solY[0], d: solY[1], f: solY[2] });
+  const sX = solve3(M, [Sxnx, Synx, Snx]);
+  const sY = solve3(M, [Sxny, Syny, Sny]);
+  if (!sX || !sY) return false;
+
+  // Transform zurück in Welt-Koordinaten zusammensetzen:
+  // nx = (a'/scale)·x + (b'/scale)·y + (e' - (a'·mx + b'·my)/scale)
+  const compose = (s) => ({
+    a: s[0] / scale, b: s[1] / scale,
+    e: s[2] - (s[0] * mx + s[1] * my) / scale,
+  });
+  const cx = compose(sX), cy = compose(sY);
+  setCalAffine({ a: cx.a, b: cx.b, e: cx.e, c: cy.a, d: cy.b, f: cy.e });
   return true;
 }
 
