@@ -54,10 +54,12 @@ function lookupSteamId(discordId) {
 
 // Abo-Tiers von höchstem zu niedrigstem (Discord-Rollennamen)
 const TIER_ROLES = (process.env.TIER_ROLES ?? 'Obsidian,Bernstein,Knochen').split(',').map((s) => s.trim());
+// Staff-Ränge von höchstem zu niedrigstem
+const STAFF_ROLES = (process.env.STAFF_ROLES ?? 'Owner,Admin,Supporter').split(',').map((s) => s.trim());
 
-// ── Discord-Rollen-Check (Admin + Tier in einem Abruf) ──────────────────────
+// ── Discord-Rollen-Check (Admin + Tier + Staff-Rang) ────────────────────────
 async function getDiscordStatus(discordId) {
-  const result = { admin: false, tier: 'Fossil' };
+  const result = { admin: false, tier: 'Fossil', staff: null };
   if (!DISCORD_BOT_TOKEN || !DISCORD_GUILD_ID) return result;
   try {
     const headers = { Authorization: `Bot ${DISCORD_BOT_TOKEN}` };
@@ -71,6 +73,7 @@ async function getDiscordStatus(discordId) {
     const myRoleNames = new Set(roles.filter((r) => (member.roles || []).includes(r.id)).map((r) => r.name));
     result.admin = ADMIN_ROLE_NAMES.some((n) => myRoleNames.has(n));
     result.tier = TIER_ROLES.find((n) => myRoleNames.has(n)) ?? 'Fossil';
+    result.staff = STAFF_ROLES.find((n) => myRoleNames.has(n)) ?? null;
     return result;
   } catch {
     return result;
@@ -142,12 +145,12 @@ app.get('/auth/callback', async (req, res) => {
       ));
     }
 
-    // Admin-Status + Abo-Tier anhand Discord-Rollen
-    const { admin, tier } = await getDiscordStatus(user.id);
+    // Admin-Status + Abo-Tier + Staff-Rang anhand Discord-Rollen
+    const { admin, tier, staff } = await getDiscordStatus(user.id);
 
     // App-Session ausstellen (30 Tage)
     const session = jwt.sign(
-      { steamId, discordId: user.id, name: user.global_name || user.username, admin, tier },
+      { steamId, discordId: user.id, name: user.global_name || user.username, admin, tier, staff },
       SESSION_SECRET,
       { expiresIn: '30d' }
     );
@@ -194,6 +197,7 @@ app.get('/token', async (req, res) => {
     name: payload.name,
     admin: !!payload.admin,
     tier: payload.tier || 'Fossil',
+    staff: payload.staff || null,
   });
 });
 

@@ -17,8 +17,12 @@ let zoneEditMode = false;
 let activeZone = null; // 'pvp' | 'pve'
 let pttHeld = false, ptmHeld = false;
 
-// Proximity: Hörradius in Welt-Einheiten (cm). Innerhalb = volle Lautstärke fällt linear auf 0.
-let HEAR_RANGE = parseInt(localStorage.getItem('bf-hear-range') || '45000');
+// Proximity: Sprechreichweiten in Metern (1 m = 100 Welt-Einheiten/cm).
+// Maßgeblich ist die Reichweite des SPRECHERS — andere hören dich so weit.
+const RANGE_STEPS = [2, 5, 10, 15, 25];
+let myRange = parseFloat(localStorage.getItem('bf-range') || '10');
+const remoteRanges = {};      // identity -> Reichweite des anderen (m)
+const DEFAULT_RANGE = 10;     // bis Reichweite empfangen wird
 
 // Karten-Ansicht (Zoom/Pan)
 let mapZoom = 1, mapPanX = 0, mapPanY = 0;
@@ -60,6 +64,11 @@ function setTier(tier) {
   myTier = tier || 'Fossil';
   const b = document.getElementById('hudTier');
   if (b) { b.textContent = myTier; b.className = 'tier-badge tier-' + myTier; }
+}
+function setStaff(staff) {
+  const b = document.getElementById('hudStaff'); if (!b) return;
+  if (staff) { b.style.display = ''; b.textContent = staff; b.className = 'staff-badge staff-' + staff; }
+  else b.style.display = 'none';
 }
 function updateHud(d) {
   if (!d) return;
@@ -135,16 +144,16 @@ async function init() {
   el('zoomOutBtn').onclick = () => zoomBy(1 / 1.3);
   el('resetViewBtn').onclick = () => { mapZoom = 1; mapPanX = 0; mapPanY = 0; renderBigMap(); };
 
-  // Hörradius-Regler
-  const slider = el('rangeSlider');
-  slider.value = String(HEAR_RANGE);
-  updateRangeLabel();
-  slider.addEventListener('input', () => {
-    HEAR_RANGE = parseInt(slider.value);
-    localStorage.setItem('bf-hear-range', String(HEAR_RANGE));
-    updateRangeLabel();
-    updateProximityVolumes();
-  });
+  // Sprechreichweiten-Buttons
+  const rbWrap = el('rangeBtns');
+  rbWrap.innerHTML = '';
+  for (const r of RANGE_STEPS) {
+    const b = document.createElement('button');
+    b.dataset.range = String(r); b.textContent = `${r} m`; b.style.flex = '1';
+    b.onclick = () => setRange(r, false);
+    rbWrap.appendChild(b);
+  }
+  updateRangeDisplay();
 
   // Voice-Modus
   el('vmodeVoice').onclick = () => setVoiceMode('voice');
@@ -191,17 +200,41 @@ function startPositionPolling() {
 }
 
 // ── Proximity: Lautstärke pro Spieler nach Distanz ──────────────────────────
+// Volle Lautstärke bis zur halben Reichweite, dann linear auf 0 bei voller Reichweite.
+// R = Reichweite des Sprechers (m). Rw = R*100 Welt-Einheiten. vol = clamp(2*(1 - d/Rw)).
 function updateProximityVolumes() {
   if (!room) return;
   for (const p of room.remoteParticipants.values()) {
     const pos = players.find((pl) => pl.steamId === p.identity);
     let vol = 1;
     if (me && pos) {
+      const Rw = (remoteRanges[p.identity] ?? DEFAULT_RANGE) * 100;
       const d = Math.hypot(pos.x - me.x, pos.y - me.y);
-      vol = Math.max(0, 1 - d / HEAR_RANGE);
+      vol = Math.max(0, Math.min(1, 2 * (1 - d / Rw)));
     }
     try { p.setVolume(vol); } catch {}
   }
+}
+
+// ── Sprechreichweite ─────────────────────────────────────────────────────────
+function updateRangeDisplay() {
+  const rb = document.getElementById('rangeBox'); if (rb) rb.textContent = `🔊 Reichweite: ${myRange} m`;
+  document.querySelectorAll('#rangeBtns [data-range]').forEach((b) => { b.className = parseFloat(b.dataset.range) === myRange ? '' : 'secondary'; });
+}
+function setRange(r, announce) {
+  myRange = r;
+  localStorage.setItem('bf-range', String(r));
+  updateRangeDisplay();
+  broadcastRange();
+  if (announce) showToast(`🔊 Sprechreichweite: ${r} m`, 'success');
+}
+function cycleRange() {
+  const i = RANGE_STEPS.indexOf(myRange);
+  setRange(RANGE_STEPS[(i + 1) % RANGE_STEPS.length], true);
+}
+function broadcastRange() {
+  if (!room) return;
+  try { room.localParticipant.publishData(new TextEncoder().encode(JSON.stringify({ t: 'range', r: myRange })), { reliable: true }); } catch {}
 }
 
 function updateZoneBox() {
@@ -212,10 +245,6 @@ function updateZoneBox() {
   el('zoneBox').style.color = z === 'PVP' ? '#ef4444' : z === 'PVE' ? '#22c55e' : '#b3a9cc';
 }
 
-function updateRangeLabel() {
-  // grobe Umrechnung Welt-cm → Meter (1 m = 100 cm)
-  el('rangeVal').textContent = `${Math.round(HEAR_RANGE / 100)} m`;
-}
 
 // ── Rendering ────────────────────────────────────────────────────────────────
 function renderMinimap() {
@@ -500,6 +529,7 @@ function handleHotkey(action) {
   else if (action === 'skin-editor') toggleFeature('skinEditor');
   else if (action === 'garage') toggleFeature('garage');
   else if (action === 'market') toggleFeature('market');
+  else if (action === 'range-cycle') cycleRange();
 }
 
 // ── Tastenbelegung (rebindbar) ───────────────────────────────────────────────
@@ -512,6 +542,7 @@ const HK_LABELS = {
   'settings-toggle': 'Einstellungen',
   'voice-connect': 'Voice verbinden/trennen',
   'mic-toggle': 'Mikro an/aus',
+  'range-cycle': 'Sprechreichweite wechseln',
   'voice-ptt': 'Push-to-Talk (halten)',
   'voice-ptm': 'Push-to-Mute (halten)',
   'zone-capture': 'Zonen-Punkt (Owner)',
@@ -958,6 +989,7 @@ async function connectWithSession(session) {
     renderHotkeys();
     if (data.name) el('hudName').textContent = data.name;
     setTier(data.tier);
+    setStaff(data.staff);
     pollHud();
     if (!pollHud._timer) pollHud._timer = setInterval(pollHud, 6000);
     await connect(data);
@@ -970,8 +1002,15 @@ async function connect({ token, url }) {
   setMicState('connecting');
   room = new Room({ adaptiveStream: true, dynacast: true });
   room
-    .on(RoomEvent.Connected, () => { refreshMicState(); el('connBtn').textContent = 'Trennen'; })
+    .on(RoomEvent.Connected, () => { refreshMicState(); el('connBtn').textContent = 'Trennen'; broadcastRange(); })
     .on(RoomEvent.Disconnected, () => { el('connBtn').textContent = 'Verbinden'; setMicState('disconnected'); })
+    .on(RoomEvent.ParticipantConnected, () => broadcastRange())  // Neuer Teilnehmer lernt meine Reichweite
+    .on(RoomEvent.DataReceived, (payload, participant) => {
+      try {
+        const msg = JSON.parse(new TextDecoder().decode(payload));
+        if (msg.t === 'range' && participant) { remoteRanges[participant.identity] = msg.r; updateProximityVolumes(); }
+      } catch {}
+    })
     .on(RoomEvent.TrackSubscribed, (track) => {
       if (track.kind === Track.Kind.Audio) {
         const a = track.attach(); a.autoplay = true; document.body.appendChild(a);

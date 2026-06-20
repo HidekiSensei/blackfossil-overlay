@@ -44,6 +44,7 @@ const DEFAULT_HOTKEYS = {
   'settings-toggle': 'F10',
   'voice-connect':   'F11',
   'mic-toggle':      'F4',
+  'range-cycle':     'F3',  // Sprechreichweite durchschalten
   'voice-ptt':       '',   // Push-to-Talk (gedrückt halten) — unbelegt
   'voice-ptm':       '',   // Push-to-Mute (gedrückt halten) — unbelegt
 };

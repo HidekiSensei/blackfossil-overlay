@@ -19,6 +19,10 @@
     .tier-Knochen { color: #e5e7eb; border-color:#9ca3af; background: rgba(229,231,235,0.08); }
     .tier-Bernstein { color: #fb923c; border-color:#fb923c; background: rgba(251,146,60,0.12); }
     .tier-Obsidian { color: #c4b5fd; border-color:#8b5cf6; background: linear-gradient(90deg, rgba(139,92,246,0.25), rgba(139,92,246,0.08)); }
+    .staff-badge { font-size: 11px; font-weight: 700; padding: 2px 10px; border-radius: 999px; color: #ddd; border: 1px solid var(--border); }
+    .staff-Owner { color: #fca5a5; background: rgba(220,38,38,0.18); border-color: #ef4444; }
+    .staff-Admin { color: #fdba74; background: rgba(234,88,12,0.18); border-color: #f97316; }
+    .staff-Supporter, .staff-Support { color: #93c5fd; background: rgba(37,99,235,0.18); border-color: #3b82f6; }
 
     /* Toasts */
     #toasts { position: absolute; top: 60px; right: 20px; display: flex; flex-direction: column; gap: 8px; align-items: flex-end; z-index: 50; }
@@ -121,6 +125,7 @@
   <div id="hud">
     <span id="hudVoice" class="hud-dot"></span>
     <span id="hudName">…</span>
+    <span id="hudStaff" class="staff-badge" style="display:none"></span>
     <span id="hudTier" class="tier-badge">Fossil</span>
     <span id="hudPoints">— Pkt.</span>
   </div>
@@ -132,7 +137,8 @@
   <div id="minimapWrap">
     <canvas id="minimap" width="200" height="200"></canvas>
     <div id="micIndicator"><span id="micIcon" class="mic-connecting"></span><span id="micText">Verbinde…</span></div>
-    <div id="zoneBox">Zone: —</div>
+    <div id="rangeBox" style="margin-top:8px;text-align:center;background:var(--panel);border:1px solid var(--border);border-radius:10px;padding:6px 10px;font-size:12px">🔊 Reichweite: 10 m</div>
+    <div id="zoneBox" style="margin-top:8px">Zone: —</div>
   </div>
 
   <!-- Große Map -->
@@ -215,10 +221,8 @@
         </div>
       </div>
       <div style="margin-top:14px">
-        <div style="display:flex;justify-content:space-between;font-size:13px;margin-bottom:4px">
-          <span>🔊 Hörweite (Proximity)</span><span id="rangeVal" style="color:var(--muted)">450 m</span>
-        </div>
-        <input id="rangeSlider" type="range" min="10000" max="120000" step="5000" value="45000" style="width:100%" />
+        <div style="font-size:13px;margin-bottom:5px">🔊 Deine Sprechreichweite <span style="color:var(--muted)">(andere hören dich so weit)</span></div>
+        <div id="rangeBtns" style="display:flex;gap:6px"></div>
       </div>
 
       <div class="sec-title" style="margin-top:18px">⌨️ Tastenbelegung</div>
