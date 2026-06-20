@@ -254,6 +254,33 @@ app.post('/calibration', express.json(), (req, res) => {
   }
 });
 
+// ── 6) Zonen (PVP/PVE Polygone, zentral geteilt) ────────────────────────────
+const ZONES_FILE = process.env.ZONES_FILE ?? '/opt/token-service/zones.json';
+
+app.get('/zones', (_req, res) => {
+  try { res.json(JSON.parse(readFileSync(ZONES_FILE, 'utf8'))); }
+  catch { res.json({}); }
+});
+
+app.post('/zones', express.json(), (req, res) => {
+  const auth = req.headers.authorization ?? '';
+  const sessionToken = auth.startsWith('Bearer ') ? auth.slice(7) : null;
+  if (!sessionToken) return res.status(401).json({ error: 'Keine Session' });
+  let payload;
+  try { payload = jwt.verify(sessionToken, SESSION_SECRET); }
+  catch { return res.status(401).json({ error: 'Session ungültig' }); }
+  if (!payload.admin) return res.status(403).json({ error: 'Nur Admins' });
+
+  const { pvp, pve } = req.body ?? {};
+  if (!Array.isArray(pvp) && !Array.isArray(pve)) return res.status(400).json({ error: 'Ungültige Zonen' });
+  try {
+    writeFileSync(ZONES_FILE, JSON.stringify({ pvp: pvp ?? [], pve: pve ?? [], by: payload.name, at: Date.now() }));
+    res.json({ ok: true });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 // ── Health ───────────────────────────────────────────────────────────────
 app.get('/auth/health', (_req, res) => res.json({ ok: true }));
 

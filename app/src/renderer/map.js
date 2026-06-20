@@ -33,6 +33,12 @@ function loadCal() {
   try { return { ...DEFAULTS, ...JSON.parse(localStorage.getItem('bf-cal-affine')) }; }
   catch { return { ...DEFAULTS }; }
 }
+// Zonen-Polygone vom Server übernehmen
+export function setZones(data) {
+  if (Array.isArray(data.pvp)) ZONES.pvp.points = data.pvp;
+  if (Array.isArray(data.pve)) ZONES.pve.points = data.pve;
+}
+
 export function getCal() { return cal; }
 export function setCalAffine(m) { cal = { ...m }; localStorage.setItem('bf-cal-affine', JSON.stringify(cal)); }
 export function resetCal() { cal = { ...DEFAULTS }; localStorage.setItem('bf-cal-affine', JSON.stringify(cal)); }
@@ -213,7 +219,9 @@ export function drawMinimap(view, players, me, zoom = 0.16) {
 // ── Helfer ───────────────────────────────────────────────────────────────────
 function drawZones(ctx, project) {
   for (const z of Object.values(ZONES)) {
-    const pts = orderPolygon(z.points).map((p) => {
+    if (!z.points.length) continue;
+    // Punkte in Aufnahme-Reihenfolge (unterstützt komplexe/konkave Formen)
+    const pts = z.points.map((p) => {
       const { nx, ny } = worldToNorm(p.x, p.y);
       return project(nx, ny);
     });

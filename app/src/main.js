@@ -11,6 +11,7 @@ const HOTKEYS = {
   'mic-toggle':     'F9',
   'settings-toggle':'F10',
   'map-toggle':     'F7',
+  'zone-capture':   'F6',
 };
 
 let loginWindow = null;

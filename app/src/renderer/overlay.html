@@ -54,6 +54,29 @@
       <button id="calibBtn" style="display:none;position:absolute;top:12px;left:12px;width:auto;padding:8px 14px;
         background:var(--panel);border:1px solid var(--border);color:#eee;border-radius:8px;
         font-size:13px;font-weight:600;cursor:pointer">🔧 Kalibrieren</button>
+      <button id="zoneBtn" style="display:none;position:absolute;top:12px;left:158px;width:auto;padding:8px 14px;
+        background:var(--panel);border:1px solid var(--border);color:#eee;border-radius:8px;
+        font-size:13px;font-weight:600;cursor:pointer">📐 Zonen</button>
+
+      <!-- Zonen-Aufnahme-Panel -->
+      <div id="zonePanel" style="display:none;position:absolute;top:56px;right:12px;width:270px;
+        background:var(--panel);border:1px solid var(--border);border-radius:10px;padding:14px;font-size:12px">
+        <div style="font-weight:700;margin-bottom:6px">📐 Zonen aufnehmen</div>
+        <div style="color:var(--muted);margin-bottom:10px;line-height:1.4">
+          Zone wählen → im Spiel die Form abfliegen → an jeder Ecke <b>F6</b> drücken.
+          Reihenfolge = Umrandung. Dann speichern.</div>
+        <div style="display:flex;gap:6px;margin-bottom:8px">
+          <button id="zonePvpBtn" style="flex:1;padding:8px;border-radius:6px;border:1px solid var(--border);background:transparent;color:#ef4444;cursor:pointer;font-weight:600">PVP</button>
+          <button id="zonePveBtn" style="flex:1;padding:8px;border-radius:6px;border:1px solid var(--border);background:transparent;color:#22c55e;cursor:pointer;font-weight:600">PVE</button>
+        </div>
+        <div id="zoneInfo" style="color:var(--muted);margin-bottom:8px">Keine Zone gewählt</div>
+        <div style="display:flex;gap:6px">
+          <button id="zoneAddBtn" style="flex:1;padding:8px;border-radius:6px;border:0;background:var(--accent);color:#fff;cursor:pointer">＋ Punkt (F6)</button>
+          <button id="zoneUndoBtn" style="width:auto;padding:8px 10px;border-radius:6px;border:1px solid var(--border);background:transparent;color:var(--muted);cursor:pointer">↶</button>
+          <button id="zoneClearBtn" style="width:auto;padding:8px 10px;border-radius:6px;border:1px solid var(--border);background:transparent;color:var(--muted);cursor:pointer">🗑</button>
+        </div>
+        <button id="zoneSaveBtn" style="width:100%;margin-top:8px;padding:9px;border-radius:6px;border:0;background:#22c55e;color:#fff;font-weight:600;cursor:pointer">💾 Speichern (für alle)</button>
+      </div>
 
       <!-- Kalibrierungs-Panel -->
       <div id="calibPanel" style="display:none;position:absolute;top:56px;left:12px;width:280px;

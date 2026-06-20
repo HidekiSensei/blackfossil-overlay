@@ -1,5 +1,5 @@
 import { Room, RoomEvent, Track, ParticipantEvent } from 'livekit-client';
-import { loadMapImage, drawFullMap, drawMinimap, drawHeatmap, normToWorld, worldToNorm, zoneAt, resetCal, solveAffine, getCal, setCalAffine, ZONES } from './map.js';
+import { loadMapImage, drawFullMap, drawMinimap, drawHeatmap, normToWorld, worldToNorm, zoneAt, resetCal, solveAffine, getCal, setCalAffine, setZones, ZONES } from './map.js';
 
 const el = (id) => document.getElementById(id);
 
@@ -13,6 +13,8 @@ let sessionToken = null;
 let calibPairs = [];
 let armedRef = null;
 let isAdmin = false;
+let zoneEditMode = false;
+let activeZone = null; // 'pvp' | 'pve'
 
 // Proximity: Hörradius in Welt-Einheiten (cm). Innerhalb = volle Lautstärke fällt linear auf 0.
 let HEAR_RANGE = parseInt(localStorage.getItem('bf-hear-range') || '45000');
@@ -63,14 +65,24 @@ async function init() {
   el('calibSolve').onclick = () => solveCalibration();
   el('calibReset').onclick = () => { resetCal(); calibPairs = []; saveCalibPairs(); armedRef = null; renderCalibList(); renderBigMap(); };
 
+  // Zonen-Aufnahme
+  el('zoneBtn').onclick = () => toggleZonePanel();
+  el('zonePvpBtn').onclick = () => selectZone('pvp');
+  el('zonePveBtn').onclick = () => selectZone('pve');
+  el('zoneAddBtn').onclick = () => captureZonePoint();
+  el('zoneUndoBtn').onclick = () => { if (activeZone) { ZONES[activeZone].points.pop(); updateZoneInfo(); renderBigMap(); } };
+  el('zoneClearBtn').onclick = () => { if (activeZone) { ZONES[activeZone].points = []; updateZoneInfo(); renderBigMap(); } };
+  el('zoneSaveBtn').onclick = () => saveZones();
+
   window.bf.onHotkey(handleHotkey);
 
   // Gespeicherte Kalibrier-Punkte laden (überleben App-Neustart)
   try { calibPairs = JSON.parse(localStorage.getItem('bf-calib-pairs') || '[]'); } catch { calibPairs = []; }
 
-  // Kartenbild laden + zentrale Kalibrierung vom Server holen
+  // Kartenbild laden + zentrale Kalibrierung & Zonen vom Server holen
   await loadMapImage('assets/map.jpg');
   await loadServerCalibration();
+  await loadServerZones();
 
   // Karten-Interaktion
   const cv = el('bigMapCanvas');
@@ -342,6 +354,65 @@ function solveCalibration() {
   }
 }
 
+// ── Zonen-Aufnahme ───────────────────────────────────────────────────────────
+function toggleZonePanel(force) {
+  if (!isAdmin) return;
+  zoneEditMode = force !== undefined ? force : !zoneEditMode;
+  el('zonePanel').style.display = zoneEditMode ? 'block' : 'none';
+  el('zoneBtn').style.background = zoneEditMode ? '#8b5cf6' : 'var(--panel)';
+  if (zoneEditMode) updateZoneInfo();
+}
+
+function selectZone(which) {
+  activeZone = which;
+  el('zonePvpBtn').style.background = which === 'pvp' ? 'rgba(239,68,68,0.25)' : 'transparent';
+  el('zonePveBtn').style.background = which === 'pve' ? 'rgba(34,197,94,0.25)' : 'transparent';
+  updateZoneInfo();
+}
+
+function updateZoneInfo() {
+  if (!activeZone) { el('zoneInfo').textContent = 'Keine Zone gewählt'; return; }
+  const n = ZONES[activeZone].points.length;
+  el('zoneInfo').innerHTML = `<b style="color:${activeZone === 'pvp' ? '#ef4444' : '#22c55e'}">${ZONES[activeZone].label}</b> · ${n} Punkt(e) — F6 an jeder Ecke`;
+}
+
+// Aktuelle Live-Position als Zonen-Eckpunkt aufnehmen (frische Abfrage für Präzision)
+async function captureZonePoint() {
+  if (!zoneEditMode || !activeZone) return;
+  try {
+    const res = await fetch(`${config.tokenBase}/positions`, { headers: { Authorization: `Bearer ${sessionToken}` } });
+    if (!res.ok) return;
+    const data = await res.json();
+    const meNow = (data.players || []).find((p) => p.isYou);
+    if (!meNow) return;
+    ZONES[activeZone].points.push({ x: meNow.x, y: meNow.y });
+    updateZoneInfo();
+    if (mapOpen) renderBigMap();
+  } catch {}
+}
+
+async function saveZones() {
+  try {
+    const res = await fetch(`${config.tokenBase}/zones`, {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${sessionToken}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ pvp: ZONES.pvp.points, pve: ZONES.pve.points }),
+    });
+    el('zoneInfo').innerHTML = res.ok
+      ? '<span style="color:#22c55e">✅ Zonen für alle gespeichert!</span>'
+      : '<span style="color:#ef4444">❌ Speichern fehlgeschlagen</span>';
+  } catch {
+    el('zoneInfo').innerHTML = '<span style="color:#ef4444">❌ Server nicht erreichbar</span>';
+  }
+}
+
+async function loadServerZones() {
+  try {
+    const res = await fetch(`${config.tokenBase}/zones`);
+    if (res.ok) { const d = await res.json(); if (d.pvp || d.pve) setZones(d); }
+  } catch {}
+}
+
 // Zentrale Kalibrierung vom Server laden (alle Clients beim Start)
 async function loadServerCalibration() {
   try {
@@ -378,6 +449,7 @@ function handleHotkey(action) {
   else if (action === 'mic-toggle') toggleMic();
   else if (action === 'settings-toggle') toggleSettings();
   else if (action === 'map-toggle') toggleMap();
+  else if (action === 'zone-capture') captureZonePoint();
 }
 
 function updateInteractive() {
@@ -395,8 +467,9 @@ function toggleMap(force) {
   mapOpen = force !== undefined ? force : !mapOpen;
   el('bigMap').style.display = mapOpen ? 'flex' : 'none';
   if (mapOpen) {
-    // Kalibrier-Panel wieder einblenden falls Kalibrierung noch aktiv ist
+    // Panels wieder einblenden falls noch aktiv (Punkte bleiben erhalten)
     if (calibMode) { el('calibPanel').style.display = 'block'; renderCalibList(); }
+    if (zoneEditMode) { el('zonePanel').style.display = 'block'; updateZoneInfo(); }
     renderBigMap();
   }
   // Kalibrierung NICHT abbrechen beim Schließen — Punkte bleiben erhalten,
@@ -422,6 +495,7 @@ async function connectWithSession(session) {
     const data = await res.json();
     isAdmin = !!data.admin;
     el('calibBtn').style.display = isAdmin ? 'block' : 'none';
+    el('zoneBtn').style.display = isAdmin ? 'block' : 'none';
     await connect(data);
   } catch (err) {
     setMicState('disconnected', `Fehler: ${err.message}`);
