@@ -271,6 +271,16 @@ app.get('/me', async (req, res) => {
       elderStacks: p.elderReplicationStacks ?? 0,
       isBleeding: !!p.isBleeding,
       primes: Array.from({ length: 10 }, (_, i) => !!p[`primeCondition${i + 1}`]),
+      skin: {
+        skinVariation: p.skinVariation ?? 0,
+        patternIndex: p.patternIndex ?? 0,
+        themeIndex: p.themeIndex ?? 0,
+        colors: {
+          maleDisplayColor: p.maleDisplayColor, markingsColor: p.markingsColor, bodyColor: p.bodyColor,
+          flankColor: p.flankColor, underbellyColor: p.underbellyColor, teethColor: p.teethColor,
+          mouthColor: p.mouthColor, clawsColor: p.clawsColor, detailColor: p.detailColor, eyesColor: p.eyesColor,
+        },
+      },
     });
   } catch (err) {
     res.status(502).json({ error: err.message });
@@ -518,6 +528,41 @@ app.post('/market/buy', express.json(), (req, res) => {
   // Vom Markt nehmen
   writeJsonFile(MARKETPLACE_FILE, market.filter((o) => o.id !== offerId));
   res.json({ ok: true, points: getPoints(s.steamId), dino: offer.snapshot?.dinoClass });
+});
+
+// ── 9) Skin-Editor (Relay an Game-Server) ───────────────────────────────────
+const TIER_ORDER = ['Fossil', 'Knochen', 'Bernstein', 'Obsidian'];
+const SKIN_REQUIRE_TIER = process.env.SKIN_REQUIRE_TIER ?? ''; // leer = für alle frei
+
+app.post('/skin', express.json(), async (req, res) => {
+  const s = sessionFrom(req);
+  if (!s) return res.status(401).json({ error: 'Keine Session' });
+  // Optionales Tier-Gate (später aktivierbar)
+  if (SKIN_REQUIRE_TIER) {
+    const have = TIER_ORDER.indexOf(s.tier || 'Fossil');
+    const need = TIER_ORDER.indexOf(SKIN_REQUIRE_TIER);
+    if (have < need) return res.status(403).json({ error: `Skin-Editor ab Tier "${SKIN_REQUIRE_TIER}"` });
+  }
+  const b = req.body ?? {};
+  // Nur erlaubte Felder weiterreichen
+  const payload = {
+    skinVariation: Number(b.skinVariation) || 0,
+    patternIndex: Number(b.patternIndex) || 0,
+    themeIndex: Number(b.themeIndex) || 0,
+  };
+  for (const k of ['maleDisplayColor', 'markingsColor', 'bodyColor', 'flankColor', 'underbellyColor', 'teethColor', 'mouthColor', 'clawsColor', 'detailColor', 'eyesColor']) {
+    if (Array.isArray(b[k]) && b[k].length === 3) payload[k] = b[k].map(Number);
+  }
+  try {
+    const r = await fetch(`${PANEL_BASE_URL}/players/${encodeURIComponent(s.steamId)}/skin`, {
+      method: 'POST', headers: { Authorization: `Bearer ${PANEL_ADMIN_TOKEN}`, 'Content-Type': 'application/json' }, body: JSON.stringify(payload),
+      signal: AbortSignal.timeout(8000),
+    });
+    if (!r.ok) throw new Error(`Skin-Update fehlgeschlagen (${r.status})`);
+    res.json({ ok: true });
+  } catch (err) {
+    res.status(502).json({ error: err.message });
+  }
 });
 
 // ── Health ───────────────────────────────────────────────────────────────

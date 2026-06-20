@@ -597,6 +597,7 @@ function toggleFeature(id) {
   if (id === 'dinoInfo') renderDinoInfo();
   else if (id === 'garage') renderGarage();
   else if (id === 'market') renderMarket();
+  else if (id === 'skinEditor') renderSkinEditor();
   el(id).style.display = 'block';
   updateInteractive();
 }
@@ -709,6 +710,60 @@ async function loadGarage() {
     grid.innerHTML = slots.length ? '' : '<div style="color:var(--muted);font-size:13px">Garage leer.</div>';
     for (const s of slots) grid.appendChild(dinoCardEl(s, () => showDinoDetail(s, { mode: 'garage' })));
   } catch { grid.innerHTML = '<div style="color:#ef4444;font-size:13px">Garage konnte nicht geladen werden.</div>'; }
+}
+
+// ── Skin-Editor ──────────────────────────────────────────────────────────────
+const SKIN_GROUPS = [
+  ['bodyColor', 'Körper'], ['markingsColor', 'Musterung'], ['underbellyColor', 'Bauch'],
+  ['flankColor', 'Flanke'], ['detailColor', 'Details'], ['eyesColor', 'Augen'],
+  ['maleDisplayColor', 'Display (♂)'], ['teethColor', 'Zähne'], ['mouthColor', 'Maul'], ['clawsColor', 'Krallen'],
+];
+let skinState = null;
+function linToHex(rgb) { if (!rgb) return '#888888'; const h = (v) => ('0' + gc(v).toString(16)).slice(-2); return '#' + h(rgb[0]) + h(rgb[1]) + h(rgb[2]); }
+function hexToLin(hex) { const n = parseInt(hex.slice(1), 16); const f = (v) => Math.pow(v / 255, 2.2); return [f((n >> 16) & 255), f((n >> 8) & 255), f(n & 255)]; }
+
+async function renderSkinEditor() {
+  const panel = el('skinEditor');
+  panel.innerHTML = '<h2>🎨 Skin Editor</h2><p>Lade aktuellen Dino…</p>';
+  let me = null;
+  try { me = await (await fetch(`${config.tokenBase}/me`, { headers: { Authorization: `Bearer ${sessionToken}` } })).json(); } catch {}
+  if (!me || !me.online) {
+    panel.innerHTML = '<h2>🎨 Skin Editor</h2><p>Du musst im Spiel sein (auf einem Dino), um den Skin zu ändern.</p><button class="closeFeature secondary" style="width:100%">Schließen</button>';
+    panel.querySelector('.closeFeature').onclick = closeAllFeatures; return;
+  }
+  const sk = me.skin || {};
+  skinState = { skinVariation: sk.skinVariation || 0, patternIndex: sk.patternIndex || 0, themeIndex: sk.themeIndex || 0, colors: {} };
+  for (const [k] of SKIN_GROUPS) skinState.colors[k] = (sk.colors && sk.colors[k]) ? sk.colors[k] : [0.5, 0.5, 0.5];
+
+  const rows = SKIN_GROUPS.map(([k, l]) => `<div style="display:flex;justify-content:space-between;align-items:center;padding:5px 0"><span style="font-size:13px">${l}</span><input type="color" data-col="${k}" value="${linToHex(skinState.colors[k])}" style="width:46px;height:28px;border:0;background:none;cursor:pointer"></div>`).join('');
+  panel.innerHTML = `<h2>🎨 Skin Editor — ${me.dino}</h2>
+    <div id="skPreview" style="height:90px;border-radius:12px;overflow:hidden;margin-bottom:14px"></div>
+    <div class="sec-title">Muster</div>
+    <div style="display:flex;gap:6px;margin:6px 0 12px">${[0, 1, 2].map((i) => `<button data-pat="${i}" style="flex:1" class="${skinState.patternIndex === i ? '' : 'secondary'}">Muster ${i + 1}</button>`).join('')}</div>
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px"><span style="font-size:13px">Skin-Variation</span><input id="skVar" type="number" min="0" value="${skinState.skinVariation}" style="width:80px;padding:6px;border-radius:6px;border:1px solid var(--border);background:#120d24;color:#eee"></div>
+    <div class="sec-title">Farben</div>${rows}
+    <button id="skApply" style="width:100%;margin-top:14px">✅ Skin anwenden</button>
+    <button class="closeFeature secondary" style="width:100%;margin-top:8px">Schließen (F7)</button>`;
+  panel.querySelector('.closeFeature').onclick = closeAllFeatures;
+  updateSkinPreview();
+  panel.querySelectorAll('[data-col]').forEach((inp) => inp.oninput = () => { skinState.colors[inp.dataset.col] = hexToLin(inp.value); updateSkinPreview(); });
+  panel.querySelectorAll('[data-pat]').forEach((b) => b.onclick = () => { skinState.patternIndex = parseInt(b.dataset.pat); panel.querySelectorAll('[data-pat]').forEach((x) => x.className = x === b ? '' : 'secondary'); });
+  el('skVar').oninput = () => { skinState.skinVariation = parseInt(el('skVar').value) || 0; };
+  el('skApply').onclick = applySkin;
+}
+function updateSkinPreview() {
+  const c = skinState.colors;
+  el('skPreview').innerHTML = dinoPreviewSVG({ id: 'sk', colors: { body: c.bodyColor, markings: c.markingsColor, underbelly: c.underbellyColor, flank: c.flankColor, detail: c.detailColor, eyes: c.eyesColor } });
+}
+async function applySkin() {
+  const btn = el('skApply'); btn.disabled = true; btn.textContent = 'Wird angewendet…';
+  try {
+    const body = { skinVariation: skinState.skinVariation, patternIndex: skinState.patternIndex, themeIndex: skinState.themeIndex, ...skinState.colors };
+    const res = await fetch(`${config.tokenBase}/skin`, { method: 'POST', headers: { Authorization: `Bearer ${sessionToken}`, 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+    const d = await res.json(); if (!res.ok) throw new Error(d.error || 'Fehler');
+    showToast('🎨 Skin angewendet!', 'success');
+  } catch (err) { showToast(err.message, 'error'); }
+  btn.disabled = false; btn.textContent = '✅ Skin anwenden';
 }
 
 // ── Dino-Markt (Karten-Grid + Angebot erstellen) ───────────────────────────
