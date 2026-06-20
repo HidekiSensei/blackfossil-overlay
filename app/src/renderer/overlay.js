@@ -1,5 +1,5 @@
 import { Room, RoomEvent, Track, ParticipantEvent } from 'livekit-client';
-import { loadMapImage, drawFullMap, drawMinimap, drawHeatmap, normToWorld, worldToNorm, zoneAt, resetCal, solveAffine, ZONES } from './map.js';
+import { loadMapImage, drawFullMap, drawMinimap, drawHeatmap, normToWorld, worldToNorm, zoneAt, resetCal, solveAffine, getCal, setCalAffine, ZONES } from './map.js';
 
 const el = (id) => document.getElementById(id);
 
@@ -65,8 +65,9 @@ async function init() {
 
   window.bf.onHotkey(handleHotkey);
 
-  // Kartenbild laden
+  // Kartenbild laden + zentrale Kalibrierung vom Server holen
   await loadMapImage('assets/map.jpg');
+  await loadServerCalibration();
 
   // Karten-Interaktion
   const cv = el('bigMapCanvas');
@@ -267,10 +268,10 @@ function toggleCalib(force) {
 }
 
 function refCandidates() {
+  // NUR eigene/Live-Spieler-Positionen (Zonen-Ecken sind als Referenz unbrauchbar,
+  // weil man ihre Kartenposition nicht kennt)
   const list = [];
-  for (const p of players) if (!p.isDead) list.push({ label: `👤 ${p.name}`, x: p.x, y: p.y });
-  for (const [k, z] of Object.entries(ZONES))
-    z.points.forEach((pt, i) => list.push({ label: `${z.label}-${'ABCD'[i]}`, x: pt.x, y: pt.y }));
+  for (const p of players) if (!p.isDead) list.push({ label: `👤 ${p.name}${p.isYou ? ' (du)' : ''}`, x: p.x, y: p.y });
   return list;
 }
 
@@ -304,12 +305,35 @@ function solveCalibration() {
   const px = Math.round((err / calibPairs.length) * el('bigMapCanvas').width);
   renderBigMap();
   if (px <= 20) {
-    el('calibCount').innerHTML = `<span style="color:#22c55e">✅ Kalibriert! Ø Abweichung ~${px}px — sehr gut.</span>`;
+    el('calibCount').innerHTML = `<span style="color:#22c55e">✅ Kalibriert! Ø ~${px}px — sehr gut. Wird für alle gespeichert…</span>`;
+    shareCalibration();
   } else if (px <= 50) {
-    el('calibCount').innerHTML = `<span style="color:#f59e0b">⚠️ Kalibriert, aber ~${px}px Abweichung. Für mehr Genauigkeit weitere Punkte setzen.</span>`;
+    el('calibCount').innerHTML = `<span style="color:#f59e0b">⚠️ ~${px}px Abweichung. Mehr Punkte für mehr Genauigkeit. (Noch nicht geteilt)</span>`;
   } else {
-    el('calibCount').innerHTML = `<span style="color:#ef4444">❌ ~${px}px Abweichung — ein Punkt ist wohl falsch geklickt. Reset und neu, weit verteilt.</span>`;
+    el('calibCount').innerHTML = `<span style="color:#ef4444">❌ ~${px}px — ein Punkt falsch geklickt. Reset und neu, weit verteilt.</span>`;
   }
+}
+
+// Zentrale Kalibrierung vom Server laden (alle Clients beim Start)
+async function loadServerCalibration() {
+  try {
+    const res = await fetch(`${config.tokenBase}/calibration`);
+    if (res.ok) {
+      const data = await res.json();
+      if (data.affine && typeof data.affine.a === 'number') setCalAffine(data.affine);
+    }
+  } catch {}
+}
+
+// Gute Kalibrierung auf den Server hochladen (gilt dann für alle)
+function shareCalibration() {
+  fetch(`${config.tokenBase}/calibration`, {
+    method: 'POST',
+    headers: { Authorization: `Bearer ${sessionToken}`, 'Content-Type': 'application/json' },
+    body: JSON.stringify({ affine: getCal() }),
+  })
+    .then((r) => { if (r.ok) el('calibCount').innerHTML = `<span style="color:#22c55e">✅ Kalibriert & für alle Spieler gespeichert!</span>`; })
+    .catch(() => {});
 }
 
 function applyHotkeyLabels() {

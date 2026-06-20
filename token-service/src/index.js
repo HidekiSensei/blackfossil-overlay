@@ -10,7 +10,7 @@
 
 import express from 'express';
 import jwt from 'jsonwebtoken';
-import { readFileSync } from 'node:fs';
+import { readFileSync, writeFileSync } from 'node:fs';
 import { AccessToken } from 'livekit-server-sdk';
 import { randomBytes } from 'node:crypto';
 
@@ -220,6 +220,37 @@ app.get('/positions', async (req, res) => {
     res.json({ players, you: payload.steamId });
   } catch (err) {
     res.status(502).json({ error: err.message });
+  }
+});
+
+// ── 5) Karten-Kalibrierung (zentral geteilt) ────────────────────────────────
+const CALIBRATION_FILE = process.env.CALIBRATION_FILE ?? '/opt/token-service/calibration.json';
+
+app.get('/calibration', (_req, res) => {
+  try {
+    const data = JSON.parse(readFileSync(CALIBRATION_FILE, 'utf8'));
+    res.json(data);
+  } catch {
+    res.json({}); // noch keine gespeichert
+  }
+});
+
+app.post('/calibration', express.json(), (req, res) => {
+  const auth = req.headers.authorization ?? '';
+  const sessionToken = auth.startsWith('Bearer ') ? auth.slice(7) : null;
+  if (!sessionToken) return res.status(401).json({ error: 'Keine Session' });
+  let payload;
+  try { payload = jwt.verify(sessionToken, SESSION_SECRET); }
+  catch { return res.status(401).json({ error: 'Session ungültig' }); }
+  if (!payload.admin) return res.status(403).json({ error: 'Nur Admins' });
+
+  const affine = req.body?.affine;
+  if (!affine || typeof affine.a !== 'number') return res.status(400).json({ error: 'Ungültige Kalibrierung' });
+  try {
+    writeFileSync(CALIBRATION_FILE, JSON.stringify({ affine, by: payload.name, at: Date.now() }));
+    res.json({ ok: true });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
   }
 });
 
