@@ -66,6 +66,7 @@ function updateHud(d) {
   if (d.name) document.getElementById('hudName').textContent = d.name;
   if (typeof d.points === 'number') document.getElementById('hudPoints').textContent = `${d.points.toLocaleString('de-DE')} Pkt.`;
   if (d.tier) setTier(d.tier);
+  if (d.primes) checkPrimes(d.primes);
 }
 async function pollHud() {
   if (!sessionToken) return;
@@ -608,6 +609,32 @@ function closeAllFeatures(skipInteractive) {
   if (!skipInteractive) updateInteractive();
 }
 
+// ── Elder / Prime-Bedingungen ────────────────────────────────────────────────
+const PRIME_LABELS = [
+  'Sanctuary als Juvenile besucht',
+  'Genested (Get Nested In)',
+  'Perfekte Ernährung (1% je Makro)',
+  'Mass-Migration-Zone besucht',
+  '2 Migrations-Zonen besucht',
+  '4 Patrol-Zonen besucht',
+  'Nie unfruchtbar (auto)',
+  'Keine Muskelkrämpfe (auto)',
+  'Kinder zu Subadult großgezogen',
+  'Spezies-Bonus (auto)',
+];
+let prevPrimes = null;
+function checkPrimes(primes) {
+  if (!Array.isArray(primes)) return;
+  if (prevPrimes) primes.forEach((v, i) => { if (v && !prevPrimes[i]) showToast(`✅ Elder-Bedingung erfüllt: ${PRIME_LABELS[i]}`, 'elder'); });
+  prevPrimes = primes.slice();
+}
+function elderHTML(primes) {
+  const p = primes || [];
+  const met = p.filter(Boolean).length;
+  const head = `<div style="font-size:12px;color:${met >= 5 ? '#22c55e' : 'var(--muted)'};margin-bottom:6px">${met}/5 Bedingungen für Prime${met >= 5 ? ' — erreicht! 👑' : ` (noch ${5 - met})`}</div>`;
+  return head + p.map((v, i) => `<div style="display:flex;align-items:center;gap:7px;font-size:12px;padding:2px 0;${v ? '' : 'opacity:0.55'}"><span>${v ? '✅' : '⬜'}</span><span>${PRIME_LABELS[i]}</span></div>`).join('');
+}
+
 // ── Dino-Info (animierte Vital-Balken + Elder-Checker) ──────────────────────
 let dinoTimer = null;
 const DI_STATS = [
@@ -631,6 +658,9 @@ function renderDinoInfo() {
     <div class="di-head"><span class="di-dino" id="di-dino">Dino</span><span class="di-sub" id="di-grow"></span></div>
     <div class="di-sub" id="di-name"></div>
     <div class="di-badges" id="di-badges"></div>
+    <div class="sec-title">⏳ Elder-Fortschritt</div>
+    <div id="di-elder" style="margin:6px 0 14px"></div>
+    <div class="sec-title">Vitals</div>
     ${bars}
     <button class="closeFeature secondary" style="margin-top:8px">Schließen (F5)</button>`;
   el('dinoInfo').querySelector('.closeFeature').onclick = () => closeAllFeatures();
@@ -842,9 +872,11 @@ async function updateDinoInfo() {
     el('di-grow').textContent = '';
     el('di-name').textContent = 'Verbinde dich mit dem Server, um deine Stats zu sehen.';
     el('di-badges').innerHTML = '';
+    el('di-elder').innerHTML = '<span style="color:var(--muted);font-size:12px">—</span>';
     DI_STATS.forEach((s) => { el(`di-${s.key}-f`).style.width = '0%'; el(`di-${s.key}-v`).textContent = '—'; });
     return;
   }
+  el('di-elder').innerHTML = elderHTML(d.primes);
   el('di-dino').textContent = d.dino || 'Dino';
   el('di-name').textContent = `${d.gender || ''} · ${d.name || ''}`;
   el('di-grow').textContent = `Wachstum ${Math.round((d.grow || 0) * 100)}%`;
