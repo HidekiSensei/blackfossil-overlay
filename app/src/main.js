@@ -70,7 +70,7 @@ function openOverlay() {
   overlayWindow = new BrowserWindow({
     x: bounds.x, y: bounds.y, width: bounds.width, height: bounds.height,
     transparent: true, frame: false, resizable: false, movable: false,
-    skipTaskbar: true, hasShadow: false, fullscreenable: false, focusable: false,
+    skipTaskbar: true, hasShadow: false, fullscreenable: false, show: false,
     webPreferences: { preload: path.join(__dirname, 'preload.js'), contextIsolation: true },
   });
   overlayWindow.setAlwaysOnTop(true, 'screen-saver');
@@ -82,6 +82,8 @@ function openOverlay() {
     cb(permission === 'media' || permission === 'microphone'));
 
   overlayWindow.loadFile(path.join(__dirname, 'renderer', 'overlay.html'));
+  // Ohne Fokus anzeigen, damit das Spiel beim Start nicht den Fokus verliert
+  overlayWindow.once('ready-to-show', () => overlayWindow.showInactive());
   overlayWindow.on('closed', () => { overlayWindow = null; unregisterHotkeys(); });
 
   registerHotkeys();
@@ -116,11 +118,10 @@ ipcMain.on('set-interactive', (_e, interactive) => {
   if (!overlayWindow) return;
   overlayWindow.setIgnoreMouseEvents(!interactive, { forward: true });
   if (interactive) {
-    overlayWindow.setFocusable(true);
-    overlayWindow.focus();
+    overlayWindow.setAlwaysOnTop(true, 'screen-saver');
+    overlayWindow.focus();           // Overlay holt Fokus → Spiel bekommt keine Eingaben
   } else {
     overlayWindow.blur();            // gibt den Fokus zurück ans Spiel
-    overlayWindow.setFocusable(false);
   }
 });
 
