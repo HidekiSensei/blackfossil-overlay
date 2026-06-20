@@ -190,6 +190,7 @@ function startPositionPolling() {
         me = players.find((p) => p.isYou) || null;
         el('serverBanner').style.display = me ? 'none' : 'block';
         updateZoneBox();
+        checkZoneChange();
         updateProximityVolumes();
         if (mapOpen) renderBigMap();
       }
@@ -239,10 +240,23 @@ function broadcastRange() {
 
 function updateZoneBox() {
   if (!me) { el('zoneBox').textContent = 'Zone: —'; el('zoneBox').style.color = '#b3a9cc'; return; }
-  const z = zoneAt(me.x, me.y);
+  const z = zoneAt(me.x, me.y) || 'Realismus';
   const coords = `X ${(me.x / 1000) | 0}k  Y ${(me.y / 1000) | 0}k`;
-  el('zoneBox').innerHTML = `${z ? 'Zone: ' + z : 'Zone: Frei'}<br><span style="font-size:11px;opacity:0.7">${coords}</span>`;
+  el('zoneBox').innerHTML = `Zone: ${z}<br><span style="font-size:11px;opacity:0.7">${coords}</span>`;
   el('zoneBox').style.color = z === 'PVP' ? '#ef4444' : z === 'PVE' ? '#22c55e' : '#b3a9cc';
+}
+
+// Toast beim Betreten einer anderen Zone (PVP/PVE/Realismus)
+let currentZone;
+function checkZoneChange() {
+  if (!me) return;
+  const z = zoneAt(me.x, me.y) || 'Realismus';
+  if (currentZone !== undefined && z !== currentZone) {
+    const type = z === 'PVP' ? 'error' : z === 'PVE' ? 'success' : 'elder';
+    const icon = z === 'PVP' ? '⚔️' : z === 'PVE' ? '🛡️' : '🌿';
+    showToast(`${icon} Du betrittst die ${z}-Zone`, type);
+  }
+  currentZone = z;
 }
 
 
@@ -554,7 +568,7 @@ async function renderHotkeys() {
   const list = el('hotkeyList');
   list.innerHTML = '';
   for (const [action, label] of Object.entries(HK_LABELS)) {
-    if (action === 'zone-capture' && !isAdmin) continue;
+    if (action === 'zone-capture') continue; // Admin-Tool ausgeblendet
     const row = document.createElement('div');
     row.className = 'hk-row';
     const span = document.createElement('span');
@@ -984,8 +998,10 @@ async function connectWithSession(session) {
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
     const data = await res.json();
     isAdmin = !!data.admin;
-    el('calibBtn').style.display = isAdmin ? 'block' : 'none';
-    el('zoneBtn').style.display = isAdmin ? 'block' : 'none';
+    // Kalibrierung & Zonen sind fertig (server-gespeichert) — Tools ausgeblendet,
+    // damit niemand versehentlich etwas überschreibt. Bei Bedarf wieder einblendbar.
+    el('calibBtn').style.display = 'none';
+    el('zoneBtn').style.display = 'none';
     renderHotkeys();
     if (data.name) el('hudName').textContent = data.name;
     setTier(data.tier);
