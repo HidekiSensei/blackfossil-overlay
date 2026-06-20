@@ -41,6 +41,38 @@ function setMicState(state, text) {
   icon.innerHTML = glyph;
   icon.className = `mic-${state}`;
   el('micText').textContent = text ?? labels[state];
+  const dotColor = { speaking: '#22c55e', idle: '#22c55e', muted: '#ef4444', disconnected: '#666', connecting: '#f59e0b' };
+  const hv = document.getElementById('hudVoice'); if (hv) hv.style.background = dotColor[state] || '#666';
+}
+
+// ── Toast-System ─────────────────────────────────────────────────────────────
+function showToast(msg, type = '') {
+  const t = document.createElement('div');
+  t.className = 'toast' + (type ? ' ' + type : '');
+  t.textContent = msg;
+  document.getElementById('toasts').appendChild(t);
+  setTimeout(() => { t.classList.add('fade'); setTimeout(() => t.remove(), 300); }, 3600);
+}
+
+// ── Top-HUD (Name / Tier / Punkte) ───────────────────────────────────────────
+let myTier = 'Fossil';
+function setTier(tier) {
+  myTier = tier || 'Fossil';
+  const b = document.getElementById('hudTier');
+  if (b) { b.textContent = myTier; b.className = 'tier-badge tier-' + myTier; }
+}
+function updateHud(d) {
+  if (!d) return;
+  if (d.name) document.getElementById('hudName').textContent = d.name;
+  if (typeof d.points === 'number') document.getElementById('hudPoints').textContent = `${d.points.toLocaleString('de-DE')} Pkt.`;
+  if (d.tier) setTier(d.tier);
+}
+async function pollHud() {
+  if (!sessionToken) return;
+  try {
+    const res = await fetch(`${config.tokenBase}/me`, { headers: { Authorization: `Bearer ${sessionToken}` } });
+    if (res.ok) updateHud(await res.json());
+  } catch {}
 }
 
 let config = { tokenBase: 'https://voice.blackfossil.de', hotkeys: {} };
@@ -654,12 +686,12 @@ async function parkDino() {
     const res = await fetch(`${config.tokenBase}/garage/park`, { method: 'POST', headers: { Authorization: `Bearer ${sessionToken}`, 'Content-Type': 'application/json' }, body: '{}' });
     const d = await res.json();
     if (!res.ok) throw new Error(d.error || 'Fehler');
-    btn.textContent = `✅ ${d.dino} eingeparkt`;
-    setTimeout(() => { btn.disabled = false; btn.textContent = '⬇️ Aktuellen Dino einparken'; }, 1500);
+    showToast(`🚗 ${d.dino} eingeparkt`, 'success');
+    btn.disabled = false; btn.textContent = '⬇️ Aktuellen Dino einparken';
     await loadGarage();
   } catch (err) {
-    btn.disabled = false; btn.textContent = `❌ ${err.message}`;
-    setTimeout(() => { btn.textContent = '⬇️ Aktuellen Dino einparken'; }, 2500);
+    showToast(err.message, 'error');
+    btn.disabled = false; btn.textContent = '⬇️ Aktuellen Dino einparken';
   }
 }
 
@@ -669,10 +701,11 @@ async function unparkDino(slotId, btn) {
     const res = await fetch(`${config.tokenBase}/garage/unpark`, { method: 'POST', headers: { Authorization: `Bearer ${sessionToken}`, 'Content-Type': 'application/json' }, body: JSON.stringify({ slotId }) });
     const d = await res.json();
     if (!res.ok) throw new Error(d.error || 'Fehler');
+    showToast(`⬆️ ${d.dino} ausgeparkt`, 'success');
     await loadGarage();
   } catch (err) {
-    btn.disabled = false; btn.textContent = `❌ ${err.message}`.slice(0, 22);
-    setTimeout(() => loadGarage(), 2500);
+    showToast(err.message, 'error');
+    btn.disabled = false; btn.textContent = '⬆️ Ausparken';
   }
 }
 
@@ -751,17 +784,19 @@ async function mkPost(path, body, btn, okText) {
     const res = await fetch(`${config.tokenBase}${path}`, { method: 'POST', headers: { Authorization: `Bearer ${sessionToken}`, 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
     const d = await res.json();
     if (!res.ok) throw new Error(d.error || 'Fehler');
+    showToast(okText || 'Erledigt', 'success');
+    pollHud();
     await loadMarket();
   } catch (err) {
-    btn.disabled = false; btn.textContent = `❌ ${err.message}`.slice(0, 20);
-    setTimeout(() => { btn.textContent = old; }, 2200);
+    showToast(err.message, 'error');
+    btn.disabled = false; btn.textContent = old;
   }
 }
-const buyOffer = (id, btn) => mkPost('/market/buy', { offerId: id }, btn);
-const sellServer = (id, btn) => mkPost('/market/sell-server', { slotId: id }, btn);
+const buyOffer = (id, btn) => mkPost('/market/buy', { offerId: id }, btn, '🦖 Dino gekauft!');
+const sellServer = (id, btn) => mkPost('/market/sell-server', { slotId: id }, btn, '💰 An Server verkauft (+500)');
 const sellPlayer = (id, price, btn) => {
-  if (!price || parseInt(price) <= 0) { btn.textContent = 'Preis?'; return; }
-  mkPost('/market/sell-player', { slotId: id, price: parseInt(price) }, btn);
+  if (!price || parseInt(price) <= 0) { showToast('Bitte gültigen Preis eingeben', 'error'); return; }
+  mkPost('/market/sell-player', { slotId: id, price: parseInt(price) }, btn, '🏷️ Angebot erstellt');
 };
 
 async function updateDinoInfo() {
@@ -857,6 +892,10 @@ async function connectWithSession(session) {
     el('calibBtn').style.display = isAdmin ? 'block' : 'none';
     el('zoneBtn').style.display = isAdmin ? 'block' : 'none';
     renderHotkeys();
+    if (data.name) el('hudName').textContent = data.name;
+    setTier(data.tier);
+    pollHud();
+    if (!pollHud._timer) pollHud._timer = setInterval(pollHud, 6000);
     await connect(data);
   } catch (err) {
     setMicState('disconnected', `Fehler: ${err.message}`);

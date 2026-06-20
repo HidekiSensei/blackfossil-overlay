@@ -8,9 +8,30 @@
     * { box-sizing: border-box; margin: 0; padding: 0; }
     html, body { width: 100%; height: 100%; background: transparent; overflow: hidden; font-family: system-ui, sans-serif; color: #eee; user-select: none; }
 
+    /* Top-HUD */
+    #hud { position: absolute; top: 14px; left: 50%; transform: translateX(-50%); display: flex; align-items: center; gap: 12px;
+      background: var(--panel); border: 1px solid var(--border); border-radius: 999px; padding: 7px 16px; font-size: 13px; }
+    .hud-dot { width: 10px; height: 10px; border-radius: 50%; background: #666; }
+    #hudName { font-weight: 600; }
+    #hudPoints { color: #fbbf24; font-weight: 600; }
+    .tier-badge { font-size: 11px; font-weight: 700; padding: 2px 10px; border-radius: 999px; border: 1px solid var(--border); }
+    .tier-Fossil { color: #9ca3af; }
+    .tier-Knochen { color: #e5e7eb; border-color:#9ca3af; background: rgba(229,231,235,0.08); }
+    .tier-Bernstein { color: #fb923c; border-color:#fb923c; background: rgba(251,146,60,0.12); }
+    .tier-Obsidian { color: #c4b5fd; border-color:#8b5cf6; background: linear-gradient(90deg, rgba(139,92,246,0.25), rgba(139,92,246,0.08)); }
+
+    /* Toasts */
+    #toasts { position: absolute; top: 60px; right: 20px; display: flex; flex-direction: column; gap: 8px; align-items: flex-end; z-index: 50; }
+    .toast { background: var(--panel); border: 1px solid var(--border); border-left: 3px solid var(--accent); border-radius: 10px;
+      padding: 11px 16px; font-size: 13px; max-width: 320px; animation: toastIn 0.25s cubic-bezier(.22,1,.36,1); }
+    .toast.success { border-left-color: var(--on); } .toast.error { border-left-color: var(--off); } .toast.elder { border-left-color: var(--warn); }
+    .toast.fade { animation: toastOut 0.3s forwards; }
+    @keyframes toastIn { from { opacity: 0; transform: translateX(30px); } to { opacity: 1; transform: none; } }
+    @keyframes toastOut { to { opacity: 0; transform: translateX(30px); } }
+
     /* Minimap oben rechts */
     #minimapWrap { position: absolute; top: 20px; right: 20px; }
-    #minimap { width: 200px; height: 200px; border-radius: 50%; border: 2px solid var(--border); background: rgba(15,10,30,0.55); }
+    #minimap { width: clamp(200px, 15vw, 320px); height: clamp(200px, 15vw, 320px); border-radius: 50%; border: 2px solid var(--border); background: rgba(15,10,30,0.55); }
     #micIndicator { margin-top: 10px; display: flex; align-items: center; gap: 9px; justify-content: center;
       background: var(--panel); border: 1px solid var(--border); border-radius: 10px; padding: 8px 12px; font-size: 13px; }
     #micIcon { display: inline-flex; width: 20px; height: 20px; transition: color 0.15s; }
@@ -27,14 +48,14 @@
 
     /* Settings-Panel */
     #settings { position: absolute; top: 50%; left: 50%; transform: translate(-50%,-50%); display: none;
-      background: var(--panel); border: 1px solid var(--border); border-radius: 14px; padding: 24px; width: 380px; }
+      background: var(--panel); border: 1px solid var(--border); border-radius: 16px; padding: 26px; }
     #settings h2 { font-size: 16px; margin-bottom: 14px; }
     .kv { display: flex; justify-content: space-between; padding: 7px 0; font-size: 13px; border-bottom: 1px solid rgba(255,255,255,0.06); }
     .kv kbd { background: #120d24; border: 1px solid var(--border); border-radius: 5px; padding: 2px 7px; font-size: 12px; }
     .btnrow { display: flex; gap: 8px; margin-top: 16px; }
     button { background: var(--accent); color: #fff; border: 0; border-radius: 8px; padding: 9px 14px; font-size: 13px; font-weight: 600; cursor: pointer; flex: 1; }
     button.secondary { background: transparent; border: 1px solid var(--border); color: var(--muted); }
-    #settings { width: 420px; }
+    #settings { width: clamp(420px, 32vw, 560px); }
     .sec-title { font-size: 13px; font-weight: 700; color: var(--accent); letter-spacing: 0.3px; }
     .vmode { font-size: 12px; padding: 8px 6px; }
     .vmode.active { background: var(--accent); color: #fff; border-color: var(--accent); }
@@ -49,13 +70,13 @@
 
     /* Feature-Panels */
     .feature-panel { position: absolute; top: 50%; left: 50%; transform: translate(-50%,-50%); display: none;
-      background: var(--panel); border: 1px solid var(--border); border-radius: 14px; padding: 24px; width: 440px; max-height: 80vh; overflow: auto; }
+      background: var(--panel); border: 1px solid var(--border); border-radius: 16px; padding: 26px; width: clamp(400px, 34vw, 600px); max-height: 84vh; overflow: auto; font-size: 14px; }
     .feature-panel h2 { font-size: 17px; margin-bottom: 12px; }
     .feature-panel p { color: var(--muted); font-size: 14px; line-height: 1.5; margin-bottom: 16px; }
     .closeFeature { width: 100%; }
 
     /* Dino-Info */
-    #dinoInfo { width: 380px; }
+    #dinoInfo { width: clamp(400px, 30vw, 520px); }
     .di-head { display: flex; justify-content: space-between; align-items: center; margin-bottom: 4px; }
     .di-dino { font-size: 19px; font-weight: 700; }
     .di-sub { color: var(--muted); font-size: 12px; margin-bottom: 16px; }
@@ -78,6 +99,17 @@
   </style>
 </head>
 <body>
+  <!-- Top-HUD -->
+  <div id="hud">
+    <span id="hudVoice" class="hud-dot"></span>
+    <span id="hudName">…</span>
+    <span id="hudTier" class="tier-badge">Fossil</span>
+    <span id="hudPoints">— Pkt.</span>
+  </div>
+
+  <!-- Toast-Container -->
+  <div id="toasts"></div>
+
   <!-- Minimap + Mikro -->
   <div id="minimapWrap">
     <canvas id="minimap" width="200" height="200"></canvas>

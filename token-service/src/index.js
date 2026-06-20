@@ -52,22 +52,28 @@ function lookupSteamId(discordId) {
   }
 }
 
-// ── Discord-Rollen-Check ────────────────────────────────────────────────────
-async function isDiscordAdmin(discordId) {
-  if (!DISCORD_BOT_TOKEN || !DISCORD_GUILD_ID) return false;
+// Abo-Tiers von höchstem zu niedrigstem (Discord-Rollennamen)
+const TIER_ROLES = (process.env.TIER_ROLES ?? 'Obsidian,Bernstein,Knochen').split(',').map((s) => s.trim());
+
+// ── Discord-Rollen-Check (Admin + Tier in einem Abruf) ──────────────────────
+async function getDiscordStatus(discordId) {
+  const result = { admin: false, tier: 'Fossil' };
+  if (!DISCORD_BOT_TOKEN || !DISCORD_GUILD_ID) return result;
   try {
     const headers = { Authorization: `Bot ${DISCORD_BOT_TOKEN}` };
     const [mRes, rRes] = await Promise.all([
       fetch(`https://discord.com/api/guilds/${DISCORD_GUILD_ID}/members/${discordId}`, { headers }),
       fetch(`https://discord.com/api/guilds/${DISCORD_GUILD_ID}/roles`, { headers }),
     ]);
-    if (!mRes.ok || !rRes.ok) return false;
+    if (!mRes.ok || !rRes.ok) return result;
     const member = await mRes.json();
     const roles = await rRes.json();
-    const adminRoleIds = new Set(roles.filter((r) => ADMIN_ROLE_NAMES.includes(r.name)).map((r) => r.id));
-    return (member.roles || []).some((id) => adminRoleIds.has(id));
+    const myRoleNames = new Set(roles.filter((r) => (member.roles || []).includes(r.id)).map((r) => r.name));
+    result.admin = ADMIN_ROLE_NAMES.some((n) => myRoleNames.has(n));
+    result.tier = TIER_ROLES.find((n) => myRoleNames.has(n)) ?? 'Fossil';
+    return result;
   } catch {
-    return false;
+    return result;
   }
 }
 
@@ -136,12 +142,12 @@ app.get('/auth/callback', async (req, res) => {
       ));
     }
 
-    // Admin/Owner-Status anhand Discord-Rolle
-    const admin = await isDiscordAdmin(user.id);
+    // Admin-Status + Abo-Tier anhand Discord-Rollen
+    const { admin, tier } = await getDiscordStatus(user.id);
 
     // App-Session ausstellen (30 Tage)
     const session = jwt.sign(
-      { steamId, discordId: user.id, name: user.global_name || user.username, admin },
+      { steamId, discordId: user.id, name: user.global_name || user.username, admin, tier },
       SESSION_SECRET,
       { expiresIn: '30d' }
     );
@@ -187,6 +193,7 @@ app.get('/token', async (req, res) => {
     identity: payload.steamId,
     name: payload.name,
     admin: !!payload.admin,
+    tier: payload.tier || 'Fossil',
   });
 });
 
@@ -239,10 +246,13 @@ app.get('/me', async (req, res) => {
     });
     if (!r.ok) throw new Error(`Game-Server HTTP ${r.status}`);
     const data = await r.json();
+    const points = getPoints(payload.steamId);
+    const tier = payload.tier || 'Fossil';
     const p = (data.Players ?? []).find((x) => x.steamId === payload.steamId);
-    if (!p) return res.json({ online: false });
+    if (!p) return res.json({ online: false, points, tier, name: payload.name });
     res.json({
       online: true,
+      points, tier,
       name: p.playerName,
       dino: p.dinoClass,
       gender: p.gender,
@@ -260,6 +270,7 @@ app.get('/me', async (req, res) => {
       isPrime: !!p.isPrime,
       elderStacks: p.elderReplicationStacks ?? 0,
       isBleeding: !!p.isBleeding,
+      primes: Array.from({ length: 10 }, (_, i) => !!p[`primeCondition${i + 1}`]),
     });
   } catch (err) {
     res.status(502).json({ error: err.message });
