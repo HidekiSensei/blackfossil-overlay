@@ -61,9 +61,12 @@ async function init() {
   };
   el('calibBtn').onclick = () => toggleCalib();
   el('calibSolve').onclick = () => solveCalibration();
-  el('calibReset').onclick = () => { resetCal(); calibPairs = []; armedRef = null; renderCalibList(); renderBigMap(); };
+  el('calibReset').onclick = () => { resetCal(); calibPairs = []; saveCalibPairs(); armedRef = null; renderCalibList(); renderBigMap(); };
 
   window.bf.onHotkey(handleHotkey);
+
+  // Gespeicherte Kalibrier-Punkte laden (überleben App-Neustart)
+  try { calibPairs = JSON.parse(localStorage.getItem('bf-calib-pairs') || '[]'); } catch { calibPairs = []; }
 
   // Kartenbild laden + zentrale Kalibrierung vom Server holen
   await loadMapImage('assets/map.jpg');
@@ -183,6 +186,7 @@ function onMapClick(e) {
   if (calibMode) {
     if (!armedRef) return; // erst einen Referenzpunkt wählen
     calibPairs.push({ world: { x: armedRef.x, y: armedRef.y }, norm: { nx, ny }, label: armedRef.label });
+    saveCalibPairs();
     armedRef = null;
     renderCalibList();
     renderBigMap();
@@ -290,6 +294,30 @@ function renderCalibList() {
     el('calibRefs').appendChild(b);
   }
   el('calibCount').textContent = `${calibPairs.length} Punkt(e) gesetzt` + (armedRef ? ` · jetzt auf der Karte klicken wo du stehst` : '');
+
+  // Liste der gesetzten Punkte mit Einzel-Löschen
+  const list = el('calibSetList');
+  list.innerHTML = '';
+  calibPairs.forEach((p, i) => {
+    const row = document.createElement('div');
+    row.style.cssText = 'display:flex;justify-content:space-between;align-items:center;font-size:11px;background:rgba(255,255,255,0.04);border-radius:5px;padding:3px 7px';
+    row.innerHTML = `<span>#${i + 1} ${p.label} · X${(p.world.x / 1000) | 0}k Y${(p.world.y / 1000) | 0}k</span>`;
+    const x = document.createElement('button');
+    x.textContent = '✕';
+    x.style.cssText = 'width:auto;padding:0 6px;background:transparent;border:0;color:#ef4444;cursor:pointer;font-size:13px';
+    x.onclick = () => removeCalibPair(i);
+    row.appendChild(x);
+    list.appendChild(row);
+  });
+}
+
+function saveCalibPairs() {
+  try { localStorage.setItem('bf-calib-pairs', JSON.stringify(calibPairs)); } catch {}
+}
+function removeCalibPair(i) {
+  calibPairs.splice(i, 1);
+  saveCalibPairs();
+  renderCalibList();
 }
 
 function solveCalibration() {
