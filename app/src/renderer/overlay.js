@@ -23,6 +23,9 @@ const RANGE_STEPS = [2, 5, 10, 15, 25];
 let myRange = parseFloat(localStorage.getItem('bf-range') || '10');
 const remoteRanges = {};      // identity -> Reichweite des anderen (m)
 const DEFAULT_RANGE = 10;     // bis Reichweite empfangen wird
+// Welt-Einheiten pro angezeigtem Meter. The Isle skaliert kürzer als erwartet,
+// daher 200 statt 100 — so klingt "25 m" auch wirklich nach 25 m.
+const UNITS_PER_M = 200;
 
 // Karten-Ansicht (Zoom/Pan)
 let mapZoom = 1, mapPanX = 0, mapPanY = 0;
@@ -209,7 +212,7 @@ function updateProximityVolumes() {
     const pos = players.find((pl) => pl.steamId === p.identity);
     let vol = 1;
     if (me && pos) {
-      const Rw = (remoteRanges[p.identity] ?? DEFAULT_RANGE) * 100;
+      const Rw = (remoteRanges[p.identity] ?? DEFAULT_RANGE) * UNITS_PER_M;
       const d = Math.hypot(pos.x - me.x, pos.y - me.y);
       vol = Math.max(0, Math.min(1, 2 * (1 - d / Rw)));
     }
@@ -263,7 +266,7 @@ function checkZoneChange() {
 // ── Rendering ────────────────────────────────────────────────────────────────
 function renderMinimap() {
   const cv = el('minimap');
-  drawMinimap({ ctx: cv.getContext('2d'), w: cv.width, h: cv.height }, players, me);
+  drawMinimap({ ctx: cv.getContext('2d'), w: cv.width, h: cv.height }, players, me, myRange * UNITS_PER_M);
 }
 function renderBigMap() {
   const cv = el('bigMapCanvas');

@@ -179,24 +179,32 @@ export function drawHeatmap(view, players, me) {
   ctx.fillText(`🔥 Heatmap · ${players.filter(p => !p.isDead).length} aktiv`, 14, 24);
 }
 
-// ── Minimap (zentriert auf eigene Position, gezoomt) ──────────────────────────
-// zoom = wie viel vom Normalraum sichtbar ist (kleiner = näher rangezoomt)
-export function drawMinimap(view, players, me, zoom = 0.16) {
+// ── Minimap (zentriert, Auto-Zoom auf den Sprechradius) ───────────────────────
+// speakRange = eigene Sprechreichweite in Welt-Einheiten (für Ring + Zoom-Stufe)
+export function drawMinimap(view, players, me, speakRange = 0) {
   const { ctx, w, h } = view;
   ctx.clearRect(0, 0, w, h);
-  ctx.save();
-  // Kreis-Maske
-  ctx.beginPath(); ctx.arc(w/2, h/2, w/2, 0, Math.PI*2); ctx.clip();
 
   const center = me ? worldToNorm(me.x, me.y) : { nx: 0.5, ny: 0.5 };
-  // Normraum-Ausschnitt → Minimap-Pixel
+
+  // Normalisierter Radius des Sprechbereichs
+  let normSpeak = 0;
+  if (me && speakRange > 0) {
+    const e = worldToNorm(me.x + speakRange, me.y);
+    normSpeak = Math.hypot(e.nx - center.nx, e.ny - center.ny);
+  }
+  // Zoom so wählen, dass der Sprechring ~40% des Minimap-Radius einnimmt
+  const zoom = normSpeak > 0 ? Math.min(0.2, Math.max(0.02, normSpeak * 2.5)) : 0.07;
+
+  ctx.save();
+  ctx.beginPath(); ctx.arc(w/2, h/2, w/2, 0, Math.PI*2); ctx.clip();
+
   const toPx = (nx, ny) => ({
     px: ((nx - center.nx) / zoom) * (w/2) + w/2,
     py: ((ny - center.ny) / zoom) * (h/2) + h/2,
   });
 
   if (mapReady) {
-    // passenden Bildausschnitt zeichnen
     const sx = (center.nx - zoom) * mapImg.width;
     const sy = (center.ny - zoom) * mapImg.height;
     const sw = 2 * zoom * mapImg.width;
@@ -205,10 +213,21 @@ export function drawMinimap(view, players, me, zoom = 0.16) {
   } else { ctx.fillStyle = 'rgba(40,30,70,0.5)'; ctx.fillRect(0,0,w,h); }
 
   drawZones(ctx, (nx, ny) => toPx(nx, ny));
-  // keine fremden Spielerpunkte auf der Minimap
   ctx.restore();
 
-  // eigener Punkt immer in der Mitte (über der Maske)
+  // Angedeuteter Sprechradius-Ring
+  if (normSpeak > 0) {
+    const ringPx = (normSpeak / zoom) * (w/2);
+    ctx.save();
+    ctx.strokeStyle = 'rgba(139,92,246,0.55)'; ctx.lineWidth = 1.5; ctx.setLineDash([4, 4]);
+    ctx.beginPath(); ctx.arc(w/2, h/2, ringPx, 0, Math.PI*2); ctx.stroke();
+    ctx.setLineDash([]);
+    ctx.fillStyle = 'rgba(139,92,246,0.06)';
+    ctx.beginPath(); ctx.arc(w/2, h/2, ringPx, 0, Math.PI*2); ctx.fill();
+    ctx.restore();
+  }
+
+  // eigener Punkt immer in der Mitte
   if (me) drawPlayer(ctx, w/2, h/2, { ...me, isYou: true }, 1);
 
   // Rahmen
