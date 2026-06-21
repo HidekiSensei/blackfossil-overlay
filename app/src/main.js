@@ -1,7 +1,30 @@
 const { app, BrowserWindow, ipcMain, shell, session, globalShortcut, screen } = require('electron');
 const path = require('node:path');
 const fs = require('node:fs');
+const http = require('node:http');
 const { exec } = require('node:child_process');
+
+// ── Lokaler Rücksprung-Server für den Discord-Login ──────────────────────────
+// Discord leitet nach dem Login auf http://127.0.0.1:LOGIN_PORT/cb?session=...
+// Das ist zuverlässiger als ein blackfossil://-Deep-Link (Browser blocken den oft).
+const LOGIN_PORT = 53117;
+let loopbackServer = null;
+function startLoopbackServer() {
+  if (loopbackServer) return;
+  loopbackServer = http.createServer((req, res) => {
+    try {
+      const u = new URL(req.url, `http://127.0.0.1:${LOGIN_PORT}`);
+      if (u.pathname === '/cb') {
+        const token = u.searchParams.get('session');
+        res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
+        res.end('<!doctype html><meta charset="utf8"><body style="font-family:system-ui;background:#0f0a1e;color:#eee;display:flex;align-items:center;justify-content:center;height:100vh;margin:0;text-align:center"><div><h2 style="color:#8b5cf6">✅ Erfolgreich angemeldet</h2><p style="color:#b3a9cc">Du kannst dieses Fenster schließen und zur BlackFossil-App zurückkehren.</p></div></body>');
+        if (token) onSessionObtained(token);
+      } else { res.writeHead(404); res.end(); }
+    } catch { res.writeHead(400); res.end(); }
+  });
+  loopbackServer.on('error', (e) => { console.error('Login-Loopback fehlgeschlagen:', e.message); loopbackServer = null; });
+  loopbackServer.listen(LOGIN_PORT, '127.0.0.1');
+}
 
 // The-Isle-Client-Prozesse (Overlay erscheint nur wenn das Spiel läuft)
 const GAME_PROCESSES = ['TheIsle-Win64-Shipping.exe', 'TheIsle.exe'];
@@ -229,6 +252,7 @@ ipcMain.on('set-interactive', (_e, interactive) => {
 
 // ── App-Start ─────────────────────────────────────────────────────────────
 app.whenReady().then(() => {
+  startLoopbackServer();
   refreshVoiceKeys();
   startVoiceHook();
   if (pendingDeepLink) { onSessionObtained(pendingDeepLink); pendingDeepLink = null; return; }

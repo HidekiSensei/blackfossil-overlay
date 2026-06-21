@@ -611,6 +611,10 @@ function htmlPage(title, msg, redirect, fallbackSession) {
         });
       }
     </script>` : '';
+  // Automatischer Rücksprung zur App (http-Loopback → kein Browser-Block).
+  const autoRedirect = (redirect && fallbackSession)
+    ? `<script>setTimeout(function(){location.href=${JSON.stringify(redirect)}},250)</script>`
+    : '';
   return `<!doctype html><html lang="de"><head><meta charset="utf8">
   <meta name="viewport" content="width=device-width,initial-scale=1">
   <title>BlackFossil</title>
@@ -618,7 +622,7 @@ function htmlPage(title, msg, redirect, fallbackSession) {
   align-items:center;justify-content:center;min-height:100vh;margin:0;text-align:center;padding:20px}
   .card{background:#1a1330;padding:36px;border-radius:16px;max-width:440px;border:1px solid #3a2d5c}
   h1{font-size:22px;margin:0 0 12px}p{color:#b3a9cc;line-height:1.5}</style></head>
-  <body><div class="card"><h1>${title}</h1><p>${msg}</p>${fallback}</div></body></html>`;
+  <body><div class="card"><h1>${title}</h1><p>${msg}</p>${fallback}</div>${autoRedirect}</body></html>`;
 }
 
 app.listen(PORT, '127.0.0.1', () => {
