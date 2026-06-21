@@ -12,4 +12,5 @@ contextBridge.exposeInMainWorld('bf', {
   setHotkey: (action, key) => ipcRenderer.invoke('set-hotkey', action, key),
   resetHotkeys: () => ipcRenderer.invoke('reset-hotkeys'),
   onVoiceKey: (cb) => ipcRenderer.on('voice-key', (_e, data) => cb(data)),
+  onUpdateReady: (cb) => ipcRenderer.on('update-ready', (_e, version) => cb(version)),
 });

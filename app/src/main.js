@@ -3,6 +3,23 @@ const path = require('node:path');
 const fs = require('node:fs');
 const http = require('node:http');
 const { exec } = require('node:child_process');
+const { autoUpdater } = require('electron-updater');
+
+// ── Auto-Update (GitHub-Releases) ───────────────────────────────────────────
+function setupAutoUpdate() {
+  if (!app.isPackaged) return; // im Dev nicht prüfen
+  autoUpdater.autoDownload = true;
+  autoUpdater.autoInstallOnAppQuit = true; // Update wird beim nächsten Beenden installiert
+  autoUpdater.on('update-available', (i) => console.log('[update] verfügbar:', i?.version));
+  autoUpdater.on('update-downloaded', (i) => {
+    console.log('[update] geladen:', i?.version, '— wird beim Beenden installiert');
+    try { overlayWindow?.webContents.send('update-ready', i?.version); } catch {}
+  });
+  autoUpdater.on('error', (err) => console.error('[update] Fehler:', err?.message || err));
+  autoUpdater.checkForUpdates().catch((e) => console.error('[update] Check fehlgeschlagen:', e?.message || e));
+  // Stündlich erneut prüfen (für lange Sessions)
+  setInterval(() => autoUpdater.checkForUpdates().catch(() => {}), 60 * 60 * 1000);
+}
 
 // ── Lokaler Rücksprung-Server für den Discord-Login ──────────────────────────
 // Discord leitet nach dem Login auf http://127.0.0.1:LOGIN_PORT/cb?session=...
@@ -252,6 +269,7 @@ ipcMain.on('set-interactive', (_e, interactive) => {
 
 // ── App-Start ─────────────────────────────────────────────────────────────
 app.whenReady().then(() => {
+  setupAutoUpdate();
   startLoopbackServer();
   refreshVoiceKeys();
   startVoiceHook();

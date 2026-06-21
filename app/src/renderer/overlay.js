@@ -121,6 +121,11 @@ async function init() {
 
   window.bf.onHotkey(handleHotkey);
 
+  // Auto-Update: Hinweis wenn neue Version geladen wurde
+  window.bf.onUpdateReady?.((version) => {
+    showToast(`⬆️ Update ${version ? 'v' + version + ' ' : ''}geladen — wird beim nächsten Neustart installiert`, 'success');
+  });
+
   // Push-to-Talk / Push-to-Mute (globaler Tasten-Hook)
   window.bf.onVoiceKey(({ kind, down }) => {
     if (kind === 'ptt') { pttHeld = down; if (voiceMode === 'ptt') applyMic(); }
