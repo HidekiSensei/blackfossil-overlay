@@ -4,13 +4,24 @@
   <meta charset="utf-8" />
   <title>BlackFossil Overlay</title>
   <style>
-    :root { --accent:#8b5cf6; --on:#22c55e; --off:#ef4444; --warn:#f59e0b; --panel:rgba(20,13,38,0.92); --border:#3a2d5c; --muted:#b3a9cc; }
+    :root {
+      --accent:#8b5cf6; --accent-2:#a78bfa; --on:#22c55e; --off:#ef4444; --warn:#f59e0b;
+      --panel:rgba(20,13,38,0.82); --border:rgba(139,92,246,0.32); --muted:#b3a9cc;
+      --glow: 0 8px 32px rgba(0,0,0,0.45), 0 0 0 1px rgba(139,92,246,0.10), 0 0 24px rgba(139,92,246,0.12);
+      --glow-strong: 0 10px 40px rgba(0,0,0,0.5), 0 0 0 1px rgba(139,92,246,0.18), 0 0 36px rgba(139,92,246,0.22);
+      --blur: blur(14px) saturate(1.2);
+    }
     * { box-sizing: border-box; margin: 0; padding: 0; }
     html, body { width: 100%; height: 100%; background: transparent; overflow: hidden; font-family: system-ui, sans-serif; color: #eee; user-select: none; }
+    /* Glas-Optik für alle Panels mit var(--panel) */
+    #hud, .toast, #micIndicator, #zoneBox, #rangeBox, #settings, .feature-panel,
+    #zonePanel, #calibPanel, #dinoDetail .box {
+      backdrop-filter: var(--blur); -webkit-backdrop-filter: var(--blur);
+    }
 
     /* Top-HUD */
     #hud { position: absolute; top: 14px; left: 50%; transform: translateX(-50%); display: flex; align-items: center; gap: 12px;
-      background: var(--panel); border: 1px solid var(--border); border-radius: 999px; padding: 7px 16px; font-size: 13px; }
+      background: var(--panel); border: 1px solid var(--border); border-radius: 999px; padding: 7px 16px; font-size: 13px; box-shadow: var(--glow); }
     .hud-dot { width: 10px; height: 10px; border-radius: 50%; background: #666; }
     #hudName { font-weight: 600; }
     #hudPoints { color: #fbbf24; font-weight: 600; }
@@ -27,7 +38,7 @@
     /* Toasts */
     #toasts { position: absolute; top: 56px; left: 50%; transform: translateX(-50%); display: flex; flex-direction: column; gap: 8px; align-items: center; z-index: 50; }
     .toast { background: var(--panel); border: 1px solid var(--border); border-left: 3px solid var(--accent); border-radius: 10px;
-      padding: 11px 16px; font-size: 13px; max-width: 420px; text-align: center; animation: toastIn 0.25s cubic-bezier(.22,1,.36,1); }
+      padding: 11px 16px; font-size: 13px; max-width: 420px; text-align: center; box-shadow: var(--glow); animation: toastIn 0.25s cubic-bezier(.22,1,.36,1); }
     .toast.success { border-left-color: var(--on); } .toast.error { border-left-color: var(--off); } .toast.elder { border-left-color: var(--warn); }
     .toast.fade { animation: toastOut 0.3s forwards; }
     @keyframes toastIn { from { opacity: 0; transform: translateY(-12px); } to { opacity: 1; transform: none; } }
@@ -35,7 +46,7 @@
 
     /* Minimap oben rechts */
     #minimapWrap { position: absolute; top: 20px; right: 20px; }
-    #minimap { width: clamp(200px, 15vw, 320px); height: clamp(200px, 15vw, 320px); border-radius: 50%; border: 2px solid var(--border); background: rgba(15,10,30,0.55); }
+    #minimap { width: clamp(200px, 15vw, 320px); height: clamp(200px, 15vw, 320px); border-radius: 50%; border: 2px solid var(--border); background: rgba(15,10,30,0.55); box-shadow: var(--glow), inset 0 0 30px rgba(0,0,0,0.4); }
     #micIndicator { margin-top: 10px; display: flex; align-items: center; gap: 9px; justify-content: center;
       background: var(--panel); border: 1px solid var(--border); border-radius: 10px; padding: 8px 12px; font-size: 13px; }
     #micIcon { display: inline-flex; width: 20px; height: 20px; transition: color 0.15s; }
@@ -44,6 +55,7 @@
     .mic-speaking { color: var(--on); } .mic-muted { color: var(--off); } .mic-disconnected { color: var(--off); }
     #zoneBox { margin-top: 8px; text-align: center; background: var(--panel); border: 1px solid var(--border);
       border-radius: 10px; padding: 6px 10px; font-size: 12px; color: var(--muted); }
+    #micIndicator, #zoneBox, #rangeBox { box-shadow: var(--glow); }
 
     /* Große Map */
     #bigMap { position: absolute; inset: 0; background: rgba(8,5,18,0.82); display: none; align-items: center; justify-content: center; flex-direction: column; }
@@ -52,13 +64,17 @@
 
     /* Settings-Panel */
     #settings { position: absolute; top: 50%; left: 50%; transform: translate(-50%,-50%); display: none;
-      background: var(--panel); border: 1px solid var(--border); border-radius: 16px; padding: 26px; }
+      background: var(--panel); border: 1px solid var(--border); border-radius: 16px; padding: 26px; box-shadow: var(--glow-strong); }
     #settings h2 { font-size: 16px; margin-bottom: 14px; }
     .kv { display: flex; justify-content: space-between; padding: 7px 0; font-size: 13px; border-bottom: 1px solid rgba(255,255,255,0.06); }
     .kv kbd { background: #120d24; border: 1px solid var(--border); border-radius: 5px; padding: 2px 7px; font-size: 12px; }
     .btnrow { display: flex; gap: 8px; margin-top: 16px; }
-    button { background: var(--accent); color: #fff; border: 0; border-radius: 8px; padding: 9px 14px; font-size: 13px; font-weight: 600; cursor: pointer; flex: 1; }
-    button.secondary { background: transparent; border: 1px solid var(--border); color: var(--muted); }
+    button { background: linear-gradient(135deg, var(--accent), #7c3aed); color: #fff; border: 0; border-radius: 8px; padding: 9px 14px;
+      font-size: 13px; font-weight: 600; cursor: pointer; flex: 1; transition: transform 0.12s, box-shadow 0.12s, filter 0.12s; }
+    button:hover { transform: translateY(-1px); box-shadow: 0 4px 18px rgba(139,92,246,0.45); filter: brightness(1.08); }
+    button:active { transform: translateY(0); }
+    button.secondary { background: rgba(255,255,255,0.04); border: 1px solid var(--border); color: var(--muted); }
+    button.secondary:hover { box-shadow: 0 0 0 1px var(--accent); color: #eee; filter: none; }
     #settings { width: clamp(420px, 32vw, 560px); }
     .sec-title { font-size: 13px; font-weight: 700; color: var(--accent); letter-spacing: 0.3px; }
     .vmode { font-size: 12px; padding: 8px 6px; }
@@ -74,7 +90,8 @@
 
     /* Feature-Panels */
     .feature-panel { position: absolute; top: 50%; left: 50%; transform: translate(-50%,-50%); display: none;
-      background: var(--panel); border: 1px solid var(--border); border-radius: 16px; padding: 26px; width: clamp(400px, 34vw, 600px); max-height: 84vh; overflow: auto; font-size: 14px; }
+      background: var(--panel); border: 1px solid var(--border); border-radius: 16px; padding: 26px; width: clamp(400px, 34vw, 600px); max-height: 84vh; overflow: auto; font-size: 14px; box-shadow: var(--glow-strong); }
+    .feature-panel h2, #settings h2 { background: linear-gradient(90deg, #fff, var(--accent-2)); -webkit-background-clip: text; background-clip: text; -webkit-text-fill-color: transparent; }
     .feature-panel h2 { font-size: 17px; margin-bottom: 12px; }
     .feature-panel p { color: var(--muted); font-size: 14px; line-height: 1.5; margin-bottom: 16px; }
     .closeFeature { width: 100%; }
@@ -104,8 +121,8 @@
     /* Dino-Karten-Grid */
     .dino-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(140px, 1fr)); gap: 12px; margin: 10px 0; }
     .dino-card { background: rgba(255,255,255,0.04); border: 1px solid var(--border); border-radius: 12px; overflow: hidden;
-      cursor: pointer; transition: transform 0.12s, border-color 0.12s; }
-    .dino-card:hover { transform: translateY(-3px); border-color: var(--accent); }
+      cursor: pointer; transition: transform 0.12s, border-color 0.12s, box-shadow 0.12s; }
+    .dino-card:hover { transform: translateY(-3px); border-color: var(--accent); box-shadow: 0 8px 24px rgba(139,92,246,0.35); }
     .dino-card .prev { height: 80px; display: block; }
     .dino-card .body { padding: 8px 10px; }
     .dino-card .nm { font-weight: 700; font-size: 13px; display: flex; align-items: center; gap: 4px; }
@@ -116,7 +133,7 @@
 
     /* Dino-Detail */
     #dinoDetail { display: none; position: absolute; inset: 0; background: rgba(8,5,18,0.7); z-index: 40; align-items: center; justify-content: center; }
-    #dinoDetail .box { background: var(--panel); border: 1px solid var(--border); border-radius: 16px; padding: 22px; width: clamp(360px, 30vw, 480px); max-height: 86vh; overflow: auto; }
+    #dinoDetail .box { background: var(--panel); border: 1px solid var(--border); border-radius: 16px; padding: 22px; width: clamp(360px, 30vw, 480px); max-height: 86vh; overflow: auto; box-shadow: var(--glow-strong); }
     .mut-chip { display: inline-block; font-size: 11px; padding: 3px 8px; border-radius: 12px; background: rgba(139,92,246,0.18); border: 1px solid var(--border); margin: 2px; }
   </style>
 </head>
