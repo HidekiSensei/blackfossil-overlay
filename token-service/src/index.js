@@ -569,6 +569,18 @@ app.post('/skin', express.json(), async (req, res) => {
   }
 });
 
+// ── 10) Öffentlicher Server-Status (für die Webseite, kein Login) ───────────
+const MAX_PLAYERS = parseInt(process.env.MAX_PLAYERS ?? '100');
+app.get('/public/status', async (_req, res) => {
+  res.set('Access-Control-Allow-Origin', '*');
+  try {
+    const players = await fetchPlayers();
+    res.json({ online: players.length, max: MAX_PLAYERS, up: true });
+  } catch {
+    res.json({ online: 0, max: MAX_PLAYERS, up: false });
+  }
+});
+
 // ── Health ───────────────────────────────────────────────────────────────
 app.get('/auth/health', (_req, res) => res.json({ ok: true }));
 
