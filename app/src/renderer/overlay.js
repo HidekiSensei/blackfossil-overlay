@@ -746,6 +746,29 @@ const HK_LABELS = {
 };
 let listeningAction = null;
 
+// Accelerator-String ⇄ {ctrl,alt,shift,key}
+const HK_MODS = [['ctrl', 'Strg'], ['alt', 'Alt'], ['shift', 'Shift']];
+function parseAccel(accel) {
+  const out = { ctrl: false, alt: false, shift: false, key: '' };
+  for (const p of (accel || '').split('+').filter(Boolean)) {
+    const lp = p.toLowerCase();
+    if (lp === 'commandorcontrol' || lp === 'control' || lp === 'ctrl') out.ctrl = true;
+    else if (lp === 'alt') out.alt = true;
+    else if (lp === 'shift') out.shift = true;
+    else out.key = p;
+  }
+  return out;
+}
+function buildAccel({ ctrl, alt, shift, key }) {
+  if (!key) return '';
+  const parts = [];
+  if (ctrl) parts.push('CommandOrControl');
+  if (alt) parts.push('Alt');
+  if (shift) parts.push('Shift');
+  parts.push(key);
+  return parts.join('+');
+}
+
 async function renderHotkeys() {
   const hk = await window.bf.getHotkeys();
   config.hotkeys = hk;   // lokalen Tasten-Fallback aktuell halten
@@ -753,15 +776,35 @@ async function renderHotkeys() {
   list.innerHTML = '';
   for (const [action, label] of Object.entries(HK_LABELS)) {
     if (action === 'zone-capture') continue; // Admin-Tool ausgeblendet
+    const cur = parseAccel(hk[action] || '');
     const row = document.createElement('div');
     row.className = 'hk-row';
+    row.style.cssText = 'display:flex;align-items:center;gap:6px;margin-bottom:5px;flex-wrap:wrap';
     const span = document.createElement('span');
     span.textContent = label;
+    span.style.cssText = 'flex:1;min-width:110px;font-size:13px';
+    row.appendChild(span);
+    for (const [mod, mlabel] of HK_MODS) {
+      const lbl = document.createElement('label');
+      lbl.style.cssText = 'display:flex;align-items:center;gap:2px;font-size:11px;color:var(--muted);cursor:pointer';
+      const cb = document.createElement('input');
+      cb.type = 'checkbox';
+      cb.checked = cur[mod];
+      cb.onchange = async () => {
+        const next = parseAccel((await window.bf.getHotkeys())[action] || '');
+        next[mod] = cb.checked;
+        await window.bf.setHotkey(action, buildAccel(next));
+        await renderHotkeys();
+      };
+      lbl.append(cb, document.createTextNode(mlabel));
+      row.appendChild(lbl);
+    }
     const btn = document.createElement('button');
-    btn.textContent = hk[action] || '—';
+    btn.textContent = cur.key || '—';
     btn.dataset.action = action;
+    btn.style.cssText = 'min-width:64px';
     btn.onclick = () => startRebind(action, btn);
-    row.append(span, btn);
+    row.appendChild(btn);
     list.appendChild(row);
   }
 }
@@ -770,7 +813,7 @@ function startRebind(action, btn) {
   listeningAction = action;
   document.querySelectorAll('#hotkeyList button').forEach((b) => b.classList.remove('listening'));
   btn.classList.add('listening');
-  btn.textContent = '… Taste drücken';
+  btn.textContent = '… Taste';
 }
 
 function accelFromEvent(e) {
@@ -791,10 +834,14 @@ async function onRebindKey(e) {
   if (!listeningAction) return;
   e.preventDefault();
   if (e.key === 'Escape') { listeningAction = null; await renderHotkeys(); return; }
-  let accel;
-  if (e.key === 'Backspace' || e.key === 'Delete') accel = ''; // Taste entfernen
-  else { accel = accelFromEvent(e); if (accel === undefined) return; }
-  await window.bf.setHotkey(listeningAction, accel);
+  if (['Control', 'Alt', 'Shift', 'Meta'].includes(e.key)) return; // nur Modifier → echte Taste abwarten
+  let key;
+  if (e.key === 'Backspace' || e.key === 'Delete') key = '';       // Taste entfernen
+  else if (e.key === ' ') key = 'Space';
+  else key = e.key.length === 1 ? e.key.toUpperCase() : e.key;
+  // Modifier kommen aus den Checkboxen (nicht aus dem Tastendruck)
+  const cur = parseAccel((await window.bf.getHotkeys())[listeningAction] || '');
+  await window.bf.setHotkey(listeningAction, buildAccel({ ctrl: cur.ctrl, alt: cur.alt, shift: cur.shift, key }));
   listeningAction = null;
   await renderHotkeys();
 }
