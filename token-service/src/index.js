@@ -236,6 +236,7 @@ app.get('/positions', async (req, res) => {
       dino: p.dinoClass,
       x: p.location?.x ?? 0,
       y: p.location?.y ?? 0,
+      z: p.location?.z ?? 0,
       heading: p.lookDirection ?? 0,
       isDead: !!p.isDead,
       isYou: p.steamId === payload.steamId,

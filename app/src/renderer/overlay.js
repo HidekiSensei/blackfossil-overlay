@@ -9,13 +9,16 @@ let me = null;
 let waypoints = [];
 let calibMode = false;
 let heatmapMode = false;
-// Auto-Kalibrierung: 6 über die Karte verteilte NORM-Punkte. Die echten Welt-Ziele
-// werden beim Start daraus über die aktuelle (grobe) Abbildung berechnet — so landen
-// die Teleports garantiert im Kartenbereich (In-Game-GPS ≠ Welt-Koordinaten!).
-const CALIB_NORM_TARGETS = [
-  { nx: 0.25, ny: 0.22 }, { nx: 0.75, ny: 0.22 },
-  { nx: 0.82, ny: 0.55 }, { nx: 0.70, ny: 0.80 },
-  { nx: 0.25, ny: 0.78 }, { nx: 0.18, ny: 0.50 },
+// Auto-Kalibrierung: 6 feste WELT-Koordinaten (x,y,z), weit über die Karte verteilt.
+// Der Spieler wird dorthin teleportiert (inkl. z = richtige Höhe) und klickt jeweils
+// auf der Karte → solveAffine.
+const CALIB_TARGETS = [
+  { x: 335219.25,   y: 206420.992,  z: 20527.227 },
+  { x: 81875.941,   y: 327227.034,  z: 20461.444 },
+  { x: -106687.433, y: 384391.233,  z: 41297.648 },
+  { x: -343263.594, y: 89531.156,   z: 20581.617 },
+  { x: 258109.859,  y: -365232.914, z: 22129.086 },
+  { x: 364040.247,  y: -307803.441, z: 22205.289 },
 ];
 let autoCalib = null; // { startPos, pairs, resolveClick }
 // Teleport-Punkte
@@ -582,11 +585,12 @@ function centerOnMe() {
 }
 
 // ── Auto-Kalibrierung (Teleport zu 6 Punkten + Klick auf die Karte) ──────────
-async function calibTeleport(x, y) {
-  // z lassen wir weg → der token-service nimmt die aktuelle Höhe des Spielers
+async function calibTeleport(x, y, z) {
+  // z mitschicken (richtige Höhe); ohne z nimmt der token-service die aktuelle Höhe
+  const body = z === undefined ? { x, y } : { x, y, z };
   const res = await fetch(`${config.tokenBase}/player/teleport`, {
     method: 'POST', headers: { Authorization: `Bearer ${sessionToken}`, 'Content-Type': 'application/json' },
-    body: JSON.stringify({ x, y }),
+    body: JSON.stringify(body),
   });
   const d = await res.json(); if (!res.ok) throw new Error(d.error || 'Fehler');
   await new Promise((r) => setTimeout(r, 700)); // kurz warten, bis die Position ankommt
@@ -604,26 +608,24 @@ function waitForCalibClick() { return new Promise((resolve) => { autoCalib.resol
 async function startAutoCalibration() {
   if (autoCalib) return;
   if (!me) { showToast('Kalibrierung nur auf dem Server möglich', 'error'); return; }
-  autoCalib = { startPos: { x: me.x, y: me.y }, pairs: [], resolveClick: null };
+  autoCalib = { startPos: { x: me.x, y: me.y, z: me.z }, pairs: [], resolveClick: null };
   toggleSettings(false);
   toggleMap(true);
-  // Welt-Ziele aus der aktuellen (groben) Abbildung — landen sicher im Kartenbereich
-  const targets = CALIB_NORM_TARGETS.map((n) => normToWorld(n.nx, n.ny));
+  const targets = CALIB_TARGETS;
   for (let i = 0; i < targets.length; i++) {
     const t = targets[i];
     calibPrompt(`Punkt ${i + 1}/${targets.length} — du wirst teleportiert…`, true);
-    let actual;
-    try { actual = await calibTeleport(t.x, t.y); }
+    try { await calibTeleport(t.x, t.y, t.z); }
     catch (e) { showToast(`Punkt ${i + 1} übersprungen (Teleport: ${e.message})`, 'error'); continue; }
     if (!autoCalib) return; // abgebrochen
     calibPrompt(`Punkt ${i + 1}/${targets.length} — klicke auf der Karte, wo du JETZT stehst.`, true);
     const norm = await waitForCalibClick();
     if (!autoCalib) return;
     if (!norm) { await abortAutoCalib(); return; }
-    autoCalib.pairs.push({ world: { x: actual.x, y: actual.y }, norm });
+    autoCalib.pairs.push({ world: { x: t.x, y: t.y }, norm });
   }
   calibPrompt('Zurück zur Startposition…', false);
-  try { await calibTeleport(autoCalib.startPos.x, autoCalib.startPos.y); } catch {}
+  try { await calibTeleport(autoCalib.startPos.x, autoCalib.startPos.y, autoCalib.startPos.z); } catch {}
   const count = autoCalib.pairs.length;
   if (count < 3) {
     showToast(`Zu wenige Punkte (${count}/6) — bitte erneut versuchen`, 'error');
@@ -641,7 +643,7 @@ async function abortAutoCalib() {
   const sp = autoCalib.startPos;
   if (autoCalib.resolveClick) { const r = autoCalib.resolveClick; autoCalib.resolveClick = null; r(null); }
   endAutoCalib();
-  try { await calibTeleport(sp.x, sp.y); } catch {}
+  try { await calibTeleport(sp.x, sp.y, sp.z); } catch {}
   showToast('Kalibrierung abgebrochen', '');
 }
 
