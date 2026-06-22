@@ -493,7 +493,7 @@ function renderBigMap() {
   ctx.setTransform(mapZoom, 0, 0, mapZoom, mapPanX, mapPanY);
   const view = { ctx, w: cv.width, h: cv.height };
   if (heatmapMode) drawHeatmap(view, players, me);
-  else drawFullMap(view, players, waypoints, teleports, hoveredTp);
+  else drawFullMap(view, players, waypoints, teleports, hoveredTp, 1 / mapZoom);
   ctx.setTransform(1, 0, 0, 1, 0, 0);
   if (calibMode) drawCalibOverlay(ctx, cv.width, cv.height);
 }

@@ -650,6 +650,8 @@ app.post('/player/teleport', express.json(), async (req, res) => {
 // ── Teleport-Punkte (Admin erstellt, alle nutzen) ───────────────────────────
 const TELEPORTS_FILE = `${BOT_DATA_DIR}/teleports.json`;
 const TP_COOLDOWNS_FILE = `${BOT_DATA_DIR}/tp_cooldowns.json`;
+// Beim Teleport zu einem TP-Punkt etwas höher absetzen → niemand steckt im Boden fest.
+const TP_Z_OFFSET = parseInt(process.env.TP_Z_OFFSET ?? '150', 10);
 
 function tpCooldownRemaining(steamId, tpId) {
   const store = readJson(TP_COOLDOWNS_FILE, {});
@@ -725,7 +727,7 @@ app.post('/teleports/:id/use', async (req, res) => {
   try {
     const cur = (await fetchPlayers().catch(() => [])).find((p) => p.steamId === s.steamId);
     if (!cur) return res.status(409).json({ error: 'Du musst im Spiel sein.' });
-    const where = Number.isFinite(tp.z) ? { x: tp.x, y: tp.y, z: tp.z } : { x: tp.x, y: tp.y };
+    const where = Number.isFinite(tp.z) ? { x: tp.x, y: tp.y, z: tp.z + TP_Z_OFFSET } : { x: tp.x, y: tp.y };
     const r = await fetch(`${PANEL_BASE_URL}/players/${encodeURIComponent(s.steamId)}/teleport`, {
       method: 'POST', headers: { Authorization: `Bearer ${PANEL_ADMIN_TOKEN}`, 'Content-Type': 'application/json' },
       body: JSON.stringify({ where }), signal: AbortSignal.timeout(8000),
