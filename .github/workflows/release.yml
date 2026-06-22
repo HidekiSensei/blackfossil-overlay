@@ -17,6 +17,8 @@ jobs:
         working-directory: app
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0   # volle Historie + Tags für den Changelog
 
       - uses: actions/setup-node@v4
         with:
@@ -30,5 +32,34 @@ jobs:
 
       - name: Build & publish Windows installer
         run: npx electron-builder --win --publish always
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      # Schöner Changelog aus den Commits seit dem letzten Tag, Release
+      # veröffentlichen + als Latest markieren (wichtig für den Auto-Updater).
+      - name: Generate changelog & publish release
+        shell: bash
+        run: |
+          TAG="${GITHUB_REF_NAME}"
+          PREV=$(git describe --tags --abbrev=0 "${TAG}^" 2>/dev/null || echo "")
+          {
+            echo "## 📝 Änderungen"
+            echo ""
+            if [ -n "$PREV" ]; then
+              git log --no-merges --pretty=format:'- %s' "${PREV}..${TAG}"
+            else
+              git log --no-merges --pretty=format:'- %s' "${TAG}"
+            fi
+            echo ""
+            if [ -n "$PREV" ]; then
+              echo ""
+              echo "**Vollständiger Vergleich:** https://github.com/${GITHUB_REPOSITORY}/compare/${PREV}...${TAG}"
+            fi
+          } > "${RUNNER_TEMP}/notes.md"
+          gh release edit "${TAG}" \
+            --draft=false \
+            --latest \
+            --title "BlackFossil Overlay ${TAG}" \
+            --notes-file "${RUNNER_TEMP}/notes.md"
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
