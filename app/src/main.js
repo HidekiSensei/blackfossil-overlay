@@ -360,6 +360,7 @@ function sendVoiceKey(kind, down) {
 function unregisterHotkeys() { globalShortcut.unregisterAll(); }
 
 // ── IPC ──────────────────────────────────────────────────────────────────
+ipcMain.handle('get-version', () => app.getVersion());
 ipcMain.handle('get-session', () => loadSession());
 ipcMain.handle('get-config', () => ({ tokenBase: TOKEN_BASE, hotkeys: HOTKEYS }));
 ipcMain.handle('get-hotkeys', () => HOTKEYS);

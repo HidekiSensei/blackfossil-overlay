@@ -17,6 +17,7 @@ contextBridge.exposeInMainWorld('bf', {
   onUpdateProgress: (cb) => ipcRenderer.on('update-progress', (_e, percent) => cb(percent)),
   onUpdateError: (cb) => ipcRenderer.on('update-error', (_e, msg) => cb(msg)),
   onUpdateNone: (cb) => ipcRenderer.on('update-none', () => cb()),
+  getVersion: () => ipcRenderer.invoke('get-version'),
   updateCheck: () => ipcRenderer.send('update-check'),
   updateDownload: () => ipcRenderer.send('update-download'),
   updateInstall: () => ipcRenderer.send('update-install'),

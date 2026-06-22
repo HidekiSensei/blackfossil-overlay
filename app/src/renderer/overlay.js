@@ -24,6 +24,11 @@ let myPoints = 0;
 let hoveredTp = null;     // id des gehoverten TP (Map ↔ Liste)
 let tpIsAdmin = false;
 let tpConfirmTarget = null;
+let appVersion = '?';
+function updateVersionInfo() {
+  const v = el('versionInfo');
+  if (v) v.textContent = `v${appVersion}${tpIsAdmin ? ' · Team ✓' : ''}`;
+}
 let sessionToken = null;
 let calibPairs = [];
 let armedRef = null;
@@ -141,6 +146,8 @@ let mapOpen = false;
 
 async function init() {
   config = await window.bf.getConfig();
+  try { appVersion = await window.bf.getVersion?.() || '?'; } catch {}
+  updateVersionInfo();
 
   el('connBtn').onclick = () => toggleConnect();
   el('voiceWarn').onclick = () => toggleConnect();
@@ -649,8 +656,9 @@ async function loadTeleports() {
     const d = await res.json();
     teleports = d.teleports || [];
     myPoints = d.points || 0;
-    tpIsAdmin = !!d.isTeam;
+    tpIsAdmin = !!(d.isTeam || d.isAdmin);
     const ab = el('adminBtn'); if (ab) ab.style.display = tpIsAdmin ? 'block' : 'none';
+    updateVersionInfo();
     renderTpList();
     renderAdminTpList();
     if (mapOpen) renderBigMap();
