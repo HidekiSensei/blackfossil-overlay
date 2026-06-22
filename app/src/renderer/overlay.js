@@ -172,6 +172,16 @@ async function init() {
 
   // Auto-Update: Hinweis + Download/Install über die Einstellungen
   el('updateHint').onclick = () => toggleSettings(true);
+  el('checkUpdateBtn').onclick = () => {
+    const b = el('checkUpdateBtn');
+    b.disabled = true; b.textContent = '🔄 Suche…';
+    setTimeout(() => { b.disabled = false; b.textContent = '🔄 Nach Updates suchen'; }, 6000);
+    window.bf.updateCheck?.();
+  };
+  window.bf.onUpdateNone?.(() => {
+    const b = el('checkUpdateBtn'); if (b) { b.disabled = false; b.textContent = '🔄 Nach Updates suchen'; }
+    showToast('✅ Du hast die aktuelle Version', 'success');
+  });
   el('updateBtn').onclick = () => {
     if (updateState === 'available') { updateState = 'downloading'; window.bf.updateDownload?.(); renderUpdateUI(); }
     else if (updateState === 'ready') { window.bf.updateInstall?.(); }
