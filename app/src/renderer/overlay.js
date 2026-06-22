@@ -9,6 +9,13 @@ let me = null;
 let waypoints = [];
 let calibMode = false;
 let heatmapMode = false;
+// Auto-Kalibrierung: 6 feste Punkte (Anzeige-Einheiten × Faktor = Welt-Einheiten).
+const CALIB_FACTOR = 1000;
+const CALIB_TARGETS = [
+  { x: -140, y: -140 }, { x: 100, y: -210 }, { x: -140, y: 210 },
+  { x: -205, y: 110 }, { x: 205, y: -110 }, { x: 205, y: 60 },
+].map((p) => ({ x: p.x * CALIB_FACTOR, y: p.y * CALIB_FACTOR }));
+let autoCalib = null; // { startPos, pairs, resolveClick }
 let sessionToken = null;
 let calibPairs = [];
 let armedRef = null;
@@ -137,6 +144,8 @@ async function init() {
     el('heatBtn').style.background = heatmapMode ? '#8b5cf6' : 'var(--panel)';
     renderBigMap();
   };
+  el('calibrateBtn').onclick = () => startAutoCalibration();
+  el('calibCancelBtn').onclick = () => abortAutoCalib();
   el('calibBtn').onclick = () => toggleCalib();
   el('calibSolve').onclick = () => solveCalibration();
   el('calibReset').onclick = () => { resetCal(); calibPairs = []; saveCalibPairs(); armedRef = null; renderCalibList(); renderBigMap(); };
@@ -455,6 +464,13 @@ function onMapClick(e) {
   if (dragMoved) { dragMoved = false; return; } // war ein Ziehen, kein Klick
   const { nx, ny } = eventToNorm(e);
 
+  // Auto-Kalibrierung: Klick = "hier stehe ich" für den aktuellen Punkt
+  if (autoCalib && autoCalib.resolveClick) {
+    const r = autoCalib.resolveClick; autoCalib.resolveClick = null;
+    r({ nx, ny });
+    return;
+  }
+
   if (calibMode) {
     if (!armedRef) return; // erst einen Referenzpunkt wählen
     calibPairs.push({ world: { x: armedRef.x, y: armedRef.y }, norm: { nx, ny }, label: armedRef.label });
@@ -531,6 +547,60 @@ function centerOnMe() {
   mapPanY = cv.height / 2 - ny * cv.height * mapZoom;
   clampPan();
   renderBigMap();
+}
+
+// ── Auto-Kalibrierung (Teleport zu 6 Punkten + Klick auf die Karte) ──────────
+async function calibTeleport(x, y, z) {
+  const res = await fetch(`${config.tokenBase}/player/teleport`, {
+    method: 'POST', headers: { Authorization: `Bearer ${sessionToken}`, 'Content-Type': 'application/json' },
+    body: JSON.stringify({ x, y, z }),
+  });
+  const d = await res.json(); if (!res.ok) throw new Error(d.error || 'Fehler');
+  await new Promise((r) => setTimeout(r, 700)); // kurz warten, bis die Position ankommt
+  return { x: d.x, y: d.y };
+}
+function calibPrompt(text, showCancel) {
+  const p = el('calibPrompt'); if (!p) return;
+  p.style.display = 'block';
+  el('calibPromptText').textContent = text;
+  el('calibCancelBtn').style.display = showCancel ? 'inline-block' : 'none';
+}
+function endAutoCalib() { autoCalib = null; const p = el('calibPrompt'); if (p) p.style.display = 'none'; }
+function waitForCalibClick() { return new Promise((resolve) => { autoCalib.resolveClick = resolve; }); }
+
+async function startAutoCalibration() {
+  if (autoCalib) return;
+  if (!me) { showToast('Kalibrierung nur auf dem Server möglich', 'error'); return; }
+  autoCalib = { startPos: { x: me.x, y: me.y, z: me.z }, pairs: [], resolveClick: null };
+  toggleSettings(false);
+  toggleMap(true);
+  for (let i = 0; i < CALIB_TARGETS.length; i++) {
+    const t = CALIB_TARGETS[i];
+    calibPrompt(`Punkt ${i + 1}/6 — du wirst teleportiert…`, false);
+    let actual;
+    try { actual = await calibTeleport(t.x, t.y, autoCalib.startPos.z); }
+    catch (e) { showToast('Teleport fehlgeschlagen: ' + e.message, 'error'); await abortAutoCalib(); return; }
+    if (!autoCalib) return; // abgebrochen
+    calibPrompt(`Punkt ${i + 1}/6 — klicke auf der Karte, wo du JETZT stehst.`, true);
+    const norm = await waitForCalibClick();
+    if (!norm || !autoCalib) { await abortAutoCalib(); return; }
+    autoCalib.pairs.push({ world: { x: actual.x, y: actual.y }, norm });
+  }
+  calibPrompt('Kalibrierung wird berechnet…', false);
+  try { await calibTeleport(autoCalib.startPos.x, autoCalib.startPos.y, autoCalib.startPos.z); } catch {}
+  const ok = solveAffine(autoCalib.pairs);
+  if (ok) localStorage.setItem('bf-cal-personal', '1');
+  showToast(ok ? '✅ Karte kalibriert!' : 'Kalibrierung fehlgeschlagen (zu wenige Punkte)', ok ? 'success' : 'error');
+  endAutoCalib();
+  renderBigMap();
+}
+async function abortAutoCalib() {
+  if (!autoCalib) return;
+  const sp = autoCalib.startPos;
+  if (autoCalib.resolveClick) { const r = autoCalib.resolveClick; autoCalib.resolveClick = null; r(null); }
+  endAutoCalib();
+  try { await calibTeleport(sp.x, sp.y, sp.z); } catch {}
+  showToast('Kalibrierung abgebrochen', '');
 }
 
 // ── Kalibrierung (3-Punkt-Klick, affin) ──────────────────────────────────────

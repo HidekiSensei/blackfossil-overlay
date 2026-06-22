@@ -597,6 +597,31 @@ app.post('/garage/swap', express.json(), async (req, res) => {
   }
 });
 
+// Teleport (nur für die Karten-Kalibrierung). Setzt den Spieler an x/y, gibt die
+// tatsächliche Position zurück (für robuste Welt→Karte-Paare).
+app.post('/player/teleport', express.json(), async (req, res) => {
+  const s = sessionFrom(req);
+  if (!s) return res.status(401).json({ error: 'Keine Session' });
+  const x = Number(req.body?.x), y = Number(req.body?.y);
+  const z = Number.isFinite(Number(req.body?.z)) ? Number(req.body.z) : undefined;
+  if (!Number.isFinite(x) || !Number.isFinite(y)) return res.status(400).json({ error: 'x/y fehlen' });
+  try {
+    const where = z !== undefined ? { x, y, z } : { x, y };
+    const r = await fetch(`${PANEL_BASE_URL}/players/${encodeURIComponent(s.steamId)}/teleport`, {
+      method: 'POST', headers: { Authorization: `Bearer ${PANEL_ADMIN_TOKEN}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ where }), signal: AbortSignal.timeout(8000),
+    });
+    if (!r.ok) throw new Error(`Teleport fehlgeschlagen (${r.status})`);
+    const d = await r.json().catch(() => ({}));
+    // Tatsächliche Position kurz darauf aus dem Spieler-Snapshot lesen (falls geклampt)
+    await new Promise((rr) => setTimeout(rr, 900));
+    const after = (await fetchPlayers().catch(() => [])).find((p) => p.steamId === s.steamId);
+    res.json({ ok: true, x: after?.location?.x ?? d.x ?? x, y: after?.location?.y ?? d.y ?? y });
+  } catch (err) {
+    res.status(502).json({ error: err.message });
+  }
+});
+
 // ── 8) Dino-Markt (Bot-seitige JSON-Daten) ──────────────────────────────────
 const MARKETPLACE_FILE = `${BOT_DATA_DIR}/marketplace.json`;
 const POINTS_FILE = `${BOT_DATA_DIR}/points.json`;
