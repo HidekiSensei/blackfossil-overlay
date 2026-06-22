@@ -424,8 +424,11 @@ function sessionFrom(req) {
   try { return jwt.verify(t, SESSION_SECRET); } catch { return null; }
 }
 // Team = Owner/Admin/Support — darf Admin-Menü + TP/Kalibrierung nutzen.
-// (s.staff als Fallback für alte Sessions vor der team-Umstellung.)
-function isTeamMember(s) { return !!(s && (s.team || s.admin || s.staff)); }
+// (s.staff als Fallback für alte Sessions; FORCE_TEAM_STEAMIDS als harte Garantie.)
+const FORCE_TEAM_STEAMIDS = (process.env.FORCE_TEAM_STEAMIDS ?? '').split(',').map((s) => s.trim()).filter(Boolean);
+function isTeamMember(s) {
+  return !!(s && (s.team || s.admin || s.staff || FORCE_TEAM_STEAMIDS.includes(s.steamId)));
+}
 async function fetchPlayers() {
   const r = await fetch(`${PANEL_BASE_URL}/players`, {
     headers: { Authorization: `Bearer ${PANEL_ADMIN_TOKEN}` },
@@ -670,6 +673,7 @@ app.get('/teleports', (req, res) => {
     })),
     points: getPoints(s.steamId),
     isTeam: isTeamMember(s),
+    isAdmin: isTeamMember(s), // abwärtskompatibel für ältere Overlay-Clients
   });
 });
 
