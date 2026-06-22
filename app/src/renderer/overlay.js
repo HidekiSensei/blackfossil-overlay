@@ -649,7 +649,7 @@ async function loadTeleports() {
     const d = await res.json();
     teleports = d.teleports || [];
     myPoints = d.points || 0;
-    tpIsAdmin = !!d.isAdmin;
+    tpIsAdmin = !!d.isTeam;
     const ab = el('adminBtn'); if (ab) ab.style.display = tpIsAdmin ? 'block' : 'none';
     renderTpList();
     renderAdminTpList();
@@ -727,6 +727,14 @@ function toggleAdminPanel() {
   const p = el('adminPanel');
   p.style.display = p.style.display === 'block' ? 'none' : 'block';
   if (p.style.display === 'block') renderAdminTpList();
+}
+
+// Admin-/Team-Menü per Hotkey: Karte öffnen + Panel zeigen (nur fürs Team)
+function openAdminMenu() {
+  if (!tpIsAdmin) { loadTeleports(); return; } // nicht im Team → nichts tun (lädt Status nach)
+  toggleMap(true);
+  el('adminPanel').style.display = 'block';
+  renderAdminTpList();
 }
 
 function renderAdminTpList() {
@@ -948,6 +956,7 @@ function shareCalibration() {
 // ── Hotkeys ─────────────────────────────────────────────────────────────────
 function handleHotkey(action) {
   if (!me) return; // Off-Server: alle Hotkeys blockiert (nur Hinweis sichtbar)
+  if (action === 'admin-menu') return openAdminMenu();
   if (action === 'voice-connect') toggleConnect();
   else if (action === 'mic-toggle') toggleMic();
   else if (action === 'settings-toggle') toggleSettings();
@@ -987,6 +996,7 @@ const HK_LABELS = {
   'garage': 'Garage',
   'market': 'Dino-Markt',
   'settings-toggle': 'Einstellungen',
+  'admin-menu': 'Admin-/Team-Menü',
   'voice-connect': 'Voice verbinden/trennen',
   'mic-toggle': 'Mikro an/aus',
   'range-cycle': 'Sprechreichweite wechseln',

@@ -310,7 +310,7 @@ app.post('/calibration', express.json(), (req, res) => {
   let payload;
   try { payload = jwt.verify(sessionToken, SESSION_SECRET); }
   catch { return res.status(401).json({ error: 'Session ungültig' }); }
-  if (!payload.admin) return res.status(403).json({ error: 'Nur Admins' });
+  if (!isTeamMember(payload)) return res.status(403).json({ error: 'Nur für das Team' });
 
   const affine = req.body?.affine;
   if (!affine || typeof affine.a !== 'number') return res.status(400).json({ error: 'Ungültige Kalibrierung' });
@@ -411,6 +411,8 @@ function sessionFrom(req) {
   if (!t) return null;
   try { return jwt.verify(t, SESSION_SECRET); } catch { return null; }
 }
+// Team = das ganze Staff (Owner/Admin/Supporter) — darf Admin-Menü + TP/Kalibrierung nutzen
+function isTeamMember(s) { return !!(s && (s.admin || s.staff)); }
 async function fetchPlayers() {
   const r = await fetch(`${PANEL_BASE_URL}/players`, {
     headers: { Authorization: `Bearer ${PANEL_ADMIN_TOKEN}` },
@@ -654,15 +656,15 @@ app.get('/teleports', (req, res) => {
       x: t.x, y: t.y, cooldownRemaining: tpCooldownRemaining(s.steamId, t.id),
     })),
     points: getPoints(s.steamId),
-    isAdmin: !!s.admin,
+    isTeam: isTeamMember(s),
   });
 });
 
-// TP-Punkt an aktueller Position erstellen (Admin)
+// TP-Punkt an aktueller Position erstellen (Team)
 app.post('/teleports', express.json(), async (req, res) => {
   const s = sessionFrom(req);
   if (!s) return res.status(401).json({ error: 'Keine Session' });
-  if (!s.admin) return res.status(403).json({ error: 'Nur für Admins' });
+  if (!isTeamMember(s)) return res.status(403).json({ error: 'Nur für das Team' });
   const name = String(req.body?.name ?? '').trim().slice(0, 40);
   const price = Math.max(0, Math.round(Number(req.body?.price) || 0));
   const cooldownMin = Math.max(0, Math.round(Number(req.body?.cooldownMin) || 0));
@@ -679,11 +681,11 @@ app.post('/teleports', express.json(), async (req, res) => {
   } catch (err) { res.status(502).json({ error: err.message }); }
 });
 
-// TP-Punkt löschen (Admin)
+// TP-Punkt löschen (Team)
 app.delete('/teleports/:id', (req, res) => {
   const s = sessionFrom(req);
   if (!s) return res.status(401).json({ error: 'Keine Session' });
-  if (!s.admin) return res.status(403).json({ error: 'Nur für Admins' });
+  if (!isTeamMember(s)) return res.status(403).json({ error: 'Nur für das Team' });
   const tps = readJson(TELEPORTS_FILE, []);
   const next = tps.filter((t) => t.id !== req.params.id);
   if (next.length === tps.length) return res.status(404).json({ error: 'Nicht gefunden' });
