@@ -13,5 +13,12 @@ contextBridge.exposeInMainWorld('bf', {
   resetHotkeys: () => ipcRenderer.invoke('reset-hotkeys'),
   onVoiceKey: (cb) => ipcRenderer.on('voice-key', (_e, data) => cb(data)),
   onUpdateReady: (cb) => ipcRenderer.on('update-ready', (_e, version) => cb(version)),
+  onUpdateAvailable: (cb) => ipcRenderer.on('update-available', (_e, version) => cb(version)),
+  onUpdateProgress: (cb) => ipcRenderer.on('update-progress', (_e, percent) => cb(percent)),
+  onUpdateError: (cb) => ipcRenderer.on('update-error', (_e, msg) => cb(msg)),
+  updateCheck: () => ipcRenderer.send('update-check'),
+  updateDownload: () => ipcRenderer.send('update-download'),
+  updateInstall: () => ipcRenderer.send('update-install'),
   onGameClosed: (cb) => ipcRenderer.on('game-closed', () => cb()),
+  onGameFocus: (cb) => ipcRenderer.on('game-focus', (_e, focused) => cb(focused)),
 });

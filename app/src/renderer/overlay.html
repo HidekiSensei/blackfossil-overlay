@@ -250,6 +250,12 @@
       <div id="hotkeyList" style="margin-top:6px"></div>
       <button id="resetHkBtn" class="secondary" style="margin-top:8px;width:100%">Tasten zurücksetzen</button>
 
+      <div id="updateBox" style="display:none;margin-top:18px">
+        <div class="sec-title">⬆️ Update</div>
+        <div id="updateInfo" style="font-size:12px;color:var(--muted);margin:6px 0">Eine neue Version ist verfügbar.</div>
+        <button id="updateBtn" style="width:100%">Update herunterladen</button>
+      </div>
+
     </div>
     <div class="btnrow">
       <button id="logoutBtn" class="secondary">Abmelden</button>
@@ -259,6 +265,9 @@
 
   <!-- Server-Banner (oben mittig) -->
   <div id="serverBanner">⚠️ Nicht auf dem BlackFossil-Server — verbinde dich im Spiel, um Karte & Proximity zu nutzen.</div>
+
+  <!-- Update-Hinweis (oben, während des Betriebs) -->
+  <div id="updateHint" style="display:none;position:fixed;top:10px;left:50%;transform:translateX(-50%);z-index:9999;background:rgba(139,92,246,0.92);color:#fff;padding:8px 16px;border-radius:10px;font-size:13px;font-weight:600;box-shadow:var(--glow);cursor:pointer">⬆️ Update verfügbar</div>
 
   <!-- Dino-Detailansicht (über Garage/Markt) -->
   <div id="dinoDetail"><div class="box"></div></div>

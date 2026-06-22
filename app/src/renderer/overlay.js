@@ -17,6 +17,30 @@ let zoneEditMode = false;
 let activeZone = null; // 'pvp' | 'pve'
 let pttHeld = false, ptmHeld = false;
 
+// Update-Status: 'none' | 'available' | 'downloading' | 'ready'
+let updateState = 'none';
+let updateVersion = '';
+function renderUpdateUI() {
+  const hint = el('updateHint'), box = el('updateBox'), btn = el('updateBtn'), info = el('updateInfo');
+  if (!hint || !box || !btn) return;
+  if (updateState === 'none') { hint.style.display = 'none'; box.style.display = 'none'; return; }
+  box.style.display = 'block';
+  const v = updateVersion ? 'v' + updateVersion : '';
+  if (updateState === 'available') {
+    hint.style.display = 'block'; hint.textContent = `⬆️ Update ${v} verfügbar`;
+    if (info) info.textContent = `Version ${v} ist verfügbar. Jetzt herunterladen?`;
+    btn.textContent = `Update ${v} herunterladen`.trim(); btn.disabled = false;
+  } else if (updateState === 'downloading') {
+    hint.style.display = 'block'; hint.textContent = `⬇️ Update ${v} wird geladen…`;
+    if (info) info.textContent = 'Update wird heruntergeladen…';
+    btn.disabled = true;
+  } else if (updateState === 'ready') {
+    hint.style.display = 'block'; hint.textContent = `✅ Update ${v} bereit — neustarten`;
+    if (info) info.textContent = `Version ${v} ist bereit. Overlay neustarten zum Installieren.`;
+    btn.textContent = 'Neustarten & installieren'; btn.disabled = false;
+  }
+}
+
 // Proximity: Sprechreichweiten in Metern (1 m = 100 Welt-Einheiten/cm).
 // Maßgeblich ist die Reichweite des SPRECHERS — andere hören dich so weit.
 const RANGE_STEPS = [2, 5, 10, 15, 25];
@@ -132,9 +156,30 @@ async function init() {
   // auch wieder schließt.
   window.addEventListener('keydown', onLocalHotkey);
 
-  // Auto-Update: Hinweis wenn neue Version geladen wurde
+  // Auto-Update: Hinweis + Download/Install über die Einstellungen
+  el('updateHint').onclick = () => toggleSettings(true);
+  el('updateBtn').onclick = () => {
+    if (updateState === 'available') { updateState = 'downloading'; window.bf.updateDownload?.(); renderUpdateUI(); }
+    else if (updateState === 'ready') { window.bf.updateInstall?.(); }
+  };
+  window.bf.onUpdateAvailable?.((version) => {
+    updateVersion = version || ''; updateState = 'available'; renderUpdateUI();
+    showToast(`⬆️ Update ${updateVersion ? 'v' + updateVersion + ' ' : ''}verfügbar — in den Einstellungen aktualisieren`, 'success');
+  });
+  window.bf.onUpdateProgress?.((percent) => {
+    if (updateState === 'downloading') { const b = el('updateBtn'); if (b) b.textContent = `Lädt… ${percent}%`; }
+  });
   window.bf.onUpdateReady?.((version) => {
-    showToast(`⬆️ Update ${version ? 'v' + version + ' ' : ''}geladen — wird beim nächsten Neustart installiert`, 'success');
+    updateVersion = version || updateVersion; updateState = 'ready'; renderUpdateUI();
+    showToast('✅ Update bereit — Overlay neustarten zum Installieren', 'success');
+  });
+  window.bf.onUpdateError?.((msg) => {
+    if (updateState === 'downloading') { updateState = 'available'; renderUpdateUI(); }
+    showToast(`Update-Fehler: ${msg}`, 'error');
+  });
+  // Raustabben → offene Overlay-Fenster schließen (Main blendet das Fenster ohnehin aus)
+  window.bf.onGameFocus?.((focused) => {
+    if (!focused) { toggleSettings(false); toggleMap(false); closeAllFeatures(); }
   });
 
   // The Isle wurde geschlossen → Voice trennen (Overlay blendet das Main-Prozess aus)
@@ -199,8 +244,34 @@ async function init() {
 
   // Auto-Connect + Positions-Polling
   const session = await window.bf.getSession();
-  if (session) { sessionToken = session; connectWithSession(session); startPositionPolling(); }
+  // Voice verbindet NICHT sofort — erst wenn man laut Positions-Poll auf dem
+  // BlackFossil-Server ist (siehe applyServerState). Off-Server kein Voice.
+  if (session) { sessionToken = session; startPositionPolling(); }
   else setMicState('disconnected', 'Keine Session');
+}
+
+// ── Server-Gating ────────────────────────────────────────────────────────────
+// Nur wenn man wirklich auf dem BlackFossil-Server ist (taucht im Positions-Poll
+// als "isYou" auf), sind Karte/Minimap/HUD sichtbar und Voice + Hotkeys aktiv.
+// Sonst nur der "Nicht auf dem Server"-Hinweis.
+let wasOnServer = false;
+function applyServerState() {
+  const onServer = !!me;
+  el('serverBanner').style.display = onServer ? 'none' : 'block';
+  const mw = el('minimapWrap'); if (mw) mw.style.display = onServer ? '' : 'none';
+  const hud = el('hud'); if (hud) hud.style.display = onServer ? '' : 'none';
+  if (onServer === wasOnServer) return;
+  wasOnServer = onServer;
+  if (onServer) {
+    // Auf dem Server → Voice verbinden (nur hier erlaubt)
+    if (!room && sessionToken) connectWithSession(sessionToken);
+  } else {
+    // Server verlassen → Voice trennen + alle Overlay-Fenster schließen
+    if (room) { try { room.disconnect(); } catch {} room = null; micEnabled = false; setMicState('disconnected'); }
+    closeAllFeatures();
+    toggleMap(false);
+    toggleSettings(false);
+  }
 }
 
 // ── Positionen pollen ───────────────────────────────────────────────────────
@@ -213,7 +284,7 @@ function startPositionPolling() {
         const data = await res.json();
         players = data.players || [];
         me = players.find((p) => p.isYou) || null;
-        el('serverBanner').style.display = me ? 'none' : 'block';
+        applyServerState();
         updateZoneBox();
         checkZoneChange();
         updateProximityVolumes();
@@ -615,6 +686,7 @@ function shareCalibration() {
 
 // ── Hotkeys ─────────────────────────────────────────────────────────────────
 function handleHotkey(action) {
+  if (!me) return; // Off-Server: alle Hotkeys blockiert (nur Hinweis sichtbar)
   if (action === 'voice-connect') toggleConnect();
   else if (action === 'mic-toggle') toggleMic();
   else if (action === 'settings-toggle') toggleSettings();
@@ -1167,7 +1239,10 @@ async function connect({ token, url }) {
 
 async function toggleConnect() {
   if (room) { await room.disconnect(); room = null; micEnabled = false; el('connBtn').textContent = 'Verbinden'; setMicState('disconnected'); }
-  else { const s = await window.bf.getSession(); if (s) connectWithSession(s); }
+  else {
+    if (!me) { showToast('Voice nur auf dem BlackFossil-Server verfügbar', 'error'); return; }
+    const s = await window.bf.getSession(); if (s) connectWithSession(s);
+  }
 }
 
 async function toggleMic() {
