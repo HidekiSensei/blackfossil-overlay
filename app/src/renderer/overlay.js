@@ -166,6 +166,7 @@ async function init() {
 
   el('connBtn').onclick = () => toggleConnect();
   el('voiceWarn').onclick = () => toggleConnect();
+  el('voiceSearch').oninput = (e) => { voiceSearch = e.target.value; renderVoiceUsers(); };
   el('micBtn').onclick = () => toggleMic();
   el('logoutBtn').onclick = () => window.bf.logout();
   el('closeBtn').onclick = () => toggleSettings(false);
@@ -355,6 +356,7 @@ function startPositionPolling() {
         updateZoneBox();
         checkZoneChange();
         updateProximityVolumes();
+        if (settingsOpen) renderVoiceUsers();
         if (mapOpen) renderBigMap();
       }
     } catch {}
@@ -389,18 +391,23 @@ function setUserGain(identity, factor) {
   updateProximityVolumes();
 }
 
+let voiceSearch = '';
 function renderVoiceUsers() {
   const box = el('voiceUsers');
   if (!box) return;
-  const parts = room ? [...room.remoteParticipants.values()] : [];
-  if (!parts.length) {
-    box.innerHTML = '<div style="color:var(--muted);font-size:12px">Keine anderen Spieler im Voice.</div>';
+  const q = voiceSearch.trim().toLowerCase();
+  // Nur Teilnehmer, die GERADE auf dem Server sind (in /positions), + Suche, alphabetisch
+  const list = (room ? [...room.remoteParticipants.values()] : [])
+    .map((p) => { const pos = players.find((pl) => pl.steamId === p.identity); return { p, name: pos ? (pos.name || p.name || p.identity) : null }; })
+    .filter((e) => e.name !== null)
+    .filter((e) => !q || e.name.toLowerCase().includes(q))
+    .sort((a, b) => a.name.localeCompare(b.name));
+  if (!list.length) {
+    box.innerHTML = `<div style="color:var(--muted);font-size:12px">${q ? 'Niemand gefunden.' : 'Keine anderen Spieler im Voice auf dem Server.'}</div>`;
     return;
   }
   box.innerHTML = '';
-  for (const p of parts) {
-    const pos = players.find((pl) => pl.steamId === p.identity);
-    const name = pos?.name || p.name || p.identity;
+  for (const { p, name } of list) {
     const g = userGain[p.identity] ?? 1;
     const row = document.createElement('div');
     row.style.cssText = 'display:flex;align-items:center;gap:8px;margin-bottom:6px';

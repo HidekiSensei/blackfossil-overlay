@@ -213,6 +213,9 @@ app.get('/token', async (req, res) => {
   });
 });
 
+// Overlay-Aktivität: wer pollt /positions = hat das Overlay an. Für die Overlay-Pflicht.
+const overlayActivity = {}; // steamId → lastSeen-ts (in-memory, periodisch in Datei geflusht)
+
 // ── 4) Spielerpositionen relayen (Welt-Koordinaten) ────────────────────────
 app.get('/positions', async (req, res) => {
   const auth = req.headers.authorization ?? '';
@@ -222,6 +225,7 @@ app.get('/positions', async (req, res) => {
   let payload;
   try { payload = jwt.verify(sessionToken, SESSION_SECRET); }
   catch { return res.status(401).json({ error: 'Session ungültig' }); }
+  overlayActivity[payload.steamId] = Date.now(); // Overlay ist aktiv
 
   try {
     const r = await fetch(`${PANEL_BASE_URL}/players`, {
@@ -416,6 +420,16 @@ function writeJsonFile(file, data) {
   writeFileSync(tmp, JSON.stringify(data, null, 2));
   renameSync(tmp, file);
 }
+
+// Overlay-Aktivität alle 5s in die geteilte Datei flushen (Bot liest sie für die Overlay-Pflicht)
+const OVERLAY_ACTIVE_FILE = `${BOT_DATA_DIR}/overlay_active.json`;
+setInterval(() => {
+  try {
+    const now = Date.now();
+    for (const k of Object.keys(overlayActivity)) if (now - overlayActivity[k] > 120_000) delete overlayActivity[k];
+    writeJsonFile(OVERLAY_ACTIVE_FILE, overlayActivity);
+  } catch {}
+}, 5000);
 function genId() { return `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`; }
 
 function sessionFrom(req) {
