@@ -26,11 +26,14 @@ export const ZONES = {
 // ── Kalibrierung als affine Abbildung Welt → normalisiert [0..1] ─────────────
 // nx = a*wx + b*wy + e ;  ny = c*wx + d*wy + f
 // Affin löst Achsentausch, Spiegelung, Drehung und Skalierung auf einmal.
-const DEFAULTS = { a: 8.3e-7, b: 0, e: 0.5, c: 0, d: -8.3e-7, f: 0.5 };
+// Horizontale Spiegelung an der Bildmitte: nx → 1 − nx (Vorzeichen von a umgedreht,
+// e bleibt 0.5). ny unverändert. Test ohne Kalibrierung.
+const DEFAULTS = { a: -8.3e-7, b: 0, e: 0.5, c: 0, d: -8.3e-7, f: 0.5 };
+const CAL_KEY = 'bf-cal-affine-v2'; // Schlüssel angehoben → alte gespeicherte Kalibrierungen werden ignoriert
 let cal = loadCal();
 
 function loadCal() {
-  try { return { ...DEFAULTS, ...JSON.parse(localStorage.getItem('bf-cal-affine')) }; }
+  try { return { ...DEFAULTS, ...JSON.parse(localStorage.getItem(CAL_KEY)) }; }
   catch { return { ...DEFAULTS }; }
 }
 // Zonen-Polygone vom Server übernehmen
@@ -40,8 +43,8 @@ export function setZones(data) {
 }
 
 export function getCal() { return cal; }
-export function setCalAffine(m) { cal = { ...m }; localStorage.setItem('bf-cal-affine', JSON.stringify(cal)); }
-export function resetCal() { cal = { ...DEFAULTS }; localStorage.setItem('bf-cal-affine', JSON.stringify(cal)); }
+export function setCalAffine(m) { cal = { ...m }; localStorage.setItem(CAL_KEY, JSON.stringify(cal)); }
+export function resetCal() { cal = { ...DEFAULTS }; localStorage.setItem(CAL_KEY, JSON.stringify(cal)); }
 
 export function worldToNorm(wx, wy) {
   return { nx: cal.a * wx + cal.b * wy + cal.e, ny: cal.c * wx + cal.d * wy + cal.f };
