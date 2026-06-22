@@ -606,7 +606,13 @@ app.post('/player/teleport', express.json(), async (req, res) => {
   const z = Number.isFinite(Number(req.body?.z)) ? Number(req.body.z) : undefined;
   if (!Number.isFinite(x) || !Number.isFinite(y)) return res.status(400).json({ error: 'x/y fehlen' });
   try {
-    const where = z !== undefined ? { x, y, z } : { x, y };
+    // Ohne z: aktuelle Höhe des Spielers nehmen (sonst landet er bei z=0 unter der Map)
+    let zVal = z;
+    if (zVal === undefined) {
+      const cur = (await fetchPlayers().catch(() => [])).find((p) => p.steamId === s.steamId);
+      if (Number.isFinite(cur?.location?.z)) zVal = cur.location.z;
+    }
+    const where = Number.isFinite(zVal) ? { x, y, z: zVal } : { x, y };
     const r = await fetch(`${PANEL_BASE_URL}/players/${encodeURIComponent(s.steamId)}/teleport`, {
       method: 'POST', headers: { Authorization: `Bearer ${PANEL_ADMIN_TOKEN}`, 'Content-Type': 'application/json' },
       body: JSON.stringify({ where }), signal: AbortSignal.timeout(8000),

@@ -9,12 +9,14 @@ let me = null;
 let waypoints = [];
 let calibMode = false;
 let heatmapMode = false;
-// Auto-Kalibrierung: 6 feste Punkte (Anzeige-Einheiten × Faktor = Welt-Einheiten).
-const CALIB_FACTOR = 1000;
-const CALIB_TARGETS = [
-  { x: -140, y: -140 }, { x: 100, y: -210 }, { x: -140, y: 210 },
-  { x: -205, y: 110 }, { x: 205, y: -110 }, { x: 205, y: 60 },
-].map((p) => ({ x: p.x * CALIB_FACTOR, y: p.y * CALIB_FACTOR }));
+// Auto-Kalibrierung: 6 über die Karte verteilte NORM-Punkte. Die echten Welt-Ziele
+// werden beim Start daraus über die aktuelle (grobe) Abbildung berechnet — so landen
+// die Teleports garantiert im Kartenbereich (In-Game-GPS ≠ Welt-Koordinaten!).
+const CALIB_NORM_TARGETS = [
+  { nx: 0.25, ny: 0.22 }, { nx: 0.75, ny: 0.22 },
+  { nx: 0.82, ny: 0.55 }, { nx: 0.70, ny: 0.80 },
+  { nx: 0.25, ny: 0.78 }, { nx: 0.18, ny: 0.50 },
+];
 let autoCalib = null; // { startPos, pairs, resolveClick }
 let sessionToken = null;
 let calibPairs = [];
@@ -550,10 +552,11 @@ function centerOnMe() {
 }
 
 // ── Auto-Kalibrierung (Teleport zu 6 Punkten + Klick auf die Karte) ──────────
-async function calibTeleport(x, y, z) {
+async function calibTeleport(x, y) {
+  // z lassen wir weg → der token-service nimmt die aktuelle Höhe des Spielers
   const res = await fetch(`${config.tokenBase}/player/teleport`, {
     method: 'POST', headers: { Authorization: `Bearer ${sessionToken}`, 'Content-Type': 'application/json' },
-    body: JSON.stringify({ x, y, z }),
+    body: JSON.stringify({ x, y }),
   });
   const d = await res.json(); if (!res.ok) throw new Error(d.error || 'Fehler');
   await new Promise((r) => setTimeout(r, 700)); // kurz warten, bis die Position ankommt
@@ -571,26 +574,35 @@ function waitForCalibClick() { return new Promise((resolve) => { autoCalib.resol
 async function startAutoCalibration() {
   if (autoCalib) return;
   if (!me) { showToast('Kalibrierung nur auf dem Server möglich', 'error'); return; }
-  autoCalib = { startPos: { x: me.x, y: me.y, z: me.z }, pairs: [], resolveClick: null };
+  autoCalib = { startPos: { x: me.x, y: me.y }, pairs: [], resolveClick: null };
   toggleSettings(false);
   toggleMap(true);
-  for (let i = 0; i < CALIB_TARGETS.length; i++) {
-    const t = CALIB_TARGETS[i];
-    calibPrompt(`Punkt ${i + 1}/6 — du wirst teleportiert…`, false);
+  // Welt-Ziele aus der aktuellen (groben) Abbildung — landen sicher im Kartenbereich
+  const targets = CALIB_NORM_TARGETS.map((n) => normToWorld(n.nx, n.ny));
+  for (let i = 0; i < targets.length; i++) {
+    const t = targets[i];
+    calibPrompt(`Punkt ${i + 1}/${targets.length} — du wirst teleportiert…`, true);
     let actual;
-    try { actual = await calibTeleport(t.x, t.y, autoCalib.startPos.z); }
-    catch (e) { showToast('Teleport fehlgeschlagen: ' + e.message, 'error'); await abortAutoCalib(); return; }
+    try { actual = await calibTeleport(t.x, t.y); }
+    catch (e) { showToast(`Punkt ${i + 1} übersprungen (Teleport: ${e.message})`, 'error'); continue; }
     if (!autoCalib) return; // abgebrochen
-    calibPrompt(`Punkt ${i + 1}/6 — klicke auf der Karte, wo du JETZT stehst.`, true);
+    calibPrompt(`Punkt ${i + 1}/${targets.length} — klicke auf der Karte, wo du JETZT stehst.`, true);
     const norm = await waitForCalibClick();
-    if (!norm || !autoCalib) { await abortAutoCalib(); return; }
+    if (!autoCalib) return;
+    if (!norm) { await abortAutoCalib(); return; }
     autoCalib.pairs.push({ world: { x: actual.x, y: actual.y }, norm });
   }
-  calibPrompt('Kalibrierung wird berechnet…', false);
-  try { await calibTeleport(autoCalib.startPos.x, autoCalib.startPos.y, autoCalib.startPos.z); } catch {}
+  calibPrompt('Zurück zur Startposition…', false);
+  try { await calibTeleport(autoCalib.startPos.x, autoCalib.startPos.y); } catch {}
+  const count = autoCalib.pairs.length;
+  if (count < 3) {
+    showToast(`Zu wenige Punkte (${count}/6) — bitte erneut versuchen`, 'error');
+    endAutoCalib();
+    return;
+  }
   const ok = solveAffine(autoCalib.pairs);
   if (ok) localStorage.setItem('bf-cal-personal', '1');
-  showToast(ok ? '✅ Karte kalibriert!' : 'Kalibrierung fehlgeschlagen (zu wenige Punkte)', ok ? 'success' : 'error');
+  showToast(ok ? `✅ Karte kalibriert! (${count} Punkte)` : 'Kalibrierung fehlgeschlagen', ok ? 'success' : 'error');
   endAutoCalib();
   renderBigMap();
 }
@@ -599,7 +611,7 @@ async function abortAutoCalib() {
   const sp = autoCalib.startPos;
   if (autoCalib.resolveClick) { const r = autoCalib.resolveClick; autoCalib.resolveClick = null; r(null); }
   endAutoCalib();
-  try { await calibTeleport(sp.x, sp.y, sp.z); } catch {}
+  try { await calibTeleport(sp.x, sp.y); } catch {}
   showToast('Kalibrierung abgebrochen', '');
 }
 

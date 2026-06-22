@@ -1,6 +1,6 @@
 {
   "name": "blackfossil-overlay",
-  "version": "0.18.4",
+  "version": "0.18.5",
   "description": "BlackFossil Overlay — Proximity Chat, Map & Minimap für The Isle",
   "author": "BlackFossil",
   "main": "src/main.js",
