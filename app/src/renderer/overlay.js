@@ -32,6 +32,7 @@ function pickCalibTargets(n) {
   return sel;
 }
 let autoCalib = null; // { startPos, pairs, resolveClick }
+const CALIB_HOVER_Z = 80000; // Schwebehöhe über der Zonen-Ecke (klar über jedem Gelände)
 // Teleport-Punkte
 let teleports = [];       // [{id,number,name,price,cooldownMin,x,y,cooldownRemaining}]
 let myPoints = 0;
@@ -630,12 +631,15 @@ async function startAutoCalibration() {
   }
   for (let i = 0; i < targets.length; i++) {
     const t = targets[i];
-    calibPrompt(`Punkt ${i + 1}/${targets.length} — du wirst zu einer Zonen-Ecke teleportiert…`, true);
-    try { await calibTeleport(t.x, t.y); } // rohe Koordinate, ohne z (aktuelle Höhe)
+    calibPrompt(`Punkt ${i + 1}/${targets.length} — du wirst über die Zonen-Ecke teleportiert…`, true);
+    try { await calibTeleport(t.x, t.y, CALIB_HOVER_Z); } // hoch über dem Punkt → kein Aufprall
     catch (e) { showToast(`Punkt ${i + 1} übersprungen (Teleport: ${e.message})`, 'error'); continue; }
     if (!autoCalib) return; // abgebrochen
-    calibPrompt(`Punkt ${i + 1}/${targets.length} — klicke auf der Karte GENAU dort, wo du jetzt stehst (am Gelände erkennbar).`, true);
+    // Schweben: regelmäßig wieder hochteleportieren → man fällt nie auf, kein Schaden
+    const hover = setInterval(() => { calibTeleport(t.x, t.y, CALIB_HOVER_Z).catch(() => {}); }, 800);
+    calibPrompt(`Punkt ${i + 1}/${targets.length} — du schwebst über der Ecke. Klicke auf der Karte GENAU dort, wo du bist.`, true);
     const norm = await waitForCalibClick();
+    clearInterval(hover);
     if (!autoCalib) return;
     if (!norm) { await abortAutoCalib(); return; }
     autoCalib.pairs.push({ world: { x: t.x, y: t.y }, norm });
