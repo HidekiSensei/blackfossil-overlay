@@ -17,6 +17,8 @@ let zoneEditMode = false;
 let activeZone = null; // 'pvp' | 'pve'
 let pttHeld = false, ptmHeld = false;
 
+let voiceConnected = false; // im LiveKit-Raum verbunden?
+
 // Update-Status: 'none' | 'available' | 'downloading' | 'ready'
 let updateState = 'none';
 let updateVersion = '';
@@ -126,6 +128,7 @@ async function init() {
   config = await window.bf.getConfig();
 
   el('connBtn').onclick = () => toggleConnect();
+  el('voiceWarn').onclick = () => toggleConnect();
   el('micBtn').onclick = () => toggleMic();
   el('logoutBtn').onclick = () => window.bf.logout();
   el('closeBtn').onclick = () => toggleSettings(false);
@@ -260,6 +263,7 @@ function applyServerState() {
   el('serverBanner').style.display = onServer ? 'none' : 'block';
   const mw = el('minimapWrap'); if (mw) mw.style.display = onServer ? '' : 'none';
   const hud = el('hud'); if (hud) hud.style.display = onServer ? '' : 'none';
+  updateVoiceWarn();
   if (onServer === wasOnServer) return;
   wasOnServer = onServer;
   if (onServer) {
@@ -267,11 +271,18 @@ function applyServerState() {
     if (!room && sessionToken) connectWithSession(sessionToken);
   } else {
     // Server verlassen → Voice trennen + alle Overlay-Fenster schließen
-    if (room) { try { room.disconnect(); } catch {} room = null; micEnabled = false; setMicState('disconnected'); }
+    if (room) { try { room.disconnect(); } catch {} room = null; micEnabled = false; voiceConnected = false; setMicState('disconnected'); }
     closeAllFeatures();
     toggleMap(false);
     toggleSettings(false);
+    updateVoiceWarn();
   }
+}
+
+// Penetrante Warnung: auf dem Server, aber nicht im Voice verbunden
+function updateVoiceWarn() {
+  const w = el('voiceWarn');
+  if (w) w.style.display = (!!me && !voiceConnected) ? 'block' : 'none';
 }
 
 // ── Positionen pollen ───────────────────────────────────────────────────────
@@ -1216,8 +1227,8 @@ async function connect({ token, url }) {
   setMicState('connecting');
   room = new Room({ adaptiveStream: true, dynacast: true });
   room
-    .on(RoomEvent.Connected, () => { refreshMicState(); el('connBtn').textContent = 'Trennen'; broadcastRange(); })
-    .on(RoomEvent.Disconnected, () => { el('connBtn').textContent = 'Verbinden'; setMicState('disconnected'); })
+    .on(RoomEvent.Connected, () => { voiceConnected = true; refreshMicState(); el('connBtn').textContent = 'Trennen'; broadcastRange(); updateVoiceWarn(); })
+    .on(RoomEvent.Disconnected, () => { voiceConnected = false; el('connBtn').textContent = 'Verbinden'; setMicState('disconnected'); updateVoiceWarn(); })
     .on(RoomEvent.ParticipantConnected, () => { broadcastRange(); if (settingsOpen) renderVoiceUsers(); })  // Neuer Teilnehmer lernt meine Reichweite
     .on(RoomEvent.ParticipantDisconnected, () => { if (settingsOpen) renderVoiceUsers(); })
     .on(RoomEvent.DataReceived, (payload, participant) => {
@@ -1238,7 +1249,7 @@ async function connect({ token, url }) {
 }
 
 async function toggleConnect() {
-  if (room) { await room.disconnect(); room = null; micEnabled = false; el('connBtn').textContent = 'Verbinden'; setMicState('disconnected'); }
+  if (room) { await room.disconnect(); room = null; micEnabled = false; voiceConnected = false; el('connBtn').textContent = 'Verbinden'; setMicState('disconnected'); updateVoiceWarn(); }
   else {
     if (!me) { showToast('Voice nur auf dem BlackFossil-Server verfügbar', 'error'); return; }
     const s = await window.bf.getSession(); if (s) connectWithSession(s);

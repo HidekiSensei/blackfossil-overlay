@@ -2,7 +2,7 @@ const { app, BrowserWindow, ipcMain, shell, session, globalShortcut, screen, Tra
 const path = require('node:path');
 const fs = require('node:fs');
 const http = require('node:http');
-const { exec } = require('node:child_process');
+const { exec, spawn } = require('node:child_process');
 const { autoUpdater } = require('electron-updater');
 
 // ── Auto-Update (GitHub-Releases) ───────────────────────────────────────────
@@ -60,9 +60,14 @@ function isGameRunning() {
     });
   });
 }
-// Vordergrund-Erkennung (Windows): ist The Isle das fokussierte Fenster?
-// Per kleinem PowerShell-Skript (GetForegroundWindow → Prozessname).
+// Vordergrund-Erkennung (Windows): EIN dauerhafter PowerShell-Prozess meldet jede
+// Sekunde den Namen des fokussierten Fensters. Kein wiederholtes Spawnen mehr →
+// kein Flackern/Fokus-Konflikt. Der Tick liest nur den Cache (synchron).
 let FG_PS1 = null;
+let fgChild = null;
+let fgName = null;        // letzter Vordergrund-Prozessname (lowercase)
+let fgUpdatedAt = 0;
+let fgEverSawGame = false;
 function ensureFgProbe() {
   if (process.platform !== 'win32' || FG_PS1) return;
   FG_PS1 = path.join(app.getPath('temp'), 'bf-foreground.ps1');
@@ -73,29 +78,33 @@ function ensureFgProbe() {
     '[DllImport("user32.dll")]public static extern int GetWindowThreadProcessId(IntPtr h,out int p);' +
     'public static string Name(){IntPtr h=GetForegroundWindow();int p;GetWindowThreadProcessId(h,out p);' +
     'try{return Process.GetProcessById(p).ProcessName;}catch{return "";}}}\n' +
-    '"@\n[BFFg]::Name()';
+    '"@\n' +
+    'while($true){ try{ [Console]::Out.WriteLine([BFFg]::Name()) }catch{ [Console]::Out.WriteLine("") }; Start-Sleep -Milliseconds 1000 }';
   try { fs.writeFileSync(FG_PS1, script); } catch { FG_PS1 = null; }
 }
-function getForegroundExe() {
-  return new Promise((resolve) => {
-    if (process.platform !== 'win32' || !FG_PS1) return resolve(null);
-    exec(`powershell -NoProfile -ExecutionPolicy Bypass -File "${FG_PS1}"`,
-      { windowsHide: true, timeout: 4000 }, (err, stdout) => {
-        if (err) return resolve(null);
-        resolve((stdout || '').trim().toLowerCase());
-      });
-  });
+function startForegroundWatch() {
+  if (process.platform !== 'win32' || fgChild) return;
+  ensureFgProbe();
+  if (!FG_PS1) return;
+  try {
+    fgChild = spawn('powershell', ['-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', FG_PS1], { windowsHide: true });
+    fgChild.stdout.on('data', (d) => {
+      const line = d.toString().split(/\r?\n/).map((s) => s.trim()).filter((s) => s.length > 0).pop();
+      if (line !== undefined) { fgName = line.toLowerCase(); fgUpdatedAt = Date.now(); }
+    });
+    fgChild.on('exit', () => { fgChild = null; });
+    fgChild.on('error', () => { fgChild = null; });
+  } catch { fgChild = null; }
 }
-let fgEverSawGame = false; // hat die Erkennung das Spiel je sicher als Vordergrund erkannt?
-async function isGameForeground() {
+function stopForegroundWatch() { try { fgChild && fgChild.kill(); } catch {} fgChild = null; }
+function isGameForeground() {
   if (process.platform !== 'win32') return true;   // Dev: immer aktiv
-  if (overlayInteractive) return true;             // Map/Settings offen → Overlay hat Fokus, NICHT ausblenden
-  const name = await getForegroundExe();
-  if (name == null || name === '') return true;    // Erkennung unklar → anzeigen
-  const isGame = name.includes('theisle');         // lockerer Treffer (alle Isle-Prozessnamen enthalten "theisle")
+  if (overlayInteractive) return true;             // Map/Settings offen → Overlay hat Fokus
+  // Keine frischen Daten (Prozess tot/zu langsam) → anzeigen statt verstecken
+  if (!fgName || Date.now() - fgUpdatedAt > 6000) return true;
+  const isGame = fgName.includes('theisle');       // lockerer Treffer
   if (isGame) { fgEverSawGame = true; return true; }
-  // Solange das Spiel noch NIE sicher als Vordergrund erkannt wurde, niemals ausblenden.
-  // Schützt davor, dass eine unzuverlässige Erkennung das Overlay dauerhaft versteckt.
+  // Solange das Spiel noch NIE sicher erkannt wurde, niemals ausblenden.
   return !fgEverSawGame;
 }
 
@@ -111,8 +120,9 @@ function setHotkeysActive(active) {
 let gameWatchTimer = null;
 let gameWasRunning = false; // war The Isle beim letzten Tick schon einmal an?
 let gameMissCount = 0;      // aufeinanderfolgende "nicht erkannt"-Ticks (Entprellung)
+let fgHideCount = 0;        // aufeinanderfolgende "nicht im Vordergrund"-Ticks (Hysterese)
 function startGameWatch() {
-  ensureFgProbe();
+  startForegroundWatch();
   if (!overlayWindow) openOverlay();
   const tick = async () => {
     if (!overlayWindow) return;
@@ -140,16 +150,21 @@ function startGameWatch() {
     gameMissCount = 0;
     gameWasRunning = true;
     // Läuft → nur sichtbar UND mit aktiven Hotkeys, wenn The Isle im Vordergrund ist.
-    // Raustabben → Overlay ausblenden + Hotkeys aus (Voice bleibt verbunden).
-    const fg = await isGameForeground();
+    // Hysterese: erst nach 2 "nicht im Vordergrund"-Ticks ausblenden (kein Flackern).
+    const fg = isGameForeground();
     if (fg) {
+      fgHideCount = 0;
       if (!overlayWindow.isVisible()) overlayWindow.showInactive();
       setHotkeysActive(true);
+      try { overlayWindow.webContents.send('game-focus', true); } catch {}
     } else {
-      if (overlayWindow.isVisible()) overlayWindow.hide();
-      setHotkeysActive(false);
+      fgHideCount++;
+      if (fgHideCount >= 2) {
+        if (overlayWindow.isVisible()) overlayWindow.hide();
+        setHotkeysActive(false);
+        try { overlayWindow.webContents.send('game-focus', false); } catch {}
+      }
     }
-    try { overlayWindow.webContents.send('game-focus', fg); } catch {}
   };
   tick();
   if (gameWatchTimer) clearInterval(gameWatchTimer);
@@ -399,5 +414,5 @@ app.whenReady().then(() => {
   else createLoginWindow();
 });
 
-app.on('will-quit', () => { unregisterHotkeys(); try { uiohook && uiohook.stop(); } catch {} });
+app.on('will-quit', () => { unregisterHotkeys(); stopForegroundWatch(); try { uiohook && uiohook.stop(); } catch {} });
 app.on('window-all-closed', () => { if (process.platform !== 'darwin') app.quit(); });
