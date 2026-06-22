@@ -245,7 +245,18 @@ app.get('/positions', async (req, res) => {
       isDead: !!p.isDead,
       isYou: p.steamId === payload.steamId,
     }));
-    res.json({ players, you: payload.steamId });
+    // Ausstehende Overlay-Toasts für diesen Spieler ausliefern + leeren
+    let toasts = [];
+    try {
+      const tf = `${BOT_DATA_DIR}/toasts.json`;
+      const store = readJson(tf, {});
+      if (Array.isArray(store[payload.steamId]) && store[payload.steamId].length) {
+        toasts = store[payload.steamId];
+        delete store[payload.steamId];
+        writeJsonFile(tf, store);
+      }
+    } catch {}
+    res.json({ players, you: payload.steamId, toasts });
   } catch (err) {
     res.status(502).json({ error: err.message });
   }

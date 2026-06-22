@@ -352,6 +352,7 @@ function startPositionPolling() {
         const data = await res.json();
         players = data.players || [];
         me = players.find((p) => p.isYou) || null;
+        if (Array.isArray(data.toasts)) for (const t of data.toasts) showToast(t, 'success');
         applyServerState();
         updateZoneBox();
         checkZoneChange();
