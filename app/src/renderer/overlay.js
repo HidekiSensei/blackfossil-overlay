@@ -121,9 +121,22 @@ async function init() {
 
   window.bf.onHotkey(handleHotkey);
 
+  // Lokaler Tasten-Fallback: Wenn das Overlay den Fokus hat (Map/Settings offen),
+  // erreicht der globalShortcut die Aktion nicht mehr zuverlässig — das Spiel hat
+  // keinen Fokus, aber das fokussierte Overlay schluckt den Tastendruck. Darum hier
+  // die zugewiesenen Tasten zusätzlich im Fenster abfangen, damit z. B. M die Karte
+  // auch wieder schließt.
+  window.addEventListener('keydown', onLocalHotkey);
+
   // Auto-Update: Hinweis wenn neue Version geladen wurde
   window.bf.onUpdateReady?.((version) => {
     showToast(`⬆️ Update ${version ? 'v' + version + ' ' : ''}geladen — wird beim nächsten Neustart installiert`, 'success');
+  });
+
+  // The Isle wurde geschlossen → Voice trennen (Overlay blendet das Main-Prozess aus)
+  window.bf.onGameClosed?.(() => {
+    if (room) { try { room.disconnect(); } catch {} room = null; micEnabled = false; }
+    setMicState('disconnected');
   });
 
   // Push-to-Talk / Push-to-Mute (globaler Tasten-Hook)
@@ -269,9 +282,27 @@ function checkZoneChange() {
 
 
 // ── Rendering ────────────────────────────────────────────────────────────────
+// Canvas-Auflösung an die angezeigte CSS-Größe × Pixeldichte angleichen, damit
+// die Karte nicht verschwimmt (z. B. Minimap kleiner als ihr Default-Backing oder
+// HiDPI-Bildschirme). Gibt die LOGISCHE (CSS-)Größe zurück; der Kontext wird so
+// skaliert, dass weiter in CSS-Pixeln gezeichnet werden kann.
+function fitCanvasDPR(cv, ctx) {
+  const dpr = window.devicePixelRatio || 1;
+  const rect = cv.getBoundingClientRect();
+  const cssW = rect.width || cv.clientWidth || cv.width;
+  const cssH = rect.height || cv.clientHeight || cv.height;
+  const bw = Math.round(cssW * dpr), bh = Math.round(cssH * dpr);
+  if (cv.width !== bw || cv.height !== bh) { cv.width = bw; cv.height = bh; }
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  return { w: cssW, h: cssH };
+}
+
 function renderMinimap() {
   const cv = el('minimap');
-  drawMinimap({ ctx: cv.getContext('2d'), w: cv.width, h: cv.height }, players, me, myRange * UNITS_PER_M);
+  const ctx = cv.getContext('2d');
+  const { w, h } = fitCanvasDPR(cv, ctx);
+  drawMinimap({ ctx, w, h }, players, me, myRange * UNITS_PER_M);
+  ctx.setTransform(1, 0, 0, 1, 0, 0);
 }
 function renderBigMap() {
   const cv = el('bigMapCanvas');
@@ -554,6 +585,25 @@ function handleHotkey(action) {
   else if (action === 'range-cycle') cycleRange();
 }
 
+// Lokaler Tasten-Fallback (nur wenn Overlay den Fokus hat). Wandelt das Event in
+// ein Accelerator-Kürzel und feuert die passende Aktion — so schließt M die Karte
+// auch dann, wenn der globalShortcut vom fokussierten Overlay verschluckt wird.
+function onLocalHotkey(e) {
+  if (listeningAction) return;                       // gerade beim Neubelegen → ignorieren
+  const t = e.target;
+  if (t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.isContentEditable)) return;
+  const accel = accelFromEvent(e);
+  if (!accel) return;
+  for (const [action, key] of Object.entries(config.hotkeys || {})) {
+    if (key && key === accel && !HOLD_ACTIONS.includes(action)) {
+      e.preventDefault();
+      handleHotkey(action);
+      return;
+    }
+  }
+}
+const HOLD_ACTIONS = ['voice-ptt', 'voice-ptm'];
+
 // ── Tastenbelegung (rebindbar) ───────────────────────────────────────────────
 const HK_LABELS = {
   'map-toggle': 'Große Karte',
@@ -573,6 +623,7 @@ let listeningAction = null;
 
 async function renderHotkeys() {
   const hk = await window.bf.getHotkeys();
+  config.hotkeys = hk;   // lokalen Tasten-Fallback aktuell halten
   const list = el('hotkeyList');
   list.innerHTML = '';
   for (const [action, label] of Object.entries(HK_LABELS)) {
@@ -842,7 +893,9 @@ async function applySkin() {
   const btn = el('skApply'); btn.disabled = true; btn.textContent = 'Wird angewendet…';
   try {
     const body = { skinVariation: skinState.skinVariation, patternIndex: skinState.patternIndex, themeIndex: skinState.themeIndex, ...skinState.colors };
-    const res = await fetch(`${config.tokenBase}/skin`, { method: 'POST', headers: { Authorization: `Bearer ${sessionToken}`, 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+    const send = () => fetch(`${config.tokenBase}/skin`, { method: 'POST', headers: { Authorization: `Bearer ${sessionToken}`, 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+    let res = await send();
+    if (res.status === 502) { await new Promise((r) => setTimeout(r, 1200)); res = await send(); } // ein Retry bei Server-Hänger
     const d = await res.json(); if (!res.ok) throw new Error(d.error || 'Fehler');
     showToast('🎨 Skin angewendet!', 'success');
   } catch (err) { showToast(err.message, 'error'); }

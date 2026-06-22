@@ -56,13 +56,26 @@ function isGameRunning() {
   });
 }
 let gameWatchTimer = null;
+let gameWasRunning = false; // war The Isle beim letzten Tick schon einmal an?
 function startGameWatch() {
   if (!overlayWindow) openOverlay();
   const tick = async () => {
     const running = await isGameRunning();
     if (!overlayWindow) return;
-    if (running && !overlayWindow.isVisible()) overlayWindow.showInactive();
-    else if (!running && overlayWindow.isVisible()) overlayWindow.hide();
+    if (running) {
+      gameWasRunning = true;
+      if (!overlayWindow.isVisible()) overlayWindow.showInactive();
+    } else if (overlayWindow.isVisible()) {
+      // The Isle ist geschlossen → Overlay ausblenden, Voice trennen.
+      try { overlayWindow.webContents.send('game-closed'); } catch {}
+      overlayWindow.hide();
+    }
+    // War das Spiel schon einmal an und ist jetzt aus → App sauber beenden
+    // (auf Windows; im Dev läuft isGameRunning immer als "an").
+    if (!running && gameWasRunning && process.platform === 'win32') {
+      gameWasRunning = false;
+      app.quit();
+    }
   };
   tick();
   if (gameWatchTimer) clearInterval(gameWatchTimer);

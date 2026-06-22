@@ -10,7 +10,7 @@
 
 import express from 'express';
 import jwt from 'jsonwebtoken';
-import { readFileSync, writeFileSync } from 'node:fs';
+import { readFileSync, writeFileSync, renameSync } from 'node:fs';
 import { AccessToken } from 'livekit-server-sdk';
 import { randomBytes } from 'node:crypto';
 
@@ -356,7 +356,12 @@ const GARAGE_FILE = `${BOT_DATA_DIR}/garage.json`;
 function readJson(file, fallback) {
   try { return JSON.parse(readFileSync(file, 'utf8')); } catch { return fallback; }
 }
-function writeJsonFile(file, data) { writeFileSync(file, JSON.stringify(data, null, 2)); }
+function writeJsonFile(file, data) {
+  // Atomar: temp schreiben + umbenennen (verhindert halb geschriebene garage.json bei Parallelzugriff)
+  const tmp = `${file}.tmp-${process.pid}-${Date.now()}`;
+  writeFileSync(tmp, JSON.stringify(data, null, 2));
+  renameSync(tmp, file);
+}
 function genId() { return `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`; }
 
 function sessionFrom(req) {
@@ -447,10 +452,61 @@ app.post('/garage/unpark', express.json(), async (req, res) => {
       method: 'POST', headers: { Authorization: `Bearer ${PANEL_ADMIN_TOKEN}`, 'Content-Type': 'application/json' }, body: JSON.stringify(slot.snapshot),
     });
     if (!ur.ok) throw new Error(`Ausparken fehlgeschlagen (${ur.status})`);
+    // Bestätigen, dass aufgespielt wurde, BEVOR der Token gelöscht wird (200-ohne-Effekt vermeiden)
+    await new Promise((r) => setTimeout(r, 1500));
+    const after = (await fetchPlayers().catch(() => [])).find((p) => p.steamId === s.steamId);
+    if (!after || Math.abs((after.grow ?? 0) - (slot.snapshot?.grow ?? 0)) >= 0.05) {
+      return res.status(409).json({ error: 'Aufspielen nicht bestätigt — Token bleibt erhalten. Im Spiel auf einem Dino sein und erneut versuchen.' });
+    }
     // aus Garage entfernen
     garage[s.steamId] = slots.filter((x) => x.id !== slotId);
     writeJsonFile(GARAGE_FILE, garage);
     res.json({ ok: true, dino: slot.snapshot?.dinoClass });
+  } catch (err) {
+    res.status(502).json({ error: err.message });
+  }
+});
+
+// Dino wechseln (aktuellen sicher einparken, dann Ziel aufspielen)
+app.post('/garage/swap', express.json(), async (req, res) => {
+  const s = sessionFrom(req);
+  if (!s) return res.status(401).json({ error: 'Keine Session' });
+  const slotId = req.body?.slotId;
+  if (!slotId) return res.status(400).json({ error: 'slotId fehlt' });
+  try {
+    const garage = readJson(GARAGE_FILE, {});
+    const slots = garage[s.steamId] ?? [];
+    const slot = slots.find((x) => x.id === slotId);
+    if (!slot) return res.status(404).json({ error: 'Slot nicht gefunden' });
+
+    const current = (await fetchPlayers()).find((p) => p.steamId === s.steamId);
+    if (!current) return res.status(409).json({ error: 'Du musst im Spiel sein (auf einem Dino).' });
+
+    // 1) Aktuellen Dino IMMER zuerst sichern, damit er nicht verloren geht
+    const parkedId = genId();
+    garage[s.steamId] = [...slots, { id: parkedId, savedAt: Date.now(), snapshot: current }];
+    writeJsonFile(GARAGE_FILE, garage);
+
+    // 2) Ziel-Dino aufspielen
+    const sr = await fetch(`${PANEL_BASE_URL}/players/${encodeURIComponent(s.steamId)}/swap`, {
+      method: 'POST', headers: { Authorization: `Bearer ${PANEL_ADMIN_TOKEN}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ ...slot.snapshot, class: slot.snapshot.dinoClass }),
+      signal: AbortSignal.timeout(15000),
+    });
+    if (!sr.ok) {
+      // Rollback: gerade erstellten Park-Slot wieder entfernen, Ziel-Slot bleibt erhalten
+      const g2 = readJson(GARAGE_FILE, {});
+      g2[s.steamId] = (g2[s.steamId] ?? []).filter((x) => x.id !== parkedId);
+      writeJsonFile(GARAGE_FILE, g2);
+      let detail = `HTTP ${sr.status}`;
+      try { const e = await sr.json(); detail = e.message ?? e.error ?? e.Msg ?? detail; } catch {}
+      return res.status(502).json({ error: `Wechsel fehlgeschlagen: ${detail}` });
+    }
+    // 3) Erst jetzt den verbrauchten Ziel-Slot entfernen
+    const g3 = readJson(GARAGE_FILE, {});
+    g3[s.steamId] = (g3[s.steamId] ?? []).filter((x) => x.id !== slotId);
+    writeJsonFile(GARAGE_FILE, g3);
+    res.json({ ok: true, dino: slot.snapshot?.dinoClass, parked: current.dinoClass });
   } catch (err) {
     res.status(502).json({ error: err.message });
   }
@@ -547,25 +603,43 @@ app.post('/skin', express.json(), async (req, res) => {
     const need = TIER_ORDER.indexOf(SKIN_REQUIRE_TIER);
     if (have < need) return res.status(403).json({ error: `Skin-Editor ab Tier "${SKIN_REQUIRE_TIER}"` });
   }
+  // 1) Frischen Spieler-Status holen — Skin geht nur auf einem lebenden Ingame-Dino
+  let current;
+  try {
+    current = (await fetchPlayers()).find((p) => p.steamId === s.steamId);
+  } catch (err) {
+    return res.status(502).json({ error: `Spielerdaten nicht erreichbar: ${err.message}` });
+  }
+  if (!current) return res.status(409).json({ error: 'Du musst im Spiel auf einem Dino sein, um den Skin zu ändern.' });
+  if (current.isDead) return res.status(409).json({ error: 'Dein Dino ist tot — Skin kann nicht geändert werden.' });
+
   const b = req.body ?? {};
-  // Nur erlaubte Felder weiterreichen
-  const payload = {
-    skinVariation: Number(b.skinVariation) || 0,
-    patternIndex: Number(b.patternIndex) || 0,
-    themeIndex: Number(b.themeIndex) || 0,
-  };
+  // 2) Skin-Felder auf den FRISCHEN Snapshot mergen (kein veralteter/partieller Body)
+  const payload = { ...current };
+  payload.skinVariation = Number(b.skinVariation) || 0;
+  payload.patternIndex = Number(b.patternIndex) || 0;
+  payload.themeIndex = Number(b.themeIndex) || 0;
   for (const k of ['maleDisplayColor', 'markingsColor', 'bodyColor', 'flankColor', 'underbellyColor', 'teethColor', 'mouthColor', 'clawsColor', 'detailColor', 'eyesColor']) {
     if (Array.isArray(b[k]) && b[k].length === 3) payload[k] = b[k].map(Number);
   }
   try {
     const r = await fetch(`${PANEL_BASE_URL}/players/${encodeURIComponent(s.steamId)}/skin`, {
       method: 'POST', headers: { Authorization: `Bearer ${PANEL_ADMIN_TOKEN}`, 'Content-Type': 'application/json' }, body: JSON.stringify(payload),
-      signal: AbortSignal.timeout(8000),
+      signal: AbortSignal.timeout(15000),
     });
-    if (!r.ok) throw new Error(`Skin-Update fehlgeschlagen (${r.status})`);
+    if (!r.ok) {
+      // Echten Grund vom Game-Server durchreichen (Cooldown, „im Menü", …) statt generisch
+      let detail = `HTTP ${r.status}`;
+      try { const e = await r.json(); detail = e.message ?? e.error ?? e.Msg ?? detail; }
+      catch { try { const t = await r.text(); if (t) detail = t.slice(0, 200); } catch {} }
+      return res.status(502).json({ error: `Skin-Update fehlgeschlagen: ${detail}` });
+    }
     res.json({ ok: true });
   } catch (err) {
-    res.status(502).json({ error: err.message });
+    const msg = err.name === 'TimeoutError'
+      ? 'Game-Server hat nicht rechtzeitig geantwortet — bitte gleich nochmal versuchen.'
+      : err.message;
+    res.status(502).json({ error: msg });
   }
 });
 
