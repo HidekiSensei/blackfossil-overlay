@@ -86,11 +86,17 @@ function getForegroundExe() {
       });
   });
 }
+let fgEverSawGame = false; // hat die Erkennung das Spiel je sicher als Vordergrund erkannt?
 async function isGameForeground() {
-  if (process.platform !== 'win32') return true; // Dev: immer aktiv
+  if (process.platform !== 'win32') return true;   // Dev: immer aktiv
+  if (overlayInteractive) return true;             // Map/Settings offen → Overlay hat Fokus, NICHT ausblenden
   const name = await getForegroundExe();
-  if (name == null || name === '') return true;  // Erkennung fehlgeschlagen → nicht ausblenden
-  return GAME_PROCESSES.some((p) => p.toLowerCase().replace('.exe', '') === name);
+  if (name == null || name === '') return true;    // Erkennung unklar → anzeigen
+  const isGame = name.includes('theisle');         // lockerer Treffer (alle Isle-Prozessnamen enthalten "theisle")
+  if (isGame) { fgEverSawGame = true; return true; }
+  // Solange das Spiel noch NIE sicher als Vordergrund erkannt wurde, niemals ausblenden.
+  // Schützt davor, dass eine unzuverlässige Erkennung das Overlay dauerhaft versteckt.
+  return !fgEverSawGame;
 }
 
 // Hotkeys (globalShortcut + PTT/PTM-Hook) nur aktiv, wenn The Isle im Vordergrund ist.
@@ -104,6 +110,7 @@ function setHotkeysActive(active) {
 
 let gameWatchTimer = null;
 let gameWasRunning = false; // war The Isle beim letzten Tick schon einmal an?
+let gameMissCount = 0;      // aufeinanderfolgende "nicht erkannt"-Ticks (Entprellung)
 function startGameWatch() {
   ensureFgProbe();
   if (!overlayWindow) openOverlay();
@@ -111,12 +118,17 @@ function startGameWatch() {
     if (!overlayWindow) return;
     const running = await isGameRunning();
     if (!running) {
-      // War das Spiel schon einmal an und ist jetzt aus → App sauber beenden.
+      // War das Spiel an und ist jetzt aus → App beenden. Erst nach 2 Aussetzern
+      // in Folge (ein einzelner tasklist-Hänger soll das Overlay nicht killen).
       if (gameWasRunning && process.platform === 'win32') {
-        gameWasRunning = false;
-        isQuitting = true;
-        app.quit();
-        return;
+        gameMissCount++;
+        if (gameMissCount >= 2) {
+          gameWasRunning = false;
+          isQuitting = true;
+          app.quit();
+          return;
+        }
+        return; // einmaliger Aussetzer → Fenster sichtbar lassen, abwarten
       }
       if (overlayWindow.isVisible()) {
         try { overlayWindow.webContents.send('game-closed'); } catch {}
@@ -125,6 +137,7 @@ function startGameWatch() {
       setHotkeysActive(false);
       return;
     }
+    gameMissCount = 0;
     gameWasRunning = true;
     // Läuft → nur sichtbar UND mit aktiven Hotkeys, wenn The Isle im Vordergrund ist.
     // Raustabben → Overlay ausblenden + Hotkeys aus (Voice bleibt verbunden).
@@ -178,6 +191,7 @@ let overlayWindow = null;
 let pendingDeepLink = null;
 let isQuitting = false;
 let tray = null;
+let overlayInteractive = false; // Map/Settings offen → Overlay hat Fokus
 
 // ── Single-Instance ─────────────────────────────────────────────────────────
 const gotLock = app.requestSingleInstanceLock();
@@ -362,6 +376,7 @@ ipcMain.on('update-install', () => { isQuitting = true; try { autoUpdater.quitAn
 
 ipcMain.on('set-interactive', (_e, interactive) => {
   if (!overlayWindow) return;
+  overlayInteractive = !!interactive; // verhindert Ausblenden, während Map/Settings offen sind
   overlayWindow.setIgnoreMouseEvents(!interactive, { forward: true });
   if (interactive) {
     overlayWindow.setAlwaysOnTop(true, 'screen-saver');
@@ -374,7 +389,7 @@ ipcMain.on('set-interactive', (_e, interactive) => {
 // ── App-Start ─────────────────────────────────────────────────────────────
 app.whenReady().then(() => {
   setupAutoUpdate();
-  createTray();
+  try { createTray(); } catch (err) { console.error('Tray fehlgeschlagen:', err?.message || err); }
   startLoopbackServer();
   refreshVoiceKeys();
   startVoiceHook();
