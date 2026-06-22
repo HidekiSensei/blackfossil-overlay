@@ -26,9 +26,8 @@ export const ZONES = {
 // ── Kalibrierung als affine Abbildung Welt → normalisiert [0..1] ─────────────
 // nx = a*wx + b*wy + e ;  ny = c*wx + d*wy + f
 // Affin löst Achsentausch, Spiegelung, Drehung und Skalierung auf einmal.
-// Spiegelung an BEIDEN Achsen (Punktspiegelung an der Bildmitte):
-// nx → 1 − nx (a negativ) UND ny → 1 − ny (d positiv); e/f bleiben 0.5.
-const DEFAULTS = { a: -8.3e-7, b: 0, e: 0.5, c: 0, d: 8.3e-7, f: 0.5 };
+// Nur die Y-Achse spiegeln: nx unverändert (a positiv), ny → 1 − ny (d positiv).
+const DEFAULTS = { a: 8.3e-7, b: 0, e: 0.5, c: 0, d: 8.3e-7, f: 0.5 };
 const CAL_KEY = 'bf-cal-affine-v2'; // Schlüssel angehoben → alte gespeicherte Kalibrierungen werden ignoriert
 let cal = loadCal();
 
