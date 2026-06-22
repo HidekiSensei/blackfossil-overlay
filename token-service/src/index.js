@@ -56,10 +56,15 @@ function lookupSteamId(discordId) {
 const TIER_ROLES = (process.env.TIER_ROLES ?? 'Obsidian,Bernstein,Knochen').split(',').map((s) => s.trim());
 // Staff-Ränge von höchstem zu niedrigstem
 const STAFF_ROLES = (process.env.STAFF_ROLES ?? 'Owner,Admin,Supporter').split(',').map((s) => s.trim());
+// EINHEITLICHE Rang-Leiter (höchster → niedrigster). Es wird nur der höchste angezeigt.
+const RANK_ROLES = (process.env.RANK_ROLES ?? 'Owner,Admin,Support,Beta Tester,Fossil').split(',').map((s) => s.trim());
+// Welche Ränge zählen als Admin bzw. Team
+const ADMIN_RANKS = (process.env.ADMIN_RANKS ?? 'Owner,Admin').split(',').map((s) => s.trim());
+const TEAM_RANKS  = (process.env.TEAM_RANKS  ?? 'Owner,Admin,Support').split(',').map((s) => s.trim());
 
 // ── Discord-Rollen-Check (Admin + Tier + Staff-Rang) ────────────────────────
 async function getDiscordStatus(discordId) {
-  const result = { admin: false, tier: 'Fossil', staff: null };
+  const result = { admin: false, team: false, rank: 'Fossil', tier: 'Fossil', staff: null };
   if (!DISCORD_BOT_TOKEN || !DISCORD_GUILD_ID) return result;
   try {
     const headers = { Authorization: `Bot ${DISCORD_BOT_TOKEN}` };
@@ -71,13 +76,14 @@ async function getDiscordStatus(discordId) {
     const member = await mRes.json();
     const roles = await rRes.json();
     const myRoleNames = new Set(roles.filter((r) => (member.roles || []).includes(r.id)).map((r) => r.name));
-    // Pro Kategorie NUR den höchsten Rang laden (Listen sind hoch→niedrig sortiert),
-    // damit niedrigere Rollen (z.B. Fossil) keine Berechtigungs-Konflikte erzeugen.
-    result.tier = TIER_ROLES.find((n) => myRoleNames.has(n)) ?? 'Fossil';
-    result.staff = STAFF_ROLES.find((n) => myRoleNames.has(n)) ?? null;
-    // Admin-Rechte EINDEUTIG aus dem höchsten Staff-Rang ableiten (eine Quelle der Wahrheit).
-    // Voraussetzung: ADMIN_ROLE_NAMES sind eine Teilmenge von STAFF_ROLES.
-    result.admin = !!result.staff && ADMIN_ROLE_NAMES.includes(result.staff);
+    // NUR den höchsten Rang aus der einheitlichen Leiter laden (Default: niedrigster = Fossil).
+    // So gibt es keine Berechtigungs-Konflikte durch mehrere/niedrigere Rollen.
+    const rank = RANK_ROLES.find((n) => myRoleNames.has(n)) ?? RANK_ROLES[RANK_ROLES.length - 1];
+    result.rank = rank;
+    result.tier = rank;          // HUD zeigt nur diesen einen Rang
+    result.staff = null;         // kein zweites Badge mehr
+    result.admin = ADMIN_RANKS.includes(rank);
+    result.team = TEAM_RANKS.includes(rank);
     return result;
   } catch {
     return result;
@@ -149,12 +155,12 @@ app.get('/auth/callback', async (req, res) => {
       ));
     }
 
-    // Admin-Status + Abo-Tier + Staff-Rang anhand Discord-Rollen
-    const { admin, tier, staff } = await getDiscordStatus(user.id);
+    // Höchster Rang + abgeleitete Rechte anhand Discord-Rollen
+    const { admin, team, rank, tier, staff } = await getDiscordStatus(user.id);
 
     // App-Session ausstellen (30 Tage)
     const session = jwt.sign(
-      { steamId, discordId: user.id, name: user.global_name || user.username, admin, tier, staff },
+      { steamId, discordId: user.id, name: user.global_name || user.username, admin, team, rank, tier, staff },
       SESSION_SECRET,
       { expiresIn: '30d' }
     );
@@ -200,8 +206,10 @@ app.get('/token', async (req, res) => {
     identity: payload.steamId,
     name: payload.name,
     admin: !!payload.admin,
-    tier: payload.tier || 'Fossil',
-    staff: payload.staff || null,
+    team: isTeamMember(payload),
+    rank: payload.rank || payload.tier || 'Fossil',
+    tier: payload.rank || payload.tier || 'Fossil',
+    staff: null,
   });
 });
 
@@ -415,8 +423,9 @@ function sessionFrom(req) {
   if (!t) return null;
   try { return jwt.verify(t, SESSION_SECRET); } catch { return null; }
 }
-// Team = das ganze Staff (Owner/Admin/Supporter) — darf Admin-Menü + TP/Kalibrierung nutzen
-function isTeamMember(s) { return !!(s && (s.admin || s.staff)); }
+// Team = Owner/Admin/Support — darf Admin-Menü + TP/Kalibrierung nutzen.
+// (s.staff als Fallback für alte Sessions vor der team-Umstellung.)
+function isTeamMember(s) { return !!(s && (s.team || s.admin || s.staff)); }
 async function fetchPlayers() {
   const r = await fetch(`${PANEL_BASE_URL}/players`, {
     headers: { Authorization: `Bearer ${PANEL_ADMIN_TOKEN}` },
