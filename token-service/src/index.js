@@ -71,9 +71,13 @@ async function getDiscordStatus(discordId) {
     const member = await mRes.json();
     const roles = await rRes.json();
     const myRoleNames = new Set(roles.filter((r) => (member.roles || []).includes(r.id)).map((r) => r.name));
-    result.admin = ADMIN_ROLE_NAMES.some((n) => myRoleNames.has(n));
+    // Pro Kategorie NUR den höchsten Rang laden (Listen sind hoch→niedrig sortiert),
+    // damit niedrigere Rollen (z.B. Fossil) keine Berechtigungs-Konflikte erzeugen.
     result.tier = TIER_ROLES.find((n) => myRoleNames.has(n)) ?? 'Fossil';
     result.staff = STAFF_ROLES.find((n) => myRoleNames.has(n)) ?? null;
+    // Admin-Rechte EINDEUTIG aus dem höchsten Staff-Rang ableiten (eine Quelle der Wahrheit).
+    // Voraussetzung: ADMIN_ROLE_NAMES sind eine Teilmenge von STAFF_ROLES.
+    result.admin = !!result.staff && ADMIN_ROLE_NAMES.includes(result.staff);
     return result;
   } catch {
     return result;
