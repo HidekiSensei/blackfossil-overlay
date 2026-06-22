@@ -23,6 +23,10 @@ const RANGE_STEPS = [2, 5, 10, 15, 25];
 let myRange = parseFloat(localStorage.getItem('bf-range') || '10');
 const remoteRanges = {};      // identity -> Reichweite des anderen (m)
 const DEFAULT_RANGE = 10;     // bis Reichweite empfangen wird
+// Pro-User-Grundlautstärke (0..2, 1 = normal) — gleicht unterschiedlich laute
+// Mikros aus. Lokal pro Hörer gespeichert, unabhängig vom Distanz-Verhalten.
+let userGain = {};            // identity(steamId) -> Faktor
+try { userGain = JSON.parse(localStorage.getItem('bf-user-gain') || '{}'); } catch { userGain = {}; }
 // Welt-Einheiten pro angezeigtem Meter. The Isle skaliert kürzer als erwartet,
 // daher 200 statt 100 — so klingt "25 m" auch wirklich nach 25 m.
 const UNITS_PER_M = 200;
@@ -234,7 +238,45 @@ function updateProximityVolumes() {
       const d = Math.hypot(pos.x - me.x, pos.y - me.y);
       vol = Math.max(0, Math.min(1, 2 * (1 - d / Rw)));
     }
-    try { p.setVolume(vol); } catch {}
+    // Pro-User-Grundlautstärke obendrauf (gleicht laute/leise Mikros aus)
+    const g = userGain[p.identity] ?? 1;
+    try { p.setVolume(vol * g); } catch {}
+  }
+}
+
+// ── Pro-User-Lautstärke (Regler im Settings-Menü) ────────────────────────────
+function setUserGain(identity, factor) {
+  userGain[identity] = factor;
+  try { localStorage.setItem('bf-user-gain', JSON.stringify(userGain)); } catch {}
+  updateProximityVolumes();
+}
+
+function renderVoiceUsers() {
+  const box = el('voiceUsers');
+  if (!box) return;
+  const parts = room ? [...room.remoteParticipants.values()] : [];
+  if (!parts.length) {
+    box.innerHTML = '<div style="color:var(--muted);font-size:12px">Keine anderen Spieler im Voice.</div>';
+    return;
+  }
+  box.innerHTML = '';
+  for (const p of parts) {
+    const pos = players.find((pl) => pl.steamId === p.identity);
+    const name = pos?.name || p.name || p.identity;
+    const g = userGain[p.identity] ?? 1;
+    const row = document.createElement('div');
+    row.style.cssText = 'display:flex;align-items:center;gap:8px;margin-bottom:6px';
+    row.innerHTML =
+      `<span style="flex:1;font-size:12px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">👤 ${name}</span>` +
+      `<input type="range" min="0" max="200" step="5" value="${Math.round(g * 100)}" style="flex:1;accent-color:var(--accent)">` +
+      `<span style="width:42px;text-align:right;font-size:12px;color:var(--muted)">${Math.round(g * 100)}%</span>`;
+    const slider = row.querySelector('input');
+    const label = row.querySelector('span:last-child');
+    slider.addEventListener('input', () => {
+      label.textContent = `${slider.value}%`;
+      setUserGain(p.identity, parseInt(slider.value) / 100);
+    });
+    box.appendChild(row);
   }
 }
 
@@ -827,7 +869,8 @@ const buyOfferId = (id) => apiAction('/market/buy', { offerId: id }, '🦖 {dino
 
 // ── Garage (Karten-Grid) ─────────────────────────────────────────────────────
 async function renderGarage() {
-  el('garage').innerHTML = `<h2>🚗 Garage</h2>
+  el('garage').innerHTML = `<h2>🚗 Garage <span id="garageCount" style="font-size:13px;color:var(--muted);font-weight:400"></span></h2>
+    <div id="garageCd" style="font-size:12px;color:#f59e0b;margin-bottom:6px;display:none"></div>
     <button id="parkBtn" style="width:100%;margin:6px 0 14px">⬇️ Aktuellen Dino einparken</button>
     <div id="garageGrid" class="dino-grid"></div>
     <button class="closeFeature secondary" style="margin-top:8px">Schließen (F8)</button>`;
@@ -835,12 +878,33 @@ async function renderGarage() {
   el('parkBtn').onclick = () => apiAction('/garage/park', {}, '🚗 {dino} eingeparkt', loadGarage);
   await loadGarage();
 }
+function fmtCd(ms) {
+  const t = Math.ceil(ms / 1000), m = Math.floor(t / 60), s = t % 60;
+  return m > 0 ? `${m} Min ${String(s).padStart(2, '0')} Sek` : `${s} Sek`;
+}
 async function loadGarage() {
   const grid = el('garageGrid'); if (!grid) return;
   grid.innerHTML = '<div style="color:var(--muted);font-size:13px">Lade…</div>';
   try {
     const res = await fetch(`${config.tokenBase}/garage`, { headers: { Authorization: `Bearer ${sessionToken}` } });
-    const slots = (await res.json()).slots || [];
+    const data = await res.json();
+    const slots = data.slots || [];
+    // X/Limit-Anzeige
+    const cnt = el('garageCount');
+    if (cnt && data.limit != null) cnt.textContent = `· ${data.count ?? slots.length}/${data.limit} Tokens`;
+    // Cooldown-Hinweise + Park-Button sperren
+    const cd = data.cooldowns || {};
+    const cdBox = el('garageCd');
+    const parts = [];
+    if (cd.park > 0) parts.push(`⏳ Einparken in ${fmtCd(cd.park)} wieder möglich`);
+    if (cd.unpark > 0) parts.push(`⏳ Ausparken in ${fmtCd(cd.unpark)} wieder möglich`);
+    if (cdBox) { cdBox.style.display = parts.length ? 'block' : 'none'; cdBox.innerHTML = parts.join('<br>'); }
+    const parkBtn = el('parkBtn');
+    if (parkBtn) {
+      const full = data.limit != null && (data.count ?? slots.length) >= data.limit;
+      parkBtn.disabled = cd.park > 0 || full;
+      parkBtn.style.opacity = parkBtn.disabled ? '0.5' : '1';
+    }
     grid.innerHTML = slots.length ? '' : '<div style="color:var(--muted);font-size:13px">Garage leer.</div>';
     for (const s of slots) grid.appendChild(dinoCardEl(s, () => showDinoDetail(s, { mode: 'garage' })));
   } catch { grid.innerHTML = '<div style="color:#ef4444;font-size:13px">Garage konnte nicht geladen werden.</div>'; }
@@ -1010,6 +1074,7 @@ function updateInteractive() {
 function toggleSettings(force) {
   settingsOpen = force !== undefined ? force : !settingsOpen;
   el('settings').style.display = settingsOpen ? 'block' : 'none';
+  if (settingsOpen) renderVoiceUsers();
   updateInteractive();
 }
 
@@ -1081,7 +1146,8 @@ async function connect({ token, url }) {
   room
     .on(RoomEvent.Connected, () => { refreshMicState(); el('connBtn').textContent = 'Trennen'; broadcastRange(); })
     .on(RoomEvent.Disconnected, () => { el('connBtn').textContent = 'Verbinden'; setMicState('disconnected'); })
-    .on(RoomEvent.ParticipantConnected, () => broadcastRange())  // Neuer Teilnehmer lernt meine Reichweite
+    .on(RoomEvent.ParticipantConnected, () => { broadcastRange(); if (settingsOpen) renderVoiceUsers(); })  // Neuer Teilnehmer lernt meine Reichweite
+    .on(RoomEvent.ParticipantDisconnected, () => { if (settingsOpen) renderVoiceUsers(); })
     .on(RoomEvent.DataReceived, (payload, participant) => {
       try {
         const msg = JSON.parse(new TextDecoder().decode(payload));

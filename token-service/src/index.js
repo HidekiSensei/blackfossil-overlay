@@ -353,6 +353,47 @@ app.post('/zones', express.json(), (req, res) => {
 const BOT_DATA_DIR = process.env.BOT_DATA_DIR ?? '/opt/blackfossil-bot/data';
 const GARAGE_FILE = `${BOT_DATA_DIR}/garage.json`;
 
+// Token-Limit & Cooldowns — geteilt mit dem Bot über dieselben Dateien in BOT_DATA_DIR.
+const COOLDOWNS_FILE = `${BOT_DATA_DIR}/cooldowns.json`;
+const TOKEN_LIMIT = parseInt(process.env.TOKEN_LIMIT ?? '50', 10);
+const PARK_COOLDOWN_MS = parseInt(process.env.PARK_COOLDOWN_MIN ?? '30', 10) * 60_000;
+const UNPACK_COOLDOWN_MS = parseInt(process.env.UNPACK_COOLDOWN_MIN ?? '30', 10) * 60_000;
+
+function cooldownRemaining(steamId, action) {
+  const store = readJson(COOLDOWNS_FILE, {});
+  const until = store[steamId]?.[action] ?? 0;
+  return Math.max(0, until - Date.now());
+}
+function startCooldown(steamId, action) {
+  const store = readJson(COOLDOWNS_FILE, {});
+  if (!store[steamId]) store[steamId] = {};
+  const dur = action === 'park' ? PARK_COOLDOWN_MS : action === 'swap' ? SWAP_COOLDOWN_MS : UNPACK_COOLDOWN_MS;
+  store[steamId][action] = Date.now() + dur;
+  writeJsonFile(COOLDOWNS_FILE, store);
+}
+function fmtCooldown(ms) {
+  const total = Math.ceil(ms / 1000);
+  const m = Math.floor(total / 60), s = total % 60;
+  return m > 0 ? `${m} Min ${String(s).padStart(2, '0')} Sek` : `${s} Sek`;
+}
+
+// Swap-Regeln (identisch zum Bot)
+const SWAP_COOLDOWN_MS = parseInt(process.env.SWAP_COOLDOWN_MIN ?? '60', 10) * 60_000;
+const SWAP_MIN_HEALTH = 1.0;
+const SWAP_MIN_STAMINA = 0.75;
+const SWAP_MIN_DISTANCE_M = 50;
+const WORLD_UNITS_PER_M = parseInt(process.env.WORLD_UNITS_PER_M ?? '200', 10);
+const baseClass = (c) => (c || '').split('_')[0];
+function nearestOtherPlayerM(me, all) {
+  let min = Infinity;
+  for (const p of all) {
+    if (p.steamId === me.steamId || p.isDead) continue;
+    const d = Math.hypot(p.location.x - me.location.x, p.location.y - me.location.y) / WORLD_UNITS_PER_M;
+    if (d < min) min = d;
+  }
+  return min;
+}
+
 function readJson(file, fallback) {
   try { return JSON.parse(readFileSync(file, 'utf8')); } catch { return fallback; }
 }
@@ -406,7 +447,16 @@ app.get('/garage', (req, res) => {
   const s = sessionFrom(req);
   if (!s) return res.status(401).json({ error: 'Keine Session' });
   const garage = readJson(GARAGE_FILE, {});
-  res.json({ slots: (garage[s.steamId] ?? []).map(slotCard) });
+  const slots = garage[s.steamId] ?? [];
+  res.json({
+    slots: slots.map(slotCard),
+    limit: TOKEN_LIMIT,
+    count: slots.length,
+    cooldowns: {
+      park: cooldownRemaining(s.steamId, 'park'),
+      unpark: cooldownRemaining(s.steamId, 'unpack'),
+    },
+  });
 });
 
 // Aktuellen Dino einparken
@@ -414,12 +464,20 @@ app.post('/garage/park', express.json(), async (req, res) => {
   const s = sessionFrom(req);
   if (!s) return res.status(401).json({ error: 'Keine Session' });
   try {
+    // Cooldown (gesynct mit dem Bot)
+    const cd = cooldownRemaining(s.steamId, 'park');
+    if (cd > 0) return res.status(429).json({ error: `Einparken gesperrt — warte noch ${fmtCooldown(cd)}.` });
+
     const players = await fetchPlayers();
     const snapshot = players.find((p) => p.steamId === s.steamId);
     if (!snapshot) return res.status(409).json({ error: 'Du bist nicht im Spiel.' });
     // in Garage sichern
     const garage = readJson(GARAGE_FILE, {});
     if (!garage[s.steamId]) garage[s.steamId] = [];
+    // Token-Limit prüfen
+    if (garage[s.steamId].length >= TOKEN_LIMIT) {
+      return res.status(409).json({ error: `Garage voll (${garage[s.steamId].length}/${TOKEN_LIMIT}). Verkaufe oder spiele zuerst einen aus.` });
+    }
     garage[s.steamId].push({ id: genId(), savedAt: Date.now(), snapshot });
     writeJsonFile(GARAGE_FILE, garage);
     // Dino im Spiel einparken (despawn)
@@ -427,7 +485,8 @@ app.post('/garage/park', express.json(), async (req, res) => {
       method: 'POST', headers: { Authorization: `Bearer ${PANEL_ADMIN_TOKEN}`, 'Content-Type': 'application/json' }, body: '{}',
     });
     if (!pr.ok) throw new Error(`Einparken fehlgeschlagen (${pr.status})`);
-    res.json({ ok: true, dino: snapshot.dinoClass });
+    startCooldown(s.steamId, 'park');
+    res.json({ ok: true, dino: snapshot.dinoClass, count: garage[s.steamId].length, limit: TOKEN_LIMIT });
   } catch (err) {
     res.status(502).json({ error: err.message });
   }
@@ -440,13 +499,22 @@ app.post('/garage/unpark', express.json(), async (req, res) => {
   const slotId = req.body?.slotId;
   if (!slotId) return res.status(400).json({ error: 'slotId fehlt' });
   try {
+    const cd = cooldownRemaining(s.steamId, 'unpack');
+    if (cd > 0) return res.status(429).json({ error: `Ausparken gesperrt — warte noch ${fmtCooldown(cd)}.` });
+
     const garage = readJson(GARAGE_FILE, {});
     const slots = garage[s.steamId] ?? [];
     const slot = slots.find((x) => x.id === slotId);
     if (!slot) return res.status(404).json({ error: 'Slot nicht gefunden' });
 
     const players = await fetchPlayers();
-    if (!players.find((p) => p.steamId === s.steamId)) return res.status(409).json({ error: 'Du musst im Spiel sein (auf einem Dino).' });
+    const meNow = players.find((p) => p.steamId === s.steamId);
+    if (!meNow) return res.status(409).json({ error: 'Du musst im Spiel sein (auf einem Dino).' });
+
+    // Spezies-Check: nur auf gleiche Spezies aufspielbar (Basis, ohne Wachstums-Suffix)
+    if (baseClass(meNow.dinoClass) !== baseClass(slot.snapshot?.dinoClass)) {
+      return res.status(409).json({ error: `Spezies stimmt nicht: Du spielst ${baseClass(meNow.dinoClass)}, der Token ist ${baseClass(slot.snapshot?.dinoClass)}.` });
+    }
 
     const ur = await fetch(`${PANEL_BASE_URL}/players/${encodeURIComponent(s.steamId)}/unpack`, {
       method: 'POST', headers: { Authorization: `Bearer ${PANEL_ADMIN_TOKEN}`, 'Content-Type': 'application/json' }, body: JSON.stringify(slot.snapshot),
@@ -461,6 +529,7 @@ app.post('/garage/unpark', express.json(), async (req, res) => {
     // aus Garage entfernen
     garage[s.steamId] = slots.filter((x) => x.id !== slotId);
     writeJsonFile(GARAGE_FILE, garage);
+    startCooldown(s.steamId, 'unpack');
     res.json({ ok: true, dino: slot.snapshot?.dinoClass });
   } catch (err) {
     res.status(502).json({ error: err.message });
@@ -474,23 +543,34 @@ app.post('/garage/swap', express.json(), async (req, res) => {
   const slotId = req.body?.slotId;
   if (!slotId) return res.status(400).json({ error: 'slotId fehlt' });
   try {
+    const cd = cooldownRemaining(s.steamId, 'swap');
+    if (cd > 0) return res.status(429).json({ error: `Swap gesperrt — warte noch ${fmtCooldown(cd)}.` });
+
     const garage = readJson(GARAGE_FILE, {});
     const slots = garage[s.steamId] ?? [];
     const slot = slots.find((x) => x.id === slotId);
     if (!slot) return res.status(404).json({ error: 'Slot nicht gefunden' });
 
-    const current = (await fetchPlayers()).find((p) => p.steamId === s.steamId);
+    const players = await fetchPlayers();
+    const current = players.find((p) => p.steamId === s.steamId);
     if (!current) return res.status(409).json({ error: 'Du musst im Spiel sein (auf einem Dino).' });
+
+    // Sicherheits-Checks (identisch zum Discord-Swap)
+    if (current.isBleeding) return res.status(409).json({ error: 'Swap nicht möglich: Dein Dino blutet (im Kampf).' });
+    if ((current.health ?? 0) < SWAP_MIN_HEALTH) return res.status(409).json({ error: `Swap nicht möglich: Health muss 100% sein (aktuell ${Math.round((current.health ?? 0) * 100)}%).` });
+    if ((current.stamina ?? 0) < SWAP_MIN_STAMINA) return res.status(409).json({ error: `Swap nicht möglich: Stamina muss ≥ ${Math.round(SWAP_MIN_STAMINA * 100)}% sein (aktuell ${Math.round((current.stamina ?? 0) * 100)}%).` });
+    const dist = nearestOtherPlayerM(current, players);
+    if (dist < SWAP_MIN_DISTANCE_M) return res.status(409).json({ error: `Swap nicht möglich: Spieler zu nah (${Math.round(dist)} m, nötig ≥ ${SWAP_MIN_DISTANCE_M} m).` });
 
     // 1) Aktuellen Dino IMMER zuerst sichern, damit er nicht verloren geht
     const parkedId = genId();
     garage[s.steamId] = [...slots, { id: parkedId, savedAt: Date.now(), snapshot: current }];
     writeJsonFile(GARAGE_FILE, garage);
 
-    // 2) Ziel-Dino aufspielen
+    // 2) Ziel-Dino aufspielen (Basis-Spezies + aktuelle Position)
     const sr = await fetch(`${PANEL_BASE_URL}/players/${encodeURIComponent(s.steamId)}/swap`, {
       method: 'POST', headers: { Authorization: `Bearer ${PANEL_ADMIN_TOKEN}`, 'Content-Type': 'application/json' },
-      body: JSON.stringify({ ...slot.snapshot, class: slot.snapshot.dinoClass }),
+      body: JSON.stringify({ ...slot.snapshot, class: baseClass(slot.snapshot.dinoClass), keepLocation: true }),
       signal: AbortSignal.timeout(15000),
     });
     if (!sr.ok) {
@@ -506,6 +586,7 @@ app.post('/garage/swap', express.json(), async (req, res) => {
     const g3 = readJson(GARAGE_FILE, {});
     g3[s.steamId] = (g3[s.steamId] ?? []).filter((x) => x.id !== slotId);
     writeJsonFile(GARAGE_FILE, g3);
+    startCooldown(s.steamId, 'swap');
     res.json({ ok: true, dino: slot.snapshot?.dinoClass, parked: current.dinoClass });
   } catch (err) {
     res.status(502).json({ error: err.message });
@@ -515,7 +596,17 @@ app.post('/garage/swap', express.json(), async (req, res) => {
 // ── 8) Dino-Markt (Bot-seitige JSON-Daten) ──────────────────────────────────
 const MARKETPLACE_FILE = `${BOT_DATA_DIR}/marketplace.json`;
 const POINTS_FILE = `${BOT_DATA_DIR}/points.json`;
-const SERVER_SELL_PRICE = parseInt(process.env.SERVER_SELL_PRICE ?? '500');
+// Server-Ankauf: fester Preis je Tier (identisch zum Bot, src/config/sellPrices.ts) + 75%-Gate.
+const SELL_TIER_PRICES = { apex: 500, mid: 250, small: 100 };
+const SELL_MIN_GROW = 0.75;
+const SELL_SPECIES_TIER = {
+  Tyrannosaurus: 'apex', Rex: 'apex', Allosaurus: 'apex', Deinosuchus: 'apex',
+  Carnotaurus: 'mid', Ceratosaurus: 'mid', Triceratops: 'mid', Stegosaurus: 'mid',
+  Maiasaura: 'mid', Maiasaurus: 'mid', Tenontosaurus: 'mid', Diabloceratops: 'mid', Pachycephalosaurus: 'mid',
+  Dilophosaurus: 'small', Herrerasaurus: 'small', Omniraptor: 'small', Troodon: 'small', Pteranodon: 'small',
+  Dryosaurus: 'small', Hypsilophodon: 'small', Beipiaosaurus: 'small', Gallimimus: 'small',
+};
+const serverSellPrice = (dinoClass) => SELL_TIER_PRICES[SELL_SPECIES_TIER[baseClass(dinoClass)] ?? 'small'];
 
 function getPoints(steamId) { return readJson(POINTS_FILE, {})[steamId] ?? 0; }
 function setPointsVal(steamId, v) { const p = readJson(POINTS_FILE, {}); p[steamId] = Math.max(0, Math.round(v)); writeJsonFile(POINTS_FILE, p); }
@@ -540,10 +631,14 @@ app.post('/market/sell-server', express.json(), (req, res) => {
   const slots = garage[s.steamId] ?? [];
   const slot = slots.find((x) => x.id === slotId);
   if (!slot) return res.status(404).json({ error: 'Slot nicht gefunden' });
-  setPointsVal(s.steamId, getPoints(s.steamId) + SERVER_SELL_PRICE);
+  if ((slot.snapshot?.grow ?? 0) < SELL_MIN_GROW) {
+    return res.status(409).json({ error: `Verkauf erst ab ${Math.round(SELL_MIN_GROW * 100)}% Wachstum möglich.` });
+  }
+  const earned = serverSellPrice(slot.snapshot?.dinoClass);
+  setPointsVal(s.steamId, getPoints(s.steamId) + earned);
   garage[s.steamId] = slots.filter((x) => x.id !== slotId);
   writeJsonFile(GARAGE_FILE, garage);
-  res.json({ ok: true, earned: SERVER_SELL_PRICE, points: getPoints(s.steamId) });
+  res.json({ ok: true, earned, points: getPoints(s.steamId) });
 });
 
 // An Spieler verkaufen (Marktplatz-Listing)
