@@ -356,8 +356,8 @@ const GARAGE_FILE = `${BOT_DATA_DIR}/garage.json`;
 // Token-Limit & Cooldowns — geteilt mit dem Bot über dieselben Dateien in BOT_DATA_DIR.
 const COOLDOWNS_FILE = `${BOT_DATA_DIR}/cooldowns.json`;
 const TOKEN_LIMIT = parseInt(process.env.TOKEN_LIMIT ?? '50', 10);
-const PARK_COOLDOWN_MS = parseInt(process.env.PARK_COOLDOWN_MIN ?? '30', 10) * 60_000;
-const UNPACK_COOLDOWN_MS = parseInt(process.env.UNPACK_COOLDOWN_MIN ?? '30', 10) * 60_000;
+const PARK_COOLDOWN_MS = parseInt(process.env.PARK_COOLDOWN_MIN ?? '5', 10) * 60_000;   // TEST: 5 Min (normal 30)
+const UNPACK_COOLDOWN_MS = parseInt(process.env.UNPACK_COOLDOWN_MIN ?? '5', 10) * 60_000; // TEST: 5 Min (normal 30)
 
 function cooldownRemaining(steamId, action) {
   const store = readJson(COOLDOWNS_FILE, {});
@@ -378,7 +378,7 @@ function fmtCooldown(ms) {
 }
 
 // Swap-Regeln (identisch zum Bot)
-const SWAP_COOLDOWN_MS = parseInt(process.env.SWAP_COOLDOWN_MIN ?? '60', 10) * 60_000;
+const SWAP_COOLDOWN_MS = parseInt(process.env.SWAP_COOLDOWN_MIN ?? '5', 10) * 60_000; // TEST: 5 Min (normal 60)
 const SWAP_MIN_HEALTH = 1.0;
 const SWAP_MIN_STAMINA = 0.75;
 const SWAP_MIN_DISTANCE_M = 50;
@@ -626,6 +626,95 @@ app.post('/player/teleport', express.json(), async (req, res) => {
   } catch (err) {
     res.status(502).json({ error: err.message });
   }
+});
+
+// ── Teleport-Punkte (Admin erstellt, alle nutzen) ───────────────────────────
+const TELEPORTS_FILE = `${BOT_DATA_DIR}/teleports.json`;
+const TP_COOLDOWNS_FILE = `${BOT_DATA_DIR}/tp_cooldowns.json`;
+
+function tpCooldownRemaining(steamId, tpId) {
+  const store = readJson(TP_COOLDOWNS_FILE, {});
+  return Math.max(0, (store[steamId]?.[tpId] ?? 0) - Date.now());
+}
+function tpStartCooldown(steamId, tpId, minutes) {
+  const store = readJson(TP_COOLDOWNS_FILE, {});
+  if (!store[steamId]) store[steamId] = {};
+  store[steamId][tpId] = Date.now() + minutes * 60_000;
+  writeJsonFile(TP_COOLDOWNS_FILE, store);
+}
+
+// Liste aller TP-Punkte (+ Preis, aktiver Cooldown des Anfragenden, eigene Punkte)
+app.get('/teleports', (req, res) => {
+  const s = sessionFrom(req);
+  if (!s) return res.status(401).json({ error: 'Keine Session' });
+  const tps = readJson(TELEPORTS_FILE, []);
+  res.json({
+    teleports: tps.map((t) => ({
+      id: t.id, number: t.number, name: t.name, price: t.price, cooldownMin: t.cooldownMin,
+      x: t.x, y: t.y, cooldownRemaining: tpCooldownRemaining(s.steamId, t.id),
+    })),
+    points: getPoints(s.steamId),
+    isAdmin: !!s.admin,
+  });
+});
+
+// TP-Punkt an aktueller Position erstellen (Admin)
+app.post('/teleports', express.json(), async (req, res) => {
+  const s = sessionFrom(req);
+  if (!s) return res.status(401).json({ error: 'Keine Session' });
+  if (!s.admin) return res.status(403).json({ error: 'Nur für Admins' });
+  const name = String(req.body?.name ?? '').trim().slice(0, 40);
+  const price = Math.max(0, Math.round(Number(req.body?.price) || 0));
+  const cooldownMin = Math.max(0, Math.round(Number(req.body?.cooldownMin) || 0));
+  if (!name) return res.status(400).json({ error: 'Name fehlt' });
+  try {
+    const cur = (await fetchPlayers().catch(() => [])).find((p) => p.steamId === s.steamId);
+    if (!cur) return res.status(409).json({ error: 'Du musst im Spiel sein (Position wird übernommen).' });
+    const tps = readJson(TELEPORTS_FILE, []);
+    const number = tps.reduce((m, t) => Math.max(m, t.number || 0), 0) + 1;
+    const tp = { id: genId(), number, name, price, cooldownMin, x: cur.location.x, y: cur.location.y, z: cur.location.z };
+    tps.push(tp);
+    writeJsonFile(TELEPORTS_FILE, tps);
+    res.json({ ok: true, teleport: tp });
+  } catch (err) { res.status(502).json({ error: err.message }); }
+});
+
+// TP-Punkt löschen (Admin)
+app.delete('/teleports/:id', (req, res) => {
+  const s = sessionFrom(req);
+  if (!s) return res.status(401).json({ error: 'Keine Session' });
+  if (!s.admin) return res.status(403).json({ error: 'Nur für Admins' });
+  const tps = readJson(TELEPORTS_FILE, []);
+  const next = tps.filter((t) => t.id !== req.params.id);
+  if (next.length === tps.length) return res.status(404).json({ error: 'Nicht gefunden' });
+  writeJsonFile(TELEPORTS_FILE, next);
+  res.json({ ok: true });
+});
+
+// TP nutzen: Cooldown + Preis prüfen, teleportieren, abziehen, Cooldown setzen
+app.post('/teleports/:id/use', async (req, res) => {
+  const s = sessionFrom(req);
+  if (!s) return res.status(401).json({ error: 'Keine Session' });
+  const tps = readJson(TELEPORTS_FILE, []);
+  const tp = tps.find((t) => t.id === req.params.id);
+  if (!tp) return res.status(404).json({ error: 'TP-Punkt nicht gefunden' });
+  const cd = tpCooldownRemaining(s.steamId, tp.id);
+  if (cd > 0) return res.status(429).json({ error: `Cooldown — warte noch ${fmtCooldown(cd)}.` });
+  const pts = getPoints(s.steamId);
+  if (pts < tp.price) return res.status(402).json({ error: `Zu wenig Punkte (${pts}/${tp.price}).` });
+  try {
+    const cur = (await fetchPlayers().catch(() => [])).find((p) => p.steamId === s.steamId);
+    if (!cur) return res.status(409).json({ error: 'Du musst im Spiel sein.' });
+    const where = Number.isFinite(tp.z) ? { x: tp.x, y: tp.y, z: tp.z } : { x: tp.x, y: tp.y };
+    const r = await fetch(`${PANEL_BASE_URL}/players/${encodeURIComponent(s.steamId)}/teleport`, {
+      method: 'POST', headers: { Authorization: `Bearer ${PANEL_ADMIN_TOKEN}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ where }), signal: AbortSignal.timeout(8000),
+    });
+    if (!r.ok) throw new Error(`Teleport fehlgeschlagen (${r.status})`);
+    if (tp.price > 0) setPointsVal(s.steamId, pts - tp.price);
+    if (tp.cooldownMin > 0) tpStartCooldown(s.steamId, tp.id, tp.cooldownMin);
+    res.json({ ok: true, name: tp.name, points: getPoints(s.steamId), cooldownRemaining: tpCooldownRemaining(s.steamId, tp.id) });
+  } catch (err) { res.status(502).json({ error: err.message }); }
 });
 
 // ── 8) Dino-Markt (Bot-seitige JSON-Daten) ──────────────────────────────────

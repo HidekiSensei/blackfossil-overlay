@@ -18,6 +18,12 @@ const CALIB_NORM_TARGETS = [
   { nx: 0.25, ny: 0.78 }, { nx: 0.18, ny: 0.50 },
 ];
 let autoCalib = null; // { startPos, pairs, resolveClick }
+// Teleport-Punkte
+let teleports = [];       // [{id,number,name,price,cooldownMin,x,y,cooldownRemaining}]
+let myPoints = 0;
+let hoveredTp = null;     // id des gehoverten TP (Map ↔ Liste)
+let tpIsAdmin = false;
+let tpConfirmTarget = null;
 let sessionToken = null;
 let calibPairs = [];
 let armedRef = null;
@@ -146,7 +152,6 @@ async function init() {
     el('heatBtn').style.background = heatmapMode ? '#8b5cf6' : 'var(--panel)';
     renderBigMap();
   };
-  el('calibrateBtn').onclick = () => startAutoCalibration();
   el('calibCancelBtn').onclick = () => abortAutoCalib();
   el('calibBtn').onclick = () => toggleCalib();
   el('calibSolve').onclick = () => solveCalibration();
@@ -233,6 +238,14 @@ async function init() {
   cv.addEventListener('mousedown', onMapMouseDown);
   window.addEventListener('mousemove', onMapMouseMove);
   window.addEventListener('mouseup', () => { dragging = false; });
+  cv.addEventListener('mousemove', tpHoverHitTest);
+  cv.addEventListener('mouseleave', () => setHoveredTp(null));
+  // Teleport-Punkte + Admin-Menü
+  el('adminBtn').onclick = () => toggleAdminPanel();
+  el('adminCalibBtn').onclick = () => adminCalibrate();
+  el('tpCreateBtn').onclick = () => createTp();
+  el('tpConfirmYes').onclick = () => useTp();
+  el('tpConfirmNo').onclick = () => { el('tpConfirm').style.display = 'none'; tpConfirmTarget = null; };
   el('centerBtn').onclick = () => centerOnMe();
   el('zoomInBtn').onclick = () => zoomBy(1.3);
   el('zoomOutBtn').onclick = () => zoomBy(1 / 1.3);
@@ -458,7 +471,7 @@ function renderBigMap() {
   ctx.setTransform(mapZoom, 0, 0, mapZoom, mapPanX, mapPanY);
   const view = { ctx, w: cv.width, h: cv.height };
   if (heatmapMode) drawHeatmap(view, players, me);
-  else drawFullMap(view, players, waypoints);
+  else drawFullMap(view, players, waypoints, teleports, hoveredTp);
   ctx.setTransform(1, 0, 0, 1, 0, 0);
   if (calibMode) drawCalibOverlay(ctx, cv.width, cv.height);
 }
@@ -611,10 +624,10 @@ async function startAutoCalibration() {
     return;
   }
   const ok = solveAffine(autoCalib.pairs);
-  if (ok) localStorage.setItem('bf-cal-personal', '1');
   showToast(ok ? `✅ Karte kalibriert! (${count} Punkte)` : 'Kalibrierung fehlgeschlagen', ok ? 'success' : 'error');
   endAutoCalib();
   renderBigMap();
+  return ok;
 }
 async function abortAutoCalib() {
   if (!autoCalib) return;
@@ -623,6 +636,151 @@ async function abortAutoCalib() {
   endAutoCalib();
   try { await calibTeleport(sp.x, sp.y); } catch {}
   showToast('Kalibrierung abgebrochen', '');
+}
+
+// ── Teleport-Punkte ──────────────────────────────────────────────────────────
+function escapeHtml(s) { return String(s).replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c])); }
+
+async function loadTeleports() {
+  if (!sessionToken) return;
+  try {
+    const res = await fetch(`${config.tokenBase}/teleports`, { headers: { Authorization: `Bearer ${sessionToken}` } });
+    if (!res.ok) return;
+    const d = await res.json();
+    teleports = d.teleports || [];
+    myPoints = d.points || 0;
+    tpIsAdmin = !!d.isAdmin;
+    const ab = el('adminBtn'); if (ab) ab.style.display = tpIsAdmin ? 'block' : 'none';
+    renderTpList();
+    renderAdminTpList();
+    if (mapOpen) renderBigMap();
+  } catch {}
+}
+
+function setHoveredTp(id) {
+  if (hoveredTp === id) return;
+  hoveredTp = id;
+  renderTpList();
+  if (mapOpen) renderBigMap();
+}
+
+function renderTpList() {
+  const box = el('tpListItems'); if (!box) return;
+  if (!teleports.length) { box.innerHTML = '<div style="color:var(--muted)">Keine Punkte.</div>'; return; }
+  box.innerHTML = '';
+  for (const t of [...teleports].sort((a, b) => a.number - b.number)) {
+    const hot = t.id === hoveredTp;
+    const cd = t.cooldownRemaining || 0;
+    const row = document.createElement('div');
+    row.style.cssText = `padding:6px 8px;margin-bottom:4px;border-radius:8px;cursor:pointer;border:1px solid ${hot ? 'var(--accent)' : 'transparent'};background:${hot ? 'rgba(139,92,246,0.20)' : 'rgba(255,255,255,0.04)'}`;
+    row.innerHTML =
+      `<div style="display:flex;justify-content:space-between;gap:6px"><b>#${t.number} ${escapeHtml(t.name)}</b>` +
+      `<span style="color:var(--muted)">${t.price > 0 ? t.price + ' Pkt' : 'gratis'}</span></div>` +
+      (cd > 0 ? `<div style="color:#f59e0b;font-size:11px">⏳ ${fmtCd(cd)}</div>` : '');
+    row.onmouseenter = () => setHoveredTp(t.id);
+    row.onmouseleave = () => setHoveredTp(null);
+    row.onclick = () => confirmTp(t);
+    box.appendChild(row);
+  }
+}
+
+function confirmTp(t) {
+  const cd = t.cooldownRemaining || 0;
+  if (cd > 0) { showToast(`Cooldown: noch ${fmtCd(cd)}`, 'error'); return; }
+  if (t.price > myPoints) { showToast(`Zu wenig Punkte (${myPoints}/${t.price})`, 'error'); return; }
+  tpConfirmTarget = t;
+  el('tpConfirmText').innerHTML =
+    `Zu <b>#${t.number} ${escapeHtml(t.name)}</b> teleportieren?<br>` +
+    `<span style="color:var(--muted)">${t.price > 0 ? `Kosten: ${t.price} Punkte (du hast ${myPoints})` : 'Kostenlos'}${t.cooldownMin > 0 ? ` · danach ${t.cooldownMin} Min Cooldown` : ''}</span>`;
+  el('tpConfirm').style.display = 'block';
+}
+
+async function useTp() {
+  const t = tpConfirmTarget;
+  el('tpConfirm').style.display = 'none'; tpConfirmTarget = null;
+  if (!t) return;
+  try {
+    const res = await fetch(`${config.tokenBase}/teleports/${t.id}/use`, { method: 'POST', headers: { Authorization: `Bearer ${sessionToken}` } });
+    const d = await res.json(); if (!res.ok) throw new Error(d.error || 'Fehler');
+    showToast(`✈️ Teleportiert zu ${t.name}`, 'success');
+    myPoints = d.points ?? myPoints;
+    pollHud();
+    await loadTeleports();
+  } catch (e) { showToast(e.message, 'error'); }
+}
+
+// Maus über einem TP-Marker auf der Karte? (Hover ↔ Liste)
+function tpHoverHitTest(e) {
+  if (dragging || !mapOpen || !teleports.length) return;
+  const { nx, ny } = eventToNorm(e);
+  let best = null, bestD = 0.02;
+  for (const t of teleports) {
+    const p = worldToNorm(t.x, t.y);
+    const dd = Math.hypot(p.nx - nx, p.ny - ny);
+    if (dd < bestD) { bestD = dd; best = t.id; }
+  }
+  setHoveredTp(best);
+}
+
+// ── Admin: TP-Punkte + globale Kalibrierung ──────────────────────────────────
+function toggleAdminPanel() {
+  const p = el('adminPanel');
+  p.style.display = p.style.display === 'block' ? 'none' : 'block';
+  if (p.style.display === 'block') renderAdminTpList();
+}
+
+function renderAdminTpList() {
+  const box = el('adminTpList'); if (!box || !tpIsAdmin) return;
+  box.innerHTML = teleports.length ? '' : '<div style="color:var(--muted)">Keine.</div>';
+  for (const t of [...teleports].sort((a, b) => a.number - b.number)) {
+    const row = document.createElement('div');
+    row.style.cssText = 'display:flex;justify-content:space-between;align-items:center;gap:6px;padding:4px 0';
+    row.innerHTML = `<span>#${t.number} ${escapeHtml(t.name)} <span style="color:var(--muted)">${t.price}P</span></span>`;
+    const del = document.createElement('button');
+    del.textContent = '🗑'; del.style.cssText = 'width:auto;padding:3px 8px';
+    del.onclick = () => deleteTp(t);
+    row.appendChild(del);
+    box.appendChild(row);
+  }
+}
+
+async function createTp() {
+  const name = el('tpName').value.trim();
+  const price = parseInt(el('tpPrice').value) || 0;
+  const cooldownMin = parseInt(el('tpCooldown').value) || 0;
+  if (!name) { showToast('Name fehlt', 'error'); return; }
+  try {
+    const res = await fetch(`${config.tokenBase}/teleports`, {
+      method: 'POST', headers: { Authorization: `Bearer ${sessionToken}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ name, price, cooldownMin }),
+    });
+    const d = await res.json(); if (!res.ok) throw new Error(d.error || 'Fehler');
+    showToast(`📍 TP-Punkt "${name}" erstellt`, 'success');
+    el('tpName').value = ''; el('tpPrice').value = ''; el('tpCooldown').value = '';
+    await loadTeleports();
+  } catch (e) { showToast(e.message, 'error'); }
+}
+
+async function deleteTp(t) {
+  try {
+    const res = await fetch(`${config.tokenBase}/teleports/${t.id}`, { method: 'DELETE', headers: { Authorization: `Bearer ${sessionToken}` } });
+    if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.error || 'Fehler'); }
+    showToast(`TP-Punkt #${t.number} gelöscht`, '');
+    await loadTeleports();
+  } catch (e) { showToast(e.message, 'error'); }
+}
+
+async function adminCalibrate() {
+  const ok = await startAutoCalibration();
+  if (!ok) return;
+  try {
+    const res = await fetch(`${config.tokenBase}/calibration`, {
+      method: 'POST', headers: { Authorization: `Bearer ${sessionToken}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ affine: getCal() }),
+    });
+    if (res.ok) showToast('🌍 Kalibrierung global für alle gespeichert', 'success');
+    else { const d = await res.json().catch(() => ({})); showToast(d.error || 'Global-Speichern fehlgeschlagen', 'error'); }
+  } catch (e) { showToast(e.message, 'error'); }
 }
 
 // ── Kalibrierung (3-Punkt-Klick, affin) ──────────────────────────────────────
@@ -1307,6 +1465,7 @@ function toggleMap(force) {
     // Panels wieder einblenden falls noch aktiv (Punkte bleiben erhalten)
     if (calibMode) { el('calibPanel').style.display = 'block'; renderCalibList(); }
     if (zoneEditMode) { el('zonePanel').style.display = 'block'; updateZoneInfo(); }
+    loadTeleports();
     renderBigMap();
   }
   // Kalibrierung NICHT abbrechen beim Schließen — Punkte bleiben erhalten,
@@ -1356,6 +1515,8 @@ async function connectWithSession(session) {
     setStaff(data.staff);
     pollHud();
     if (!pollHud._timer) pollHud._timer = setInterval(pollHud, 6000);
+    loadTeleports();
+    if (!loadTeleports._timer) loadTeleports._timer = setInterval(() => { if (mapOpen) loadTeleports(); }, 4000);
     await connect(data);
   } catch (err) {
     setMicState('disconnected', `Fehler: ${err.message}`);

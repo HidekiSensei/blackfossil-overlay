@@ -129,7 +129,7 @@ function orderPolygon(points) {
 
 // ── Vollbild-Karte zeichnen ──────────────────────────────────────────────────
 // view: { ctx, w, h }   players: [{x,y,heading,isYou,name,dino,isDead}]
-export function drawFullMap(view, players, waypoints = []) {
+export function drawFullMap(view, players, waypoints = [], teleports = [], hoveredTp = null) {
   const { ctx, w, h } = view;
   if (mapReady) ctx.drawImage(mapImg, 0, 0, w, h);
   else { ctx.fillStyle = '#15102a'; ctx.fillRect(0, 0, w, h); ctx.fillStyle = '#6b5b8c'; ctx.font = '16px system-ui'; ctx.textAlign = 'center'; ctx.fillText('Kartenbild fehlt (assets/map.jpg)', w/2, h/2); }
@@ -138,6 +138,11 @@ export function drawFullMap(view, players, waypoints = []) {
   for (const wp of waypoints) {
     const { nx, ny } = worldToNorm(wp.x, wp.y);
     drawWaypoint(ctx, nx * w, ny * h);
+  }
+  // Teleport-Punkte (nummeriert; hervorgehoben beim Hover)
+  for (const t of teleports) {
+    const { nx, ny } = worldToNorm(t.x, t.y);
+    drawTeleport(ctx, nx * w, ny * h, t.number, t.id === hoveredTp);
   }
   // Nur die eigene Position anzeigen (keine fremden Spielerpunkte)
   const self = players.find((p) => p.isYou);
@@ -277,6 +282,17 @@ function drawWaypoint(ctx, px, py) {
   ctx.fillStyle = '#fbbf24';
   ctx.beginPath(); ctx.moveTo(px, py-8); ctx.lineTo(px+5, py); ctx.lineTo(px, py+8); ctx.lineTo(px-5, py); ctx.closePath();
   ctx.fill(); ctx.strokeStyle = 'rgba(0,0,0,0.5)'; ctx.lineWidth = 1; ctx.stroke();
+}
+
+function drawTeleport(ctx, px, py, number, highlight) {
+  const r = highlight ? 13 : 10;
+  ctx.beginPath(); ctx.arc(px, py, r, 0, Math.PI * 2);
+  ctx.fillStyle = highlight ? '#c084fc' : 'rgba(139,92,246,0.92)';
+  ctx.fill();
+  ctx.lineWidth = highlight ? 3 : 2; ctx.strokeStyle = '#fff'; ctx.stroke();
+  ctx.fillStyle = '#fff'; ctx.font = `bold ${highlight ? 13 : 11}px system-ui`;
+  ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+  ctx.fillText(String(number), px, py);
 }
 
 // ── Welche Zone? (Point-in-Polygon) ─────────────────────────────────────────
