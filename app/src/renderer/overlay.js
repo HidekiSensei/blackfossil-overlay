@@ -9,17 +9,28 @@ let me = null;
 let waypoints = [];
 let calibMode = false;
 let heatmapMode = false;
-// Auto-Kalibrierung: 6 feste WELT-Koordinaten (x,y,z), weit über die Karte verteilt.
-// Der Spieler wird dorthin teleportiert (inkl. z = richtige Höhe) und klickt jeweils
-// auf der Karte → solveAffine.
-const CALIB_TARGETS = [
-  { x: 335219.25,   y: 206420.992,  z: 20527.227 },
-  { x: 81875.941,   y: 327227.034,  z: 20461.444 },
-  { x: -106687.433, y: 384391.233,  z: 41297.648 },
-  { x: -343263.594, y: 89531.156,   z: 20581.617 },
-  { x: 258109.859,  y: -365232.914, z: 22129.086 },
-  { x: 364040.247,  y: -307803.441, z: 22205.289 },
-];
+// Auto-Kalibrierung über ZONEN-Ecken: rohe Welt-Koordinaten der hinterlegten Zonen
+// (PVP/PVE), gut über die Karte verteilt ausgewählt. Du erkennst die Ecken am Gelände
+// und klickst sie an → solveAffine schiebt nur die DARSTELLUNG zurecht (kein Umrechnen
+// der Teleport-Ziele!).
+function pickCalibTargets(n) {
+  const pts = [...((ZONES.pvp && ZONES.pvp.points) || []), ...((ZONES.pve && ZONES.pve.points) || [])]
+    .map((p) => ({ x: p.x, y: p.y }));
+  if (pts.length <= n) return pts;
+  // Farthest-Point-Sampling: maximal weit auseinander liegende Punkte wählen
+  const cx = pts.reduce((s, p) => s + p.x, 0) / pts.length;
+  const cy = pts.reduce((s, p) => s + p.y, 0) / pts.length;
+  const sel = [pts.reduce((a, b) => ((b.x - cx) ** 2 + (b.y - cy) ** 2) > ((a.x - cx) ** 2 + (a.y - cy) ** 2) ? b : a)];
+  while (sel.length < n) {
+    let best = null, bestD = -1;
+    for (const p of pts) {
+      const d = Math.min(...sel.map((s) => (s.x - p.x) ** 2 + (s.y - p.y) ** 2));
+      if (d > bestD) { bestD = d; best = p; }
+    }
+    sel.push(best);
+  }
+  return sel;
+}
 let autoCalib = null; // { startPos, pairs, resolveClick }
 // Teleport-Punkte
 let teleports = [];       // [{id,number,name,price,cooldownMin,x,y,cooldownRemaining}]
@@ -611,14 +622,19 @@ async function startAutoCalibration() {
   autoCalib = { startPos: { x: me.x, y: me.y, z: me.z }, pairs: [], resolveClick: null };
   toggleSettings(false);
   toggleMap(true);
-  const targets = CALIB_TARGETS;
+  const targets = pickCalibTargets(4);
+  if (targets.length < 3) {
+    showToast('Keine Zonen-Daten — Kalibrierung nicht möglich', 'error');
+    endAutoCalib();
+    return;
+  }
   for (let i = 0; i < targets.length; i++) {
     const t = targets[i];
-    calibPrompt(`Punkt ${i + 1}/${targets.length} — du wirst teleportiert…`, true);
-    try { await calibTeleport(t.x, t.y, t.z); }
+    calibPrompt(`Punkt ${i + 1}/${targets.length} — du wirst zu einer Zonen-Ecke teleportiert…`, true);
+    try { await calibTeleport(t.x, t.y); } // rohe Koordinate, ohne z (aktuelle Höhe)
     catch (e) { showToast(`Punkt ${i + 1} übersprungen (Teleport: ${e.message})`, 'error'); continue; }
     if (!autoCalib) return; // abgebrochen
-    calibPrompt(`Punkt ${i + 1}/${targets.length} — klicke auf der Karte, wo du JETZT stehst.`, true);
+    calibPrompt(`Punkt ${i + 1}/${targets.length} — klicke auf der Karte GENAU dort, wo du jetzt stehst (am Gelände erkennbar).`, true);
     const norm = await waitForCalibClick();
     if (!autoCalib) return;
     if (!norm) { await abortAutoCalib(); return; }
