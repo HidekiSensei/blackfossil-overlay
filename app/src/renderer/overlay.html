@@ -113,13 +113,15 @@
     .feature-panel p { color: var(--muted); font-size: 14px; line-height: 1.5; margin-bottom: 16px; }
     .closeFeature { width: 100%; }
     /* F5 Dino-Info: breit, Elder links + Vitals (mit Token rechts neben Balken) */
-    .feature-panel.di-wide { width: clamp(860px, 90vw, 1200px); }
-    .di-main { display: flex; gap: 30px; margin-top: 14px; align-items: flex-start; }
-    .di-elder-col { width: 300px; flex: none; }
+    /* ID-Selektor, damit er die ältere #dinoInfo-Breite überschreibt */
+    #dinoInfo.di-wide { width: clamp(720px, 92vw, 1180px); max-width: 96vw; }
+    .di-main { display: flex; gap: 24px; margin-top: 14px; align-items: flex-start; }
+    .di-elder-col { width: 280px; flex: none; }
     .di-vitals-col { flex: 1; min-width: 0; }
-    .di-vrow { display: flex; align-items: center; gap: 16px; margin: 13px 0; }
+    .di-vrow { display: flex; align-items: center; gap: 14px; margin: 13px 0; }
     .di-vbar { flex: 1; min-width: 0; }
-    .di-vtok { width: 180px; flex: none; }
+    .di-vtok { width: 160px; flex: none; }
+    .di-vtok button { white-space: nowrap; }
     .di-vrow .stat-track { height: 13px; }
 
     /* Dino-Info */
