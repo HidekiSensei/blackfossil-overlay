@@ -688,9 +688,11 @@ app.post('/garage/unpark', express.json(), async (req, res) => {
     if (!after || !(matchesToken || changed)) {
       return res.status(409).json({ error: 'Aufspielen nicht bestätigt — Token bleibt erhalten. Im Spiel auf einem Dino sein und erneut versuchen.' });
     }
-    // aus Garage entfernen
-    garage[s.steamId] = slots.filter((x) => x.id !== slotId);
-    writeJsonFile(GARAGE_FILE, garage);
+    // aus Garage entfernen — Datei NEU einlesen, damit parallele Schreiber
+    // (z.B. /park, swap) keine Änderungen verlieren / Token nicht duplizieren.
+    const fresh = readJson(GARAGE_FILE, {});
+    fresh[s.steamId] = (fresh[s.steamId] ?? []).filter((x) => x.id !== slotId);
+    writeJsonFile(GARAGE_FILE, fresh);
     startCooldown(s.steamId, 'unpack');
     res.json({ ok: true, dino: slot.snapshot?.dinoClass });
   } catch (err) {
