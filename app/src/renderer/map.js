@@ -200,8 +200,9 @@ export function drawMinimap(view, players, me, speakRange = 0) {
     const e = worldToNorm(me.x + speakRange, me.y);
     normSpeak = Math.hypot(e.nx - center.nx, e.ny - center.ny);
   }
-  // Zoom so wählen, dass der Sprechring ~40% des Minimap-Radius einnimmt
-  const zoom = normSpeak > 0 ? Math.min(0.2, Math.max(0.02, normSpeak * 2.5)) : 0.07;
+  // Zoom so wählen, dass der Sprechring ~30% des Minimap-Radius einnimmt
+  // (etwas weiter rausgezoomt für mehr Überblick)
+  const zoom = normSpeak > 0 ? Math.min(0.28, Math.max(0.03, normSpeak * 3.4)) : 0.10;
 
   ctx.save();
   ctx.beginPath(); ctx.arc(w/2, h/2, w/2, 0, Math.PI*2); ctx.clip();
