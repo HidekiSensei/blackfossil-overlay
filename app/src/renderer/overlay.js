@@ -1276,68 +1276,75 @@ const DI_STATS = [
   { key: 'lipid',   label: 'Fett',       color: '#fbbf24' },
 ];
 
-const OV_TOKENS = [
-  ['hunger', '🍖', 'Hunger'], ['thirst', '💧', 'Durst'], ['protein', '🥩', 'Protein'], ['carbs', '🌿', 'Carbs'],
-  ['lipid', '🥑', 'Lipid'], ['heal', '❤️', 'Heal'], ['grow_boost', '📈', 'Grow-Boost'], ['insta_grow', '⚡', 'Insta-Grow'],
-];
+// Vital-Balken → passender Token (nur diese sind im Overlay einlösbar;
+// Grow-Boost & Insta-Grow sind Discord-only).
+const VITAL_TOKEN = {
+  health:  ['heal', '❤️', 'Heal'],
+  hunger:  ['hunger', '🍖', 'Hunger'],
+  thirst:  ['thirst', '💧', 'Durst'],
+  carbs:   ['carbs', '🌿', 'Carbs'],
+  protein: ['protein', '🥩', 'Protein'],
+  lipid:   ['lipid', '🥑', 'Lipid'],
+};
 
 function renderDinoInfo() {
-  const bars = DI_STATS.map((s) => `
-    <div class="stat">
-      <div class="stat-top"><span>${s.label}</span><span class="val" id="di-${s.key}-v">—</span></div>
-      <div class="stat-track"><div class="stat-fill" id="di-${s.key}-f" style="background:${s.color}"></div></div>
+  const rows = DI_STATS.map((s) => `
+    <div class="di-vrow">
+      <div class="di-vbar">
+        <div class="stat-top"><span>${s.label}</span><span class="val" id="di-${s.key}-v">—</span></div>
+        <div class="stat-track"><div class="stat-fill" id="di-${s.key}-f" style="background:${s.color}"></div></div>
+      </div>
+      <div class="di-vtok" id="di-tok-${s.key}"></div>
     </div>`).join('');
   el('dinoInfo').classList.add('di-wide');
   el('dinoInfo').innerHTML = `
     <div class="di-head"><span class="di-dino" id="di-dino">Dino</span><span class="di-sub" id="di-grow"></span></div>
     <div class="di-sub" id="di-name"></div>
     <div class="di-badges" id="di-badges"></div>
-    <div class="di-cols">
-      <div class="di-col">
-        <div class="sec-title">📊 Vitals</div>
-        ${bars}
-      </div>
-      <div class="di-col">
+    <div class="di-main">
+      <div class="di-elder-col">
         <div class="sec-title">⏳ Elder-Fortschritt</div>
         <div id="di-elder" style="margin:6px 0"></div>
       </div>
-      <div class="di-col">
-        <div class="sec-title">🎫 Deine Token</div>
-        <div id="di-tokens" style="margin:6px 0"></div>
+      <div class="di-vitals-col">
+        <div class="sec-title">📊 Vitals &amp; Token <span style="color:var(--muted);font-weight:400;font-size:11px">— Token rechts neben dem Balken einlösen</span></div>
+        ${rows}
       </div>
     </div>
-    <button class="closeFeature secondary" style="margin-top:12px">Schließen (F5)</button>`;
+    <button class="closeFeature secondary" style="margin-top:14px">Schließen (F5)</button>`;
   el('dinoInfo').querySelector('.closeFeature').onclick = () => closeAllFeatures();
   updateDinoInfo();
   if (dinoTimer) clearInterval(dinoTimer);
   dinoTimer = setInterval(updateDinoInfo, 2000);
 }
 
-// Token-Spalte rendern (mit Einlösen + Bestätigung)
+// Token-Zellen rechts neben den passenden Vital-Balken füllen
 function renderDinoTokens(tokens) {
-  const box = el('di-tokens'); if (!box) return;
   tokens = tokens || {};
-  const owned = OV_TOKENS.filter(([id]) => (tokens[id] || 0) > 0);
-  if (!owned.length) { box.innerHTML = '<span style="color:var(--muted);font-size:12px">Keine Token. Zieh welche im Discord 🎁</span>'; return; }
-  box.innerHTML = '';
-  for (const [id, emoji, label] of owned) {
+  for (const [vital, [id, emoji, label]] of Object.entries(VITAL_TOKEN)) {
+    const cell = el(`di-tok-${vital}`); if (!cell) continue;
+    const n = tokens[id] || 0;
+    if (n <= 0) { cell.innerHTML = ''; continue; }
+    cell.innerHTML = '';
     const b = document.createElement('button');
-    b.style.cssText = 'width:100%;margin-bottom:6px;text-align:left;padding:8px 10px';
-    b.innerHTML = `${emoji} ${label} <span style="opacity:.7">×${tokens[id]}</span>`;
-    b.onclick = () => confirmRedeemToken(id, label, emoji, b);
-    box.appendChild(b);
+    b.style.cssText = 'width:100%;padding:7px 8px;font-size:12px';
+    b.innerHTML = `${emoji} ×${n} · einlösen`;
+    b.onclick = () => confirmRedeemToken(id, label, emoji, cell);
+    cell.appendChild(b);
   }
 }
-function confirmRedeemToken(id, label, emoji, btn) {
+function confirmRedeemToken(id, label, emoji, cell) {
+  cell.innerHTML = '';
   const wrap = document.createElement('div');
-  wrap.style.cssText = 'margin-bottom:6px;padding:9px;border:1px solid var(--accent);border-radius:8px;background:rgba(139,92,246,0.12)';
-  wrap.innerHTML = `<div style="font-size:12px;margin-bottom:7px">${emoji} <b>${label}</b> einlösen?</div>`;
-  const yes = document.createElement('button'); yes.textContent = '✅ Ja'; yes.style.cssText = 'width:auto;padding:6px 12px;margin-right:6px';
-  const no = document.createElement('button'); no.className = 'secondary'; no.textContent = 'Nein'; no.style.cssText = 'width:auto;padding:6px 12px';
+  wrap.style.cssText = 'padding:7px;border:1px solid var(--accent);border-radius:8px;background:rgba(139,92,246,0.14)';
+  wrap.innerHTML = `<div style="font-size:11px;margin-bottom:6px">${emoji} ${label} einlösen?</div>`;
+  const btns = document.createElement('div'); btns.style.cssText = 'display:flex;gap:5px';
+  const yes = document.createElement('button'); yes.textContent = '✅'; yes.style.cssText = 'flex:1;padding:5px';
+  const no = document.createElement('button'); no.className = 'secondary'; no.textContent = '✖️'; no.style.cssText = 'flex:1;padding:5px';
   yes.onclick = () => redeemOverlayToken(id, label, emoji);
   no.onclick = () => updateDinoInfo();
-  wrap.append(yes, no);
-  btn.replaceWith(wrap);
+  btns.append(yes, no); wrap.append(btns);
+  cell.appendChild(wrap);
 }
 async function redeemOverlayToken(id, label, emoji) {
   try {
@@ -1642,7 +1649,7 @@ async function updateDinoInfo() {
     el('di-name').textContent = 'Verbinde dich mit dem Server, um deine Stats zu sehen.';
     el('di-badges').innerHTML = '';
     el('di-elder').innerHTML = '<span style="color:var(--muted);font-size:12px">—</span>';
-    const tb = el('di-tokens'); if (tb) tb.innerHTML = '<span style="color:var(--muted);font-size:12px">—</span>';
+    Object.keys(VITAL_TOKEN).forEach((k) => { const c = el(`di-tok-${k}`); if (c) c.innerHTML = ''; });
     DI_STATS.forEach((s) => { el(`di-${s.key}-f`).style.width = '0%'; el(`di-${s.key}-v`).textContent = '—'; });
     return;
   }
