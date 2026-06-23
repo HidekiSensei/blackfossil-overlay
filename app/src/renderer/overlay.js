@@ -157,6 +157,10 @@ let config = { tokenBase: 'https://voice.blackfossil.de', hotkeys: {} };
 let room = null;
 let micEnabled = false;
 let settingsOpen = false;
+let deafened = false;                                   // eingehenden Ton stummschalten
+let micDeviceId = localStorage.getItem('bf-mic-dev') || '';   // gewähltes Mikrofon
+let spkDeviceId = localStorage.getItem('bf-spk-dev') || '';   // gewähltes Ausgabegerät
+let aiSpawnMode = false;                                // Karten-Klick-Spawn aktiv
 let mapOpen = false;
 
 async function init() {
@@ -267,6 +271,16 @@ async function init() {
   el('adminBtn').onclick = () => toggleAdminPanel();
   el('adminCalibBtn').onclick = () => adminCalibrate();
   el('tpCreateBtn').onclick = () => createTp();
+
+  // AI-Dinos (Team)
+  populateAiSpecies();
+  el('aiSpawnMapBtn').onclick = () => toggleAiSpawnMode();
+  el('aiStartBtn').onclick = () => aiControl('start', 'Auto-Spawn gestartet');
+  el('aiStopBtn').onclick = () => aiControl('stop', 'Auto-Spawn gestoppt');
+  el('aiDespawnBtn').onclick = () => aiControl('despawnall', 'Despawn ausgelöst');
+  el('aiKillBtn').onclick = () => aiControl('killall', 'Kill ausgelöst');
+  el('aiPanicBtn').onclick = () => aiControl('panic', 'PANIC ausgeführt');
+  el('aiDisableBtn').onclick = () => aiControl('disable', 'DLL deaktiviert (nach Neustart)');
   el('tpConfirmYes').onclick = () => useTp();
   el('tpConfirmNo').onclick = () => { el('tpConfirm').style.display = 'none'; tpConfirmTarget = null; };
   el('centerBtn').onclick = () => centerOnMe();
@@ -290,6 +304,13 @@ async function init() {
   el('vmodePtt').onclick = () => setVoiceMode('ptt');
   el('vmodePtm').onclick = () => setVoiceMode('ptm');
   setVoiceMode(localStorage.getItem('bf-voice-mode') || 'voice', true);
+
+  // Deafen + Audio-Geräte
+  el('deafenBtn').onclick = () => toggleDeafen();
+  el('micDevSel').onchange = (e) => setMicDevice(e.target.value);
+  el('spkDevSel').onchange = (e) => setSpkDevice(e.target.value);
+  enumAudioDevices();
+  if (navigator.mediaDevices) navigator.mediaDevices.addEventListener('devicechange', enumAudioDevices);
 
   // Feature-Panels schließen
   document.querySelectorAll('.closeFeature').forEach((b) => { b.onclick = () => closeAllFeatures(); });
@@ -536,6 +557,13 @@ function onMapClick(e) {
     return;
   }
   const w = normToWorld(nx, ny);
+
+  // AI-Dino-Spawn-Modus (nur Team): Klick = Spawn-Position
+  if (aiSpawnMode && tpIsAdmin) {
+    aiSpawnAt(w.x, w.y);
+    return;
+  }
+
   waypoints = [{ x: w.x, y: w.y }];
   renderBigMap();
 }
@@ -1372,26 +1400,33 @@ async function renderSkinEditor() {
     <button class="closeFeature secondary" style="width:100%;margin-top:8px">Schließen (F7)</button>`;
   panel.querySelector('.closeFeature').onclick = closeAllFeatures;
   updateSkinPreview();
-  panel.querySelectorAll('[data-col]').forEach((inp) => inp.oninput = () => { skinState.colors[inp.dataset.col] = hexToLin(inp.value); updateSkinPreview(); });
-  panel.querySelectorAll('[data-pat]').forEach((b) => b.onclick = () => { skinState.patternIndex = parseInt(b.dataset.pat); panel.querySelectorAll('[data-pat]').forEach((x) => x.className = x === b ? '' : 'secondary'); });
-  el('skVar').oninput = () => { skinState.skinVariation = parseInt(el('skVar').value) || 0; };
-  el('skApply').onclick = applySkin;
+  // Live-Anwendung: nach kurzer Pause automatisch übernehmen (kein Bestätigen nötig)
+  panel.querySelectorAll('[data-col]').forEach((inp) => inp.oninput = () => { skinState.colors[inp.dataset.col] = hexToLin(inp.value); updateSkinPreview(); scheduleSkinApply(); });
+  panel.querySelectorAll('[data-pat]').forEach((b) => b.onclick = () => { skinState.patternIndex = parseInt(b.dataset.pat); panel.querySelectorAll('[data-pat]').forEach((x) => x.className = x === b ? '' : 'secondary'); scheduleSkinApply(); });
+  el('skVar').oninput = () => { skinState.skinVariation = parseInt(el('skVar').value) || 0; scheduleSkinApply(); };
+  el('skApply').onclick = () => applySkin();
+}
+let skinApplyTimer = null;
+function scheduleSkinApply() {
+  clearTimeout(skinApplyTimer);
+  const hint = el('skApply'); if (hint) hint.textContent = '… wird übernommen';
+  skinApplyTimer = setTimeout(() => applySkin(true), 650);
 }
 function updateSkinPreview() {
   const c = skinState.colors;
   el('skPreview').innerHTML = dinoPreviewSVG({ id: 'sk', colors: { body: c.bodyColor, markings: c.markingsColor, underbelly: c.underbellyColor, flank: c.flankColor, detail: c.detailColor, eyes: c.eyesColor } });
 }
-async function applySkin() {
-  const btn = el('skApply'); btn.disabled = true; btn.textContent = 'Wird angewendet…';
+async function applySkin(auto) {
+  const btn = el('skApply'); if (btn) { btn.disabled = true; btn.textContent = auto ? '… wird übernommen' : 'Wird angewendet…'; }
   try {
     const body = { skinVariation: skinState.skinVariation, patternIndex: skinState.patternIndex, themeIndex: skinState.themeIndex, ...skinState.colors };
     const send = () => fetch(`${config.tokenBase}/skin`, { method: 'POST', headers: { Authorization: `Bearer ${sessionToken}`, 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
     let res = await send();
     if (res.status === 502) { await new Promise((r) => setTimeout(r, 1200)); res = await send(); } // ein Retry bei Server-Hänger
     const d = await res.json(); if (!res.ok) throw new Error(d.error || 'Fehler');
-    showToast('🎨 Skin angewendet!', 'success');
+    if (!auto) showToast('🎨 Skin angewendet!', 'success');
   } catch (err) { showToast(err.message, 'error'); }
-  btn.disabled = false; btn.textContent = '✅ Skin anwenden';
+  if (btn) { btn.disabled = false; btn.textContent = '✅ Skin anwenden'; }
 }
 
 // ── Dino-Markt (Karten-Grid + Angebot erstellen) ───────────────────────────
@@ -1587,11 +1622,16 @@ async function connect({ token, url }) {
     })
     .on(RoomEvent.TrackSubscribed, (track) => {
       if (track.kind === Track.Kind.Audio) {
-        const a = track.attach(); a.autoplay = true; document.body.appendChild(a);
+        const a = track.attach(); a.autoplay = true; a.muted = deafened;
+        if (spkDeviceId && a.setSinkId) a.setSinkId(spkDeviceId).catch(() => {});
+        document.body.appendChild(a);
         updateProximityVolumes();
       }
     });
   await room.connect(url, token);
+  // Gewählte Audio-Geräte anwenden (falls gesetzt)
+  try { if (micDeviceId) await room.switchActiveDevice('audioinput', micDeviceId); } catch {}
+  try { if (spkDeviceId) await room.switchActiveDevice('audiooutput', spkDeviceId); } catch {}
   // Sprech-Erkennung des eigenen Mikros
   room.localParticipant.on(ParticipantEvent.IsSpeakingChanged, () => refreshMicState());
 }
@@ -1609,6 +1649,78 @@ async function toggleMic() {
   micEnabled = !micEnabled;
   el('micBtn').textContent = micEnabled ? 'Mikro aus' : 'Mikro an';
   await applyMic();
+}
+
+// Eingehenden Ton stummschalten (Deafen) — wirkt auf alle Voice-Audio-Elemente
+function toggleDeafen() {
+  deafened = !deafened;
+  for (const a of document.querySelectorAll('audio')) a.muted = deafened;
+  const b = el('deafenBtn');
+  if (b) { b.textContent = deafened ? '🔇 Ton aus' : '🔊 Ton an'; b.classList.toggle('secondary', !deafened); }
+}
+
+// ── Audio-Geräteauswahl ─────────────────────────────────────────────────────
+async function enumAudioDevices() {
+  let devs = [];
+  try {
+    // Labels gibt's erst nach einer Mikro-Erlaubnis — einmal anstoßen, dann freigeben
+    try { const s = await navigator.mediaDevices.getUserMedia({ audio: true }); s.getTracks().forEach((t) => t.stop()); } catch {}
+    devs = await navigator.mediaDevices.enumerateDevices();
+  } catch { return; }
+  const fill = (sel, kind, saved) => {
+    if (!sel) return;
+    const list = devs.filter((d) => d.kind === kind);
+    sel.innerHTML = '<option value="">Standard</option>' +
+      list.map((d) => `<option value="${d.deviceId}">${escapeHtml(d.label || kind)}</option>`).join('');
+    sel.value = saved || '';
+  };
+  fill(el('micDevSel'), 'audioinput', micDeviceId);
+  fill(el('spkDevSel'), 'audiooutput', spkDeviceId);
+}
+async function setMicDevice(id) {
+  micDeviceId = id; localStorage.setItem('bf-mic-dev', id);
+  try { if (room && id) await room.switchActiveDevice('audioinput', id); } catch (e) { showToast('Mikro-Wechsel fehlgeschlagen', 'error'); }
+}
+async function setSpkDevice(id) {
+  spkDeviceId = id; localStorage.setItem('bf-spk-dev', id);
+  try { if (room && id) await room.switchActiveDevice('audiooutput', id); } catch {}
+  for (const a of document.querySelectorAll('audio')) { if (a.setSinkId && id) a.setSinkId(id).catch(() => {}); }
+}
+
+// ── AI-Dinos (Team-Steuerung übers Overlay) ─────────────────────────────────
+const AI_SPECIES = ['carno','cerato','compy','deino','diablo','dilo','dryo','galli','hypso','omni','psitta','psitta_coastal','ptera','tenonto','rex'];
+function populateAiSpecies() {
+  const sel = el('aiSpecies'); if (!sel || sel.options.length) return;
+  sel.innerHTML = AI_SPECIES.map((s) => `<option value="${s}">${s}</option>`).join('');
+}
+async function aiPost(path, body) {
+  const res = await fetch(`${config.tokenBase}/admin/ai/${path}`, {
+    method: 'POST', headers: { Authorization: `Bearer ${sessionToken}`, 'Content-Type': 'application/json' },
+    body: JSON.stringify(body || {}),
+  });
+  const d = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(d.error || `HTTP ${res.status}`);
+  return d;
+}
+async function aiControl(action, label) {
+  const st = el('aiStatus'); if (st) st.textContent = `… ${label}`;
+  try { await aiPost(action); if (st) st.textContent = `✅ ${label}`; showToast(`🦖 ${label}`, 'success'); }
+  catch (e) { if (st) st.textContent = `❌ ${e.message}`; showToast(e.message, 'error'); }
+}
+function toggleAiSpawnMode() {
+  aiSpawnMode = !aiSpawnMode;
+  const b = el('aiSpawnMapBtn');
+  if (b) { b.classList.toggle('secondary', !aiSpawnMode); b.textContent = aiSpawnMode ? '🗺️ Klicke auf die Karte…' : '🗺️ Auf Karte klicken zum Spawnen'; }
+  showToast(aiSpawnMode ? '🗺️ Spawn-Modus AN — klick auf die Karte' : 'Spawn-Modus aus', '');
+}
+async function aiSpawnAt(x, y) {
+  const species = el('aiSpecies') ? el('aiSpecies').value : 'carno';
+  const count = Math.max(1, Math.min(parseInt(el('aiCount') && el('aiCount').value) || 1, 50));
+  toggleAiSpawnMode(); // Modus nach einem Klick wieder aus
+  try {
+    await aiPost('spawn', { species, count, x, y, z: (me && me.z) != null ? me.z : 0 });
+    showToast(`🦖 ${count}× ${species} gespawnt`, 'success');
+  } catch (e) { showToast(e.message, 'error'); }
 }
 
 init();

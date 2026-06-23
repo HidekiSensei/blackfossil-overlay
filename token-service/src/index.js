@@ -455,6 +455,41 @@ const FORCE_TEAM_STEAMIDS = (process.env.FORCE_TEAM_STEAMIDS ?? '').split(',').m
 function isTeamMember(s) {
   return !!(s && (s.team || s.admin || s.staff || FORCE_TEAM_STEAMIDS.includes(s.steamId)));
 }
+
+// ── AI-Dinos: Proxy zum control-server (Game-Box), nur Team ──────────────────
+const CONTROL_SERVER_URL = process.env.CONTROL_SERVER_URL ?? 'http://100.117.32.93:9100';
+const CONTROL_AUTH_TOKEN = process.env.CONTROL_AUTH_TOKEN ?? '';
+const AI_ACTION_PATHS = {
+  spawn: '/ai/spawn', start: '/ai/start', stop: '/ai/stop',
+  despawnall: '/ai/despawnall', killall: '/ai/killall',
+  panic: '/ai/panic', disable: '/ai/disable', enable: '/ai/enable',
+};
+async function controlFetch(path, method = 'POST', body) {
+  const r = await fetch(`${CONTROL_SERVER_URL}${path}`, {
+    method,
+    headers: { Authorization: `Bearer ${CONTROL_AUTH_TOKEN}`, 'Content-Type': 'application/json' },
+    body: method === 'POST' ? JSON.stringify(body || {}) : undefined,
+    signal: AbortSignal.timeout(8000),
+  });
+  const d = await r.json().catch(() => ({}));
+  return { ok: r.ok, status: r.status, data: d };
+}
+app.get('/admin/ai/status', async (req, res) => {
+  const s = sessionFrom(req);
+  if (!isTeamMember(s)) return res.status(403).json({ error: 'Nur für das Team' });
+  try { const r = await controlFetch('/ai/status', 'GET'); return res.status(r.status).json(r.data); }
+  catch (e) { return res.status(502).json({ error: e.message }); }
+});
+app.post('/admin/ai/:action', express.json(), async (req, res) => {
+  const s = sessionFrom(req);
+  if (!isTeamMember(s)) return res.status(403).json({ error: 'Nur für das Team' });
+  const path = AI_ACTION_PATHS[req.params.action];
+  if (!path) return res.status(400).json({ error: 'Unbekannte Aktion' });
+  try {
+    const r = await controlFetch(path, 'POST', req.body || {});
+    return res.status(r.status).json(r.data);
+  } catch (e) { return res.status(502).json({ error: e.message }); }
+});
 async function fetchPlayers() {
   const r = await fetch(`${PANEL_BASE_URL}/players`, {
     headers: { Authorization: `Bearer ${PANEL_ADMIN_TOKEN}` },

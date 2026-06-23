@@ -83,6 +83,23 @@
     .hk-row button { flex: none; padding: 4px 12px; font-size: 12px; background: #120d24; border: 1px solid var(--border); color: #eee; min-width: 64px; }
     .hk-row button.listening { background: var(--warn); color: #000; }
 
+    /* Settings: 3-Spalten-Layout */
+    #settings.wide { width: clamp(760px, 82vw, 1120px); }
+    .settings-cols { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 20px; max-height: 66vh; overflow: auto; padding-right: 4px; }
+    .settings-col { min-width: 0; display: flex; flex-direction: column; }
+    .settings-col .col-head { font-size: 14px; font-weight: 800; color: var(--accent); letter-spacing: .3px; padding-bottom: 8px; margin-bottom: 12px; border-bottom: 1px solid var(--border); }
+    .set-block { margin-top: 16px; }
+    .set-block:first-child { margin-top: 0; }
+    .set-label { font-size: 12px; color: var(--muted); margin-bottom: 6px; }
+    .bf-select { width: 100%; padding: 8px; border-radius: 7px; border: 1px solid var(--border); background: #120d24; color: #eee; font-size: 12px; cursor: pointer; }
+    .vcol-btns { display: flex; flex-direction: column; gap: 8px; }
+    .vmode-stack { display: flex; flex-direction: column; gap: 6px; }
+    .vmode-stack .vmode { width: 100%; text-align: left; }
+    /* Live-Mikropegel (für späteren VAD-Block vorbereitet) */
+    .level-meter { height: 12px; background: rgba(255,255,255,0.07); border-radius: 7px; overflow: hidden; position: relative; }
+    .level-fill { height: 100%; width: 0%; background: linear-gradient(90deg,#22c55e 0%,#22c55e 55%,#f59e0b 78%,#ef4444 100%); transition: width .05s linear; }
+    .level-thresh { position: absolute; top: -3px; bottom: -3px; width: 2px; background: #fff; box-shadow: 0 0 4px #fff; }
+
     /* Server-Banner */
     #serverBanner { position: absolute; top: 16px; left: 50%; transform: translateX(-50%); display: none;
       background: rgba(180,30,30,0.92); color: #fff; padding: 10px 18px; border-radius: 10px; font-size: 13px;
@@ -236,6 +253,27 @@
         <button id="tpCreateBtn" style="width:100%;margin-bottom:12px">＋ Erstellen</button>
         <div style="font-weight:600;margin-bottom:5px">Vorhandene Punkte</div>
         <div id="adminTpList" style="max-height:150px;overflow:auto"></div>
+
+        <div style="border-top:1px solid var(--border);margin:12px 0 10px"></div>
+        <div style="font-weight:700;margin-bottom:8px">🦖 AI-Dinos</div>
+        <div style="display:flex;gap:5px;margin-bottom:6px">
+          <select id="aiSpecies" class="bf-select" style="flex:2"></select>
+          <input id="aiCount" type="number" min="1" max="50" value="1" style="flex:1;min-width:0;padding:7px;border-radius:6px;border:1px solid var(--border);background:rgba(0,0,0,0.25);color:#eee">
+        </div>
+        <button id="aiSpawnMapBtn" style="width:100%;margin-bottom:8px">🗺️ Auf Karte klicken zum Spawnen</button>
+        <div style="display:flex;gap:5px;margin-bottom:5px">
+          <button id="aiStartBtn" style="flex:1;background:#16a34a">▶️ Start</button>
+          <button id="aiStopBtn" class="secondary" style="flex:1">⏹️ Stop</button>
+        </div>
+        <div style="display:flex;gap:5px;margin-bottom:5px">
+          <button id="aiDespawnBtn" class="secondary" style="flex:1">🧹 Despawn</button>
+          <button id="aiKillBtn" style="flex:1;background:#b91c1c">💀 Kill</button>
+        </div>
+        <div style="display:flex;gap:5px">
+          <button id="aiPanicBtn" style="flex:1;background:#dc2626">🆘 PANIC</button>
+          <button id="aiDisableBtn" class="secondary" style="flex:1">🛑 DLL aus</button>
+        </div>
+        <div id="aiStatus" style="margin-top:8px;font-size:11px;color:var(--muted)"></div>
       </div>
 
       <!-- TP-Bestätigung -->
@@ -251,46 +289,67 @@
   </div>
 
   <!-- Settings -->
-  <div id="settings">
+  <div id="settings" class="wide">
     <h2>⚙️ Einstellungen</h2>
-    <div style="max-height:62vh;overflow:auto;padding-right:6px">
+    <div class="settings-cols">
 
-      <div class="sec-title">🎙️ Voice</div>
-      <div class="btnrow" style="margin-top:6px">
-        <button id="connBtn">Verbinden</button>
-        <button id="micBtn" class="secondary">Mikro an</button>
-      </div>
-      <div style="margin-top:12px">
-        <div style="font-size:13px;margin-bottom:5px">Mikrofon-Modus</div>
-        <div style="display:flex;gap:6px">
-          <button class="vmode" data-mode="voice" id="vmodeVoice">Sprachaktivierung</button>
-          <button class="vmode secondary" data-mode="ptt" id="vmodePtt">Push-to-Talk</button>
-          <button class="vmode secondary" data-mode="ptm" id="vmodePtm">Push-to-Mute</button>
+      <!-- Spalte 1: Voicechat-Kontrolle -->
+      <div class="settings-col">
+        <div class="col-head">🎙️ Voicechat-Kontrolle</div>
+        <div class="set-block vcol-btns">
+          <button id="connBtn">Verbinden</button>
+          <button id="micBtn" class="secondary">Mikro an</button>
+          <button id="deafenBtn" class="secondary">🔊 Ton an</button>
+        </div>
+        <div class="set-block">
+          <div class="set-label">Mikrofon-Modus</div>
+          <div class="vmode-stack">
+            <button class="vmode" data-mode="voice" id="vmodeVoice">🎚️ Sprachaktivierung</button>
+            <button class="vmode secondary" data-mode="ptt" id="vmodePtt">⌨️ Push-to-Talk</button>
+            <button class="vmode secondary" data-mode="ptm" id="vmodePtm">🔇 Push-to-Mute</button>
+          </div>
         </div>
       </div>
-      <div style="margin-top:14px">
-        <div style="font-size:13px;margin-bottom:5px">🔊 Deine Sprechreichweite <span style="color:var(--muted)">(andere hören dich so weit)</span></div>
-        <div id="rangeBtns" style="display:flex;gap:6px"></div>
-      </div>
-      <div style="margin-top:14px">
-        <div style="font-size:13px;margin-bottom:5px">🎚️ Lautstärke pro Spieler <span style="color:var(--muted)">(gleicht laute/leise Mikros aus — nur für dich)</span></div>
-        <input id="voiceSearch" placeholder="🔍 Spieler suchen…" style="width:100%;margin-bottom:6px;padding:6px;border-radius:6px;border:1px solid var(--border);background:rgba(0,0,0,0.25);color:#eee;box-sizing:border-box">
-        <div id="voiceUsers" style="max-height:200px;overflow:auto"></div>
+
+      <!-- Spalte 2: Voicechat-Einstellungen -->
+      <div class="settings-col">
+        <div class="col-head">⚙️ Voicechat-Einstellungen</div>
+        <div class="set-block">
+          <div class="set-label">🎤 Mikrofon (Eingabe)</div>
+          <select id="micDevSel" class="bf-select"><option>Standard</option></select>
+        </div>
+        <div class="set-block">
+          <div class="set-label">🔈 Ausgabegerät</div>
+          <select id="spkDevSel" class="bf-select"><option>Standard</option></select>
+        </div>
+        <div class="set-block">
+          <div class="set-label">🔊 Deine Sprechreichweite <span style="color:var(--muted)">(andere hören dich so weit)</span></div>
+          <div id="rangeBtns" style="display:flex;gap:6px;flex-wrap:wrap"></div>
+        </div>
+        <div class="set-block">
+          <div class="set-label">🎚️ Lautstärke pro Spieler <span style="color:var(--muted)">(nur für dich)</span></div>
+          <input id="voiceSearch" placeholder="🔍 Spieler suchen…" style="width:100%;margin-bottom:6px;padding:7px;border-radius:6px;border:1px solid var(--border);background:rgba(0,0,0,0.25);color:#eee;box-sizing:border-box">
+          <div id="voiceUsers" style="max-height:220px;overflow:auto"></div>
+        </div>
       </div>
 
-      <div class="sec-title" style="margin-top:18px">⌨️ Tastenbelegung</div>
-      <div id="hotkeyList" style="margin-top:6px"></div>
-      <button id="resetHkBtn" class="secondary" style="margin-top:8px;width:100%">Tasten zurücksetzen</button>
-
-      <div class="sec-title" style="margin-top:18px">⬆️ Updates</div>
-      <button id="checkUpdateBtn" style="width:100%;margin-top:6px">🔄 Nach Updates suchen</button>
-      <div id="updateBox" style="display:none;margin-top:10px">
-        <div id="updateInfo" style="font-size:12px;color:var(--muted);margin:6px 0">Eine neue Version ist verfügbar.</div>
-        <button id="updateBtn" style="width:100%">Update herunterladen</button>
+      <!-- Spalte 3: Hotkeys -->
+      <div class="settings-col">
+        <div class="col-head">⌨️ Hotkeys</div>
+        <div id="hotkeyList"></div>
+        <button id="resetHkBtn" class="secondary" style="margin-top:10px;width:100%">Tasten zurücksetzen</button>
+        <div class="set-block">
+          <div class="set-label">⬆️ Updates</div>
+          <button id="checkUpdateBtn" style="width:100%">🔄 Nach Updates suchen</button>
+          <div id="updateBox" style="display:none;margin-top:10px">
+            <div id="updateInfo" style="font-size:12px;color:var(--muted);margin:6px 0">Eine neue Version ist verfügbar.</div>
+            <button id="updateBtn" style="width:100%">Update herunterladen</button>
+          </div>
+        </div>
       </div>
 
     </div>
-    <div id="versionInfo" style="text-align:center;font-size:11px;color:var(--muted);margin:8px 0 4px">v…</div>
+    <div id="versionInfo" style="text-align:center;font-size:11px;color:var(--muted);margin:10px 0 4px">v…</div>
     <div class="btnrow">
       <button id="logoutBtn" class="secondary">Abmelden</button>
       <button id="closeBtn" class="secondary">Schließen</button>
