@@ -281,10 +281,11 @@ app.get('/me', async (req, res) => {
     const points = getPoints(payload.steamId);
     const tier = payload.tier || 'Fossil';
     const p = (data.Players ?? []).find((x) => x.steamId === payload.steamId);
-    if (!p) return res.json({ online: false, points, tier, name: payload.name });
+    const tokens = getInventory(payload.steamId);
+    if (!p) return res.json({ online: false, points, tier, name: payload.name, tokens });
     res.json({
       online: true,
-      points, tier,
+      points, tier, tokens,
       name: p.playerName,
       dino: p.dinoClass,
       gender: p.gender,
@@ -314,6 +315,44 @@ app.get('/me', async (req, res) => {
         },
       },
     });
+  } catch (err) {
+    res.status(502).json({ error: err.message });
+  }
+});
+
+// ── 4c) Token einlösen (Overlay) ────────────────────────────────────────────
+app.post('/tokens/redeem', express.json(), async (req, res) => {
+  const auth = req.headers.authorization ?? '';
+  const sessionToken = auth.startsWith('Bearer ') ? auth.slice(7) : null;
+  if (!sessionToken) return res.status(401).json({ error: 'Keine Session' });
+  let payload;
+  try { payload = jwt.verify(sessionToken, SESSION_SECRET); }
+  catch { return res.status(401).json({ error: 'Session ungültig' }); }
+
+  const type = String(req.body?.type ?? '');
+  const def = TOKEN_DEFS[type];
+  if (!def) return res.status(400).json({ error: 'Unbekannter Token' });
+  if ((getInventory(payload.steamId)[type] ?? 0) < 1) return res.status(400).json({ error: 'Kein Token dieses Typs.' });
+
+  try {
+    const r = await fetch(`${PANEL_BASE_URL}/players`, { headers: { Authorization: `Bearer ${PANEL_ADMIN_TOKEN}` }, signal: AbortSignal.timeout(8000) });
+    if (!r.ok) throw new Error(`Game-Server HTTP ${r.status}`);
+    const p = ((await r.json()).Players ?? []).find((x) => x.steamId === payload.steamId);
+    if (!p) return res.status(400).json({ error: 'Du musst online auf einem Dino sein.' });
+
+    const sid = encodeURIComponent(payload.steamId);
+    const post = (path, body) => fetch(`${PANEL_BASE_URL}${path}`, {
+      method: 'POST', headers: { Authorization: `Bearer ${PANEL_ADMIN_TOKEN}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify(body), signal: AbortSignal.timeout(8000),
+    });
+    let gr;
+    if (def.effect === 'grow_set') gr = await post(`/players/${sid}/grow`, { value: INSTA_GROW_TARGET });
+    else if (def.effect === 'grow_add') gr = await post(`/players/${sid}/grow`, { value: Math.min(1, (p.grow ?? 0) + GROW_BOOST_STEP) });
+    else gr = await post('/vitals', vitalsBody(payload.steamId, def.apiField, 1));
+    if (!gr.ok) throw new Error(`Anwenden fehlgeschlagen (HTTP ${gr.status})`);
+
+    if (!removeOneToken(payload.steamId, type)) return res.status(400).json({ error: 'Token nicht mehr vorhanden.' });
+    res.json({ ok: true, label: def.label, emoji: def.emoji, tokens: getInventory(payload.steamId) });
   } catch (err) {
     res.status(502).json({ error: err.message });
   }
@@ -380,6 +419,46 @@ app.post('/zones', express.json(), (req, res) => {
 // ── 7) Garage (Bot-seitige JSON-Daten, gemeinsam genutzt) ───────────────────
 const BOT_DATA_DIR = process.env.BOT_DATA_DIR ?? '/opt/blackfossil-bot/data';
 const GARAGE_FILE = `${BOT_DATA_DIR}/garage.json`;
+
+// ── Token-Inventar (geteilt mit dem Bot: inventory.json) ────────────────────
+const INVENTORY_FILE = `${BOT_DATA_DIR}/inventory.json`;
+const INSTA_GROW_TARGET = parseFloat(process.env.INSTANT_GROW_TARGET_PCT ?? '80') / 100;
+const GROW_BOOST_STEP = parseFloat(process.env.GROW_BOOST_STEP ?? '0.1');
+// Reihenfolge + Wirkung müssen mit dem Bot (client.ts TOKEN_TYPES) übereinstimmen.
+const TOKEN_ORDER = ['hunger', 'thirst', 'protein', 'carbs', 'lipid', 'heal', 'grow_boost', 'insta_grow'];
+const TOKEN_DEFS = {
+  hunger:     { label: 'Hunger-Token',     emoji: '🍖', effect: 'vital', apiField: 'food' },
+  thirst:     { label: 'Durst-Token',      emoji: '💧', effect: 'vital', apiField: 'water' },
+  protein:    { label: 'Protein-Token',    emoji: '🥩', effect: 'vital', apiField: 'nutrients.proteins' },
+  carbs:      { label: 'Carbs-Token',      emoji: '🌿', effect: 'vital', apiField: 'nutrients.carbs' },
+  lipid:      { label: 'Lipid-Token',      emoji: '🥑', effect: 'vital', apiField: 'nutrients.lipids' },
+  heal:       { label: 'Heal-Token',       emoji: '❤️', effect: 'vital', apiField: 'health' },
+  grow_boost: { label: 'Grow-Boost-Token', emoji: '📈', effect: 'grow_add' },
+  insta_grow: { label: 'Insta-Grow-Token', emoji: '⚡', effect: 'grow_set' },
+};
+function getInventory(steamId) {
+  const all = readJson(INVENTORY_FILE, {});
+  const inv = {};
+  for (const t of TOKEN_ORDER) inv[t] = all[steamId]?.[t] ?? 0;
+  return inv;
+}
+function removeOneToken(steamId, type) {
+  const all = readJson(INVENTORY_FILE, {});
+  const have = all[steamId]?.[type] ?? 0;
+  if (have < 1) return false;
+  all[steamId][type] = have - 1;
+  writeJsonFile(INVENTORY_FILE, all);
+  return true;
+}
+// Punkt-Pfad ("nutrients.proteins") → verschachteltes Objekt mit Wert
+function vitalsBody(steamId, apiField, val) {
+  const entry = { steamId };
+  const parts = apiField.split('.');
+  let cur = entry;
+  for (let i = 0; i < parts.length - 1; i++) { cur[parts[i]] = cur[parts[i]] ?? {}; cur = cur[parts[i]]; }
+  cur[parts[parts.length - 1]] = val;
+  return [entry];
+}
 
 // Token-Limit & Cooldowns — geteilt mit dem Bot über dieselben Dateien in BOT_DATA_DIR.
 const COOLDOWNS_FILE = `${BOT_DATA_DIR}/cooldowns.json`;
