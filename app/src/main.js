@@ -324,9 +324,11 @@ try { const m = require('uiohook-napi'); uiohook = m.uIOhook; UiohookKey = m.Uio
 catch (err) { console.error('uiohook nicht verfügbar:', err.message); }
 
 let pttCode = null, ptmCode = null, pttDown = false, ptmDown = false;
+let pttMouse = null, ptmMouse = null; // Maustasten-Codes (uiohook e.button)
 
 function accelToUiohookCode(accel) {
   if (!accel || !UiohookKey) return null;
+  if (/^Mouse\d+$/.test(accel)) return null; // Maustaste → separat (pttMouse)
   const key = accel.split('+').pop(); // Modifier ignorieren, Haupttaste nehmen
   if (/^[A-Z]$/.test(key)) return UiohookKey[key];
   if (/^F\d{1,2}$/.test(key)) return UiohookKey[key];
@@ -334,10 +336,13 @@ function accelToUiohookCode(accel) {
   if (/^\d$/.test(key)) return UiohookKey[key];
   return null;
 }
+function mouseBtnFromHotkey(hk) { const m = /^Mouse(\d+)$/.exec(hk || ''); return m ? parseInt(m[1]) : null; }
 
 function refreshVoiceKeys() {
   pttCode = accelToUiohookCode(HOTKEYS['voice-ptt']);
   ptmCode = accelToUiohookCode(HOTKEYS['voice-ptm']);
+  pttMouse = mouseBtnFromHotkey(HOTKEYS['voice-ptt']);
+  ptmMouse = mouseBtnFromHotkey(HOTKEYS['voice-ptm']);
 }
 
 function startVoiceHook() {
@@ -351,6 +356,16 @@ function startVoiceHook() {
     if (!hotkeysActive) { pttDown = false; ptmDown = false; return; }
     if (pttCode && e.keycode === pttCode && pttDown) { pttDown = false; sendVoiceKey('ptt', false); }
     if (ptmCode && e.keycode === ptmCode && ptmDown) { ptmDown = false; sendVoiceKey('ptm', false); }
+  });
+  // Maustasten (z.B. Seitentasten) für PTT/PTM
+  uiohook.on('mousedown', (e) => {
+    if (!hotkeysActive) return;
+    if (pttMouse && e.button === pttMouse && !pttDown) { pttDown = true; sendVoiceKey('ptt', true); }
+    if (ptmMouse && e.button === ptmMouse && !ptmDown) { ptmDown = true; sendVoiceKey('ptm', true); }
+  });
+  uiohook.on('mouseup', (e) => {
+    if (pttMouse && e.button === pttMouse && pttDown) { pttDown = false; sendVoiceKey('ptt', false); }
+    if (ptmMouse && e.button === ptmMouse && ptmDown) { ptmDown = false; sendVoiceKey('ptm', false); }
   });
   try { uiohook.start(); } catch (err) { console.error('uiohook start fehlgeschlagen:', err.message); }
 }

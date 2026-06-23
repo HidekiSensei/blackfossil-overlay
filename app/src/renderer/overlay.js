@@ -161,6 +161,11 @@ let deafened = false;                                   // eingehenden Ton stumm
 let micDeviceId = localStorage.getItem('bf-mic-dev') || '';   // gewähltes Mikrofon
 let spkDeviceId = localStorage.getItem('bf-spk-dev') || '';   // gewähltes Ausgabegerät
 let aiSpawnMode = false;                                // Karten-Klick-Spawn aktiv
+// Sprachaktivierung (eigene VAD): Mikro öffnet ab Schwelle, mit Nachlaufzeit
+let vadThreshold = (parseFloat(localStorage.getItem('bf-vad-thresh')) || 18) / 100; // 0..1
+let vadOpen = false;
+let vadHangoverUntil = 0;
+let meterStream = null, meterCtx = null, meterAnalyser = null, meterData = null, meterRAF = null;
 let mapOpen = false;
 
 async function init() {
@@ -311,6 +316,13 @@ async function init() {
   el('spkDevSel').onchange = (e) => setSpkDevice(e.target.value);
   enumAudioDevices();
   if (navigator.mediaDevices) navigator.mediaDevices.addEventListener('devicechange', enumAudioDevices);
+
+  // Sprachschwelle (VAD)
+  const vt = el('vadThresh');
+  if (vt) { vt.value = String(Math.round(vadThreshold * 100)); vt.oninput = (e) => setVadThreshold(parseInt(e.target.value)); }
+
+  // Maustasten als Hotkey (für Push-to-Talk/Mute): während des Neubelegens Klick fangen
+  window.addEventListener('mousedown', onRebindMouse, true);
 
   // Feature-Panels schließen
   document.querySelectorAll('.closeFeature').forEach((b) => { b.onclick = () => closeAllFeatures(); });
@@ -1126,7 +1138,8 @@ async function renderHotkeys() {
       row.appendChild(lbl);
     }
     const btn = document.createElement('button');
-    btn.textContent = cur.key || '—';
+    const mm = /^Mouse(\d+)$/.exec(cur.key || '');
+    btn.textContent = mm ? `🖱️ Maus ${mm[1]}` : (cur.key || '—');
     btn.dataset.action = action;
     btn.style.cssText = 'min-width:64px';
     btn.onclick = () => startRebind(action, btn);
@@ -1168,6 +1181,19 @@ async function onRebindKey(e) {
   // Modifier kommen aus den Checkboxen (nicht aus dem Tastendruck)
   const cur = parseAccel((await window.bf.getHotkeys())[listeningAction] || '');
   await window.bf.setHotkey(listeningAction, buildAccel({ ctrl: cur.ctrl, alt: cur.alt, shift: cur.shift, key }));
+  listeningAction = null;
+  await renderHotkeys();
+}
+
+// Maustaste während des Neubelegens fangen → als 'Mouse<N>' speichern (uiohook-Code).
+// Linksklick (0) lassen wir fürs UI; nur Seiten-/Mittel-/Rechtstaste sind belegbar.
+const BROWSER_TO_UIOHOOK_BTN = { 1: 3, 2: 2, 3: 4, 4: 5 }; // mitte, rechts, zurück, vor
+async function onRebindMouse(e) {
+  if (!listeningAction) return;
+  const code = BROWSER_TO_UIOHOOK_BTN[e.button];
+  if (!code) return;            // Linksklick → normal lassen
+  e.preventDefault(); e.stopPropagation();
+  await window.bf.setHotkey(listeningAction, `Mouse${code}`);
   listeningAction = null;
   await renderHotkeys();
 }
@@ -1563,7 +1589,7 @@ function isMicOn() {
   if (!room) return false;
   if (voiceMode === 'ptt') return pttHeld;                 // nur während Taste gehalten
   if (voiceMode === 'ptm') return micEnabled && !ptmHeld;  // an, außer Taste gehalten
-  return micEnabled;                                       // Sprachaktivierung
+  return micEnabled && vadOpen;                            // Sprachaktivierung: nur über Schwelle
 }
 
 // Mikro-Sendezustand an den Voice-Modus angleichen
@@ -1634,6 +1660,7 @@ async function connect({ token, url }) {
   try { if (spkDeviceId) await room.switchActiveDevice('audiooutput', spkDeviceId); } catch {}
   // Sprech-Erkennung des eigenen Mikros
   room.localParticipant.on(ParticipantEvent.IsSpeakingChanged, () => refreshMicState());
+  startMicMeter(); // Live-Pegel + eigene Sprachaktivierung
 }
 
 async function toggleConnect() {
@@ -1680,11 +1707,58 @@ async function enumAudioDevices() {
 async function setMicDevice(id) {
   micDeviceId = id; localStorage.setItem('bf-mic-dev', id);
   try { if (room && id) await room.switchActiveDevice('audioinput', id); } catch (e) { showToast('Mikro-Wechsel fehlgeschlagen', 'error'); }
+  if (room) startMicMeter(); // Pegelmesser auf neues Gerät umstellen
 }
 async function setSpkDevice(id) {
   spkDeviceId = id; localStorage.setItem('bf-spk-dev', id);
   try { if (room && id) await room.switchActiveDevice('audiooutput', id); } catch {}
   for (const a of document.querySelectorAll('audio')) { if (a.setSinkId && id) a.setSinkId(id).catch(() => {}); }
+}
+
+// ── Live-Mikropegel + eigene Sprachaktivierung (VAD) ────────────────────────
+async function startMicMeter() {
+  stopMicMeter();
+  try {
+    meterStream = await navigator.mediaDevices.getUserMedia({ audio: micDeviceId ? { deviceId: { exact: micDeviceId } } : true });
+    meterCtx = new (window.AudioContext || window.webkitAudioContext)();
+    const src = meterCtx.createMediaStreamSource(meterStream);
+    meterAnalyser = meterCtx.createAnalyser();
+    meterAnalyser.fftSize = 512;
+    meterAnalyser.smoothingTimeConstant = 0.4;
+    src.connect(meterAnalyser);
+    meterData = new Uint8Array(meterAnalyser.fftSize);
+    meterLoop();
+  } catch (e) { /* kein Mikro-Zugriff → kein Meter */ }
+}
+function stopMicMeter() {
+  if (meterRAF) cancelAnimationFrame(meterRAF); meterRAF = null;
+  try { if (meterStream) meterStream.getTracks().forEach((t) => t.stop()); } catch {}
+  try { if (meterCtx) meterCtx.close(); } catch {}
+  meterStream = meterCtx = meterAnalyser = meterData = null;
+  vadOpen = false;
+}
+function meterLoop() {
+  if (!meterAnalyser) return;
+  meterAnalyser.getByteTimeDomainData(meterData);
+  // RMS um die Mittellinie (128) → 0..1
+  let sum = 0;
+  for (let i = 0; i < meterData.length; i++) { const v = (meterData[i] - 128) / 128; sum += v * v; }
+  const level = Math.min(1, Math.sqrt(sum / meterData.length) * 2.2);
+
+  const fill = el('levelFill'); if (fill) fill.style.width = `${Math.round(level * 100)}%`;
+  const th = el('levelThresh'); if (th) th.style.left = `${Math.round(vadThreshold * 100)}%`;
+
+  // VAD: öffnet über Schwelle, hält dann kurz nach (Nachlauf), damit es nicht stottert
+  const now = performance.now();
+  if (level >= vadThreshold) vadHangoverUntil = now + 600;
+  const open = now < vadHangoverUntil;
+  if (open !== vadOpen) { vadOpen = open; if (voiceMode === 'voice') applyMic(); }
+
+  meterRAF = requestAnimationFrame(meterLoop);
+}
+function setVadThreshold(pct) {
+  vadThreshold = Math.max(0, Math.min(1, pct / 100));
+  localStorage.setItem('bf-vad-thresh', String(Math.round(vadThreshold * 100)));
 }
 
 // ── AI-Dinos (Team-Steuerung übers Overlay) ─────────────────────────────────

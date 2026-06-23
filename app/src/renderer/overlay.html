@@ -309,6 +309,12 @@
             <button class="vmode secondary" data-mode="ptm" id="vmodePtm">🔇 Push-to-Mute</button>
           </div>
         </div>
+        <div class="set-block">
+          <div class="set-label">🎚️ Mikro-Pegel & Sprachschwelle</div>
+          <div class="level-meter"><div id="levelFill" class="level-fill"></div><div id="levelThresh" class="level-thresh"></div></div>
+          <input id="vadThresh" type="range" min="0" max="100" value="18" style="width:100%;margin-top:8px">
+          <div style="font-size:11px;color:var(--muted)">Mikro öffnet ab dem weißen Strich (nur bei Sprachaktivierung). Balken zeigt deinen Live-Pegel.</div>
+        </div>
       </div>
 
       <!-- Spalte 2: Voicechat-Einstellungen -->
