@@ -1313,13 +1313,16 @@ function renderDinoInfo() {
     </div>
     <button class="closeFeature secondary" style="margin-top:14px">Schließen (F5)</button>`;
   el('dinoInfo').querySelector('.closeFeature').onclick = () => closeAllFeatures();
+  tokenConfirmOpen = false; // frisch öffnen → keine hängende Bestätigungs-Sperre
   updateDinoInfo();
   if (dinoTimer) clearInterval(dinoTimer);
   dinoTimer = setInterval(updateDinoInfo, 2000);
 }
 
 // Token-Zellen rechts neben den passenden Vital-Balken füllen
+let tokenConfirmOpen = false; // solange eine Einlöse-Bestätigung offen ist: Zellen nicht überschreiben
 function renderDinoTokens(tokens) {
+  if (tokenConfirmOpen) return; // sonst würde der 2s-Refresh die Bestätigung wegbügeln
   tokens = tokens || {};
   for (const [vital, [id, emoji, label]] of Object.entries(VITAL_TOKEN)) {
     const cell = el(`di-tok-${vital}`); if (!cell) continue;
@@ -1334,6 +1337,7 @@ function renderDinoTokens(tokens) {
   }
 }
 function confirmRedeemToken(id, label, emoji, cell) {
+  tokenConfirmOpen = true; // Refresh friert die Token-Zellen ein, bis entschieden
   cell.innerHTML = '';
   const wrap = document.createElement('div');
   wrap.style.cssText = 'padding:7px;border:1px solid var(--accent);border-radius:8px;background:rgba(139,92,246,0.14)';
@@ -1341,8 +1345,8 @@ function confirmRedeemToken(id, label, emoji, cell) {
   const btns = document.createElement('div'); btns.style.cssText = 'display:flex;gap:5px';
   const yes = document.createElement('button'); yes.textContent = '✅'; yes.style.cssText = 'flex:1;padding:5px';
   const no = document.createElement('button'); no.className = 'secondary'; no.textContent = '✖️'; no.style.cssText = 'flex:1;padding:5px';
-  yes.onclick = () => redeemOverlayToken(id, label, emoji);
-  no.onclick = () => updateDinoInfo();
+  yes.onclick = () => { tokenConfirmOpen = false; redeemOverlayToken(id, label, emoji); };
+  no.onclick = () => { tokenConfirmOpen = false; updateDinoInfo(); };
   btns.append(yes, no); wrap.append(btns);
   cell.appendChild(wrap);
 }
