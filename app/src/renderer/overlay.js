@@ -1920,4 +1920,79 @@ async function aiSpawnAt(x, y) {
   } catch (e) { showToast(e.message, 'error'); }
 }
 
-init();
+// ── Edit-Mode: Panels verschiebbar machen (Positionen in localStorage) ──────
+const MOVABLE = [
+  { id: 'hud',         label: 'Top-HUD' },
+  { id: 'minimapWrap', label: 'Minimap & Mikro' },
+  { id: 'settings',    label: 'Einstellungen' },
+  { id: 'dinoInfo',    label: 'Dino-Info (F5)' },
+  { id: 'skinEditor',  label: 'Skin-Editor' },
+  { id: 'garage',      label: 'Garage' },
+  { id: 'market',      label: 'Markt' },
+];
+let editMode = false;
+function loadPositions() { try { return JSON.parse(localStorage.getItem('bf-layout')) || {}; } catch { return {}; } }
+function savePositions(p) { localStorage.setItem('bf-layout', JSON.stringify(p)); }
+function applySavedPositions() {
+  const p = loadPositions();
+  for (const m of MOVABLE) {
+    const e = el(m.id), pos = p[m.id]; if (!e || !pos) continue;
+    e.style.left = pos.left; e.style.top = pos.top;
+    e.style.right = 'auto'; e.style.bottom = 'auto';
+    e.style.transform = 'none'; // Center-Transforms überschreiben
+  }
+}
+function resetPositions() {
+  localStorage.removeItem('bf-layout');
+  for (const m of MOVABLE) {
+    const e = el(m.id); if (!e) continue;
+    e.style.left = ''; e.style.top = ''; e.style.right = ''; e.style.bottom = ''; e.style.transform = '';
+  }
+  showToast('Layout zurückgesetzt', 'success');
+}
+function setEditMode(on) {
+  editMode = on;
+  document.body.classList.toggle('bf-edit', on);
+  // Edit-Mode setzt alle verschiebbaren Panels sichtbar, damit man sie ziehen kann
+  for (const m of MOVABLE) {
+    const e = el(m.id); if (!e) continue;
+    e.classList.toggle('bf-movable', on);
+    if (on) { e.dataset.editLabel = m.label; if (e.style.display === 'none') e.dataset.bfHidden = '1', e.style.display = m.id === 'hud' ? 'flex' : 'block'; }
+    else if (e.dataset.bfHidden) { e.style.display = 'none'; delete e.dataset.bfHidden; }
+  }
+  window.bf.setInteractive(on || settingsOpen || mapOpen || !!featureOpen);
+}
+function makeDraggable(elm, id) {
+  let dragging = false, ox = 0, oy = 0;
+  elm.addEventListener('mousedown', (e) => {
+    if (!editMode) return;
+    // Buttons/Inputs nicht abfangen (man soll im Edit-Mode trotzdem nicht klicken können — alles als Drag werten)
+    e.preventDefault(); e.stopPropagation();
+    dragging = true; elm.classList.add('dragging');
+    const r = elm.getBoundingClientRect();
+    ox = e.clientX - r.left; oy = e.clientY - r.top;
+  });
+  window.addEventListener('mousemove', (e) => {
+    if (!dragging) return;
+    const x = Math.max(0, Math.min(window.innerWidth - 40, e.clientX - ox));
+    const y = Math.max(0, Math.min(window.innerHeight - 40, e.clientY - oy));
+    elm.style.left = x + 'px'; elm.style.top = y + 'px';
+    elm.style.right = 'auto'; elm.style.bottom = 'auto'; elm.style.transform = 'none';
+  });
+  window.addEventListener('mouseup', () => {
+    if (!dragging) return;
+    dragging = false; elm.classList.remove('dragging');
+    const p = loadPositions();
+    p[id] = { left: elm.style.left, top: elm.style.top };
+    savePositions(p);
+  });
+}
+function setupEditMode() {
+  for (const m of MOVABLE) { const e = el(m.id); if (e) makeDraggable(e, m.id); }
+  applySavedPositions();
+  el('editModeBtn').onclick = () => { setEditMode(true); toggleSettings(false); };
+  el('editDoneBtn').onclick = () => setEditMode(false);
+  el('editResetBtn').onclick = () => resetPositions();
+}
+
+init().then(() => setupEditMode());
