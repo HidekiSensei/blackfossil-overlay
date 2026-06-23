@@ -1,5 +1,5 @@
 import { Room, RoomEvent, Track, ParticipantEvent } from 'livekit-client';
-import { loadMapImage, drawFullMap, drawMinimap, drawHeatmap, normToWorld, worldToNorm, zoneAt, resetCal, solveAffine, getCal, setCalAffine, setZones, ZONES } from './map.js';
+import { loadMapImage, drawFullMap, drawMinimap, drawHeatmap, normToWorld, worldToNorm, zoneAt, resetCal, solveAffine, getCal, setCalAffine, setZones, ZONES, loadZoneLayer, setZoneLayer, isZoneLayerVisible } from './map.js';
 
 const el = (id) => document.getElementById(id);
 
@@ -182,8 +182,22 @@ async function init() {
   el('heatBtn').onclick = () => {
     heatmapMode = !heatmapMode;
     el('heatBtn').style.background = heatmapMode ? '#8b5cf6' : 'var(--panel)';
+    // Zonen-Layer-Toggles nur anbieten, wenn Heatmap aus ist
+    el('zoneLayers').style.display = heatmapMode ? 'none' : 'flex';
     renderBigMap();
   };
+
+  // Zonen-Layer-Toggles (Sanctuary/Patrol/Migration) — transparente Overlay-Bilder
+  for (const key of ['sanctuary', 'patrol', 'migration']) {
+    const btn = el('zl' + key[0].toUpperCase() + key.slice(1));
+    if (!btn) continue;
+    btn.onclick = () => {
+      const on = !isZoneLayerVisible(key);
+      setZoneLayer(key, on);
+      btn.style.background = on ? '#8b5cf6' : 'var(--panel)';
+      renderBigMap();
+    };
+  }
   el('calibCancelBtn').onclick = () => abortAutoCalib();
   el('calibBtn').onclick = () => toggleCalib();
   el('calibSolve').onclick = () => solveCalibration();
@@ -262,6 +276,8 @@ async function init() {
   await loadMapImage('assets/map.jpg');
   await loadServerCalibration();
   await loadServerZones();
+  // Zonen-Layer-Bilder vorladen (fehlende werden still ignoriert) → bei Toggle neu zeichnen
+  Promise.all(['sanctuary', 'patrol', 'migration'].map((k) => loadZoneLayer(k))).then(() => renderBigMap());
 
   // Karten-Interaktion
   const cv = el('bigMapCanvas');

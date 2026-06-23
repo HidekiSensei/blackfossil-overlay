@@ -678,18 +678,12 @@ app.post('/garage/unpark', express.json(), async (req, res) => {
       method: 'POST', headers: { Authorization: `Bearer ${PANEL_ADMIN_TOKEN}`, 'Content-Type': 'application/json' }, body: JSON.stringify(slot.snapshot),
     });
     if (!ur.ok) throw new Error(`Ausparken fehlgeschlagen (${ur.status})`);
-    // Bestätigen, dass aufgespielt wurde, BEVOR der Token gelöscht wird (200-ohne-Effekt vermeiden).
-    // Robust gegen Growth-Stop: auch akzeptieren, wenn sich der Dino messbar verändert hat
-    // (sonst bliebe der Token trotz erfolgreichem Aufspielen erhalten → Duplikation).
-    await new Promise((r) => setTimeout(r, 1500));
-    const after = (await fetchPlayers().catch(() => [])).find((p) => p.steamId === s.steamId);
-    const matchesToken = !!after && Math.abs((after.grow ?? 0) - (slot.snapshot?.grow ?? 0)) < 0.06;
-    const changed = !!after && Math.abs((after.grow ?? 0) - (meNow.grow ?? 0)) > 0.01;
-    if (!after || !(matchesToken || changed)) {
-      return res.status(409).json({ error: 'Aufspielen nicht bestätigt — Token bleibt erhalten. Im Spiel auf einem Dino sein und erneut versuchen.' });
-    }
-    // aus Garage entfernen — Datei NEU einlesen, damit parallele Schreiber
-    // (z.B. /park, swap) keine Änderungen verlieren / Token nicht duplizieren.
+    // Unpack ist ASYNCHRON (200 = "Unpack started", Aufspielen folgt ~1–3 s später).
+    // Sobald die API 200 liefert, gilt der Token als verbraucht → SOFORT entfernen. Die
+    // frühere 1500ms-Bestätigung war zu kurz fürs async-Aufspielen und schlug oft fehl →
+    // Token blieb trotz aufgespieltem Dino in der Garage → Duplikation. Bei API-Fehler
+    // (!ur.ok) wirft der throw oben und der Token bleibt unangetastet (kein Verlust).
+    // Datei NEU einlesen, damit parallele Schreiber (/park, swap) nichts verlieren.
     const fresh = readJson(GARAGE_FILE, {});
     fresh[s.steamId] = (fresh[s.steamId] ?? []).filter((x) => x.id !== slotId);
     writeJsonFile(GARAGE_FILE, fresh);

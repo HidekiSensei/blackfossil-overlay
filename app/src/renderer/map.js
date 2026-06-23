@@ -120,6 +120,35 @@ export function loadMapImage(src) {
   });
 }
 
+// ── Zonen-Layer (transparente PNGs in Kartengröße, deckungsgleich überlagert) ──
+// Geometrie steckt im Bild selbst → kein Polygon nötig. Default unsichtbar.
+export const ZONE_LAYERS = {
+  sanctuary: { img: null, ready: false, visible: false, src: 'assets/zone-sanctuary.png', label: '🛡️ Sanctuary' },
+  patrol:    { img: null, ready: false, visible: false, src: 'assets/zone-patrol.png',    label: '🐾 Patrol' },
+  migration: { img: null, ready: false, visible: false, src: 'assets/zone-migration.png', label: '🧭 Migration' },
+};
+
+export function loadZoneLayer(key) {
+  const L = ZONE_LAYERS[key];
+  if (!L) return Promise.resolve(false);
+  return new Promise((resolve) => {
+    const img = new Image();
+    img.onload = () => { L.img = img; L.ready = true; resolve(true); };
+    img.onerror = () => { L.ready = false; resolve(false); };
+    img.src = L.src;
+  });
+}
+
+export function setZoneLayer(key, on) { if (ZONE_LAYERS[key]) ZONE_LAYERS[key].visible = !!on; }
+export function isZoneLayerVisible(key) { return !!(ZONE_LAYERS[key] && ZONE_LAYERS[key].visible); }
+
+// Sichtbare Layer-Bilder deckungsgleich über die Karte zeichnen (volle Map-Ausdehnung).
+function drawZoneLayers(ctx, w, h) {
+  for (const L of Object.values(ZONE_LAYERS)) {
+    if (L.visible && L.ready) ctx.drawImage(L.img, 0, 0, w, h);
+  }
+}
+
 // Polygon-Punkte um ihren Schwerpunkt sortieren (für sauberes Füllen)
 function orderPolygon(points) {
   const cx = points.reduce((s, p) => s + p.x, 0) / points.length;
@@ -134,6 +163,7 @@ export function drawFullMap(view, players, waypoints = [], teleports = [], hover
   if (mapReady) ctx.drawImage(mapImg, 0, 0, w, h);
   else { ctx.fillStyle = '#15102a'; ctx.fillRect(0, 0, w, h); ctx.fillStyle = '#6b5b8c'; ctx.font = '16px system-ui'; ctx.textAlign = 'center'; ctx.fillText('Kartenbild fehlt (assets/map.jpg)', w/2, h/2); }
 
+  drawZoneLayers(ctx, w, h);
   drawZones(ctx, (nx, ny) => ({ px: nx * w, py: ny * h }));
   for (const wp of waypoints) {
     const { nx, ny } = worldToNorm(wp.x, wp.y);
