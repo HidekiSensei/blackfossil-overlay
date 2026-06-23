@@ -1423,8 +1423,16 @@ async function renderSkinEditor() {
     <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px"><span style="font-size:13px">Skin-Variation</span><input id="skVar" type="number" min="0" value="${skinState.skinVariation}" style="width:80px;padding:6px;border-radius:6px;border:1px solid var(--border);background:#120d24;color:#eee"></div>
     <div class="sec-title">Farben</div>${rows}
     <button id="skApply" style="width:100%;margin-top:14px">✅ Skin anwenden</button>
-    <button class="closeFeature secondary" style="width:100%;margin-top:8px">Schließen (F7)</button>`;
+    <div class="sec-title" style="margin-top:16px">📁 Vorlagen <span style="color:var(--muted);font-weight:400;font-size:11px">(dino-übergreifend)</span></div>
+    <div style="display:flex;gap:6px;margin:8px 0">
+      <input id="skTplName" placeholder="Vorlagen-Name…" maxlength="30" style="flex:1;min-width:0;padding:8px;border-radius:6px;border:1px solid var(--border);background:#120d24;color:#eee">
+      <button id="skTplSave" style="width:auto;padding:8px 12px">💾 Speichern</button>
+    </div>
+    <div id="skTplList"></div>
+    <button class="closeFeature secondary" style="width:100%;margin-top:12px">Schließen (F7)</button>`;
   panel.querySelector('.closeFeature').onclick = closeAllFeatures;
+  el('skTplSave').onclick = () => saveSkinTemplate();
+  renderSkinTemplates();
   updateSkinPreview();
   // Live-Anwendung: nach kurzer Pause automatisch übernehmen (kein Bestätigen nötig)
   panel.querySelectorAll('[data-col]').forEach((inp) => inp.oninput = () => { skinState.colors[inp.dataset.col] = hexToLin(inp.value); updateSkinPreview(); scheduleSkinApply(); });
@@ -1453,6 +1461,54 @@ async function applySkin(auto) {
     if (!auto) showToast('🎨 Skin angewendet!', 'success');
   } catch (err) { showToast(err.message, 'error'); }
   if (btn) { btn.disabled = false; btn.textContent = '✅ Skin anwenden'; }
+}
+
+// ── Skin-Vorlagen (lokal, dino-übergreifend) ────────────────────────────────
+function getSkinTemplates() { try { return JSON.parse(localStorage.getItem('bf-skin-templates')) || []; } catch { return []; } }
+function setSkinTemplates(list) { localStorage.setItem('bf-skin-templates', JSON.stringify(list)); }
+function saveSkinTemplate() {
+  if (!skinState) return;
+  const name = (el('skTplName').value || '').trim();
+  if (!name) { showToast('Vorlagen-Name fehlt', 'error'); return; }
+  const list = getSkinTemplates().filter((t) => t.name !== name); // gleicher Name → überschreiben
+  list.push({ name, skinVariation: skinState.skinVariation, patternIndex: skinState.patternIndex, themeIndex: skinState.themeIndex, colors: { ...skinState.colors } });
+  setSkinTemplates(list);
+  el('skTplName').value = '';
+  renderSkinTemplates();
+  showToast(`📁 Vorlage „${name}" gespeichert`, 'success');
+}
+function applySkinTemplate(t) {
+  if (!skinState) return;
+  // Nur Farben/Muster/Variation übernehmen → passt auf JEDEN Dino (nicht spezies-gebunden)
+  skinState.skinVariation = t.skinVariation || 0;
+  skinState.patternIndex = t.patternIndex || 0;
+  skinState.themeIndex = t.themeIndex || 0;
+  for (const [k] of SKIN_GROUPS) if (t.colors && t.colors[k]) skinState.colors[k] = t.colors[k].slice();
+  // UI angleichen
+  for (const [k] of SKIN_GROUPS) { const inp = document.querySelector(`#skinEditor [data-col="${k}"]`); if (inp) inp.value = linToHex(skinState.colors[k]); }
+  const sv = el('skVar'); if (sv) sv.value = skinState.skinVariation;
+  document.querySelectorAll('#skinEditor [data-pat]').forEach((x) => x.className = parseInt(x.dataset.pat) === skinState.patternIndex ? '' : 'secondary');
+  updateSkinPreview();
+  applySkin(); // direkt anwenden
+  showToast(`🎨 Vorlage „${t.name}" angewendet`, 'success');
+}
+function deleteSkinTemplate(name) { setSkinTemplates(getSkinTemplates().filter((t) => t.name !== name)); renderSkinTemplates(); }
+function renderSkinTemplates() {
+  const box = el('skTplList'); if (!box) return;
+  const list = getSkinTemplates();
+  box.innerHTML = list.length ? '' : '<div style="color:var(--muted);font-size:12px">Noch keine Vorlagen gespeichert.</div>';
+  for (const t of list) {
+    const row = document.createElement('div');
+    row.style.cssText = 'display:flex;gap:6px;align-items:center;margin-bottom:5px';
+    const ap = document.createElement('button');
+    ap.textContent = `🎨 ${t.name}`; ap.style.cssText = 'flex:1;text-align:left;padding:7px 10px';
+    ap.onclick = () => applySkinTemplate(t);
+    const del = document.createElement('button');
+    del.className = 'secondary'; del.textContent = '🗑'; del.style.cssText = 'width:auto;padding:6px 10px';
+    del.onclick = () => deleteSkinTemplate(t.name);
+    row.append(ap, del);
+    box.appendChild(row);
+  }
 }
 
 // ── Dino-Markt (Karten-Grid + Angebot erstellen) ───────────────────────────
