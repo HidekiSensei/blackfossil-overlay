@@ -143,7 +143,7 @@ function updateHud(d) {
   if (d.name) document.getElementById('hudName').textContent = d.name;
   if (typeof d.points === 'number') document.getElementById('hudPoints').textContent = `${d.points.toLocaleString('de-DE')} Pkt.`;
   if (d.tier) setTier(d.tier);
-  if (d.primes) checkPrimes(d.primes);
+  checkPrimes(d.primes, d.dino);   // immer aufrufen → Offline/Dino-Wechsel resettet die Basis
 }
 async function pollHud() {
   if (!sessionToken) return;
@@ -177,6 +177,7 @@ async function init() {
   el('voiceWarn').onclick = () => toggleConnect();
   el('voiceSearch').oninput = (e) => { voiceSearch = e.target.value; renderVoiceUsers(); };
   el('micBtn').onclick = () => toggleMic();
+  setMicBtn();
   el('logoutBtn').onclick = () => window.bf.logout();
   el('closeBtn').onclick = () => toggleSettings(false);
   el('heatBtn').onclick = () => {
@@ -1267,8 +1268,12 @@ const PRIME_LABELS = [
   'Spezies-Bonus (auto)',
 ];
 let prevPrimes = null;
-function checkPrimes(primes) {
-  if (!Array.isArray(primes)) return;
+let primeDino = null;   // Dino, für den prevPrimes gilt — bei Wechsel neu baselinen
+// Prüft auf neu erfüllte Prime-Bedingungen und meldet sie per Toast.
+// Wird aus pollHud (6s) UND updateDinoInfo (2s) aufgerufen — geteilter State, kein Doppel-Toast.
+function checkPrimes(primes, dino) {
+  if (!Array.isArray(primes)) { prevPrimes = null; primeDino = null; return; }   // offline → Basis zurücksetzen
+  if (dino !== primeDino) { prevPrimes = primes.slice(); primeDino = dino; return; } // neuer Dino → neu baselinen, KEIN Toast
   if (prevPrimes) primes.forEach((v, i) => { if (v && !prevPrimes[i]) showToast(`✅ Elder-Bedingung erfüllt: ${PRIME_LABELS[i]}`, 'elder'); });
   prevPrimes = primes.slice();
 }
@@ -1671,9 +1676,11 @@ async function updateDinoInfo() {
     el('di-elder').innerHTML = '<span style="color:var(--muted);font-size:12px">—</span>';
     Object.keys(VITAL_TOKEN).forEach((k) => { const c = el(`di-tok-${k}`); if (c) c.innerHTML = ''; });
     DI_STATS.forEach((s) => { el(`di-${s.key}-f`).style.width = '0%'; el(`di-${s.key}-v`).textContent = '—'; });
+    checkPrimes(null);   // offline → Prime-Basis zurücksetzen
     return;
   }
   el('di-elder').innerHTML = elderHTML(d.primes);
+  checkPrimes(d.primes, d.dino);   // schnellere Benachrichtigung solange F5 offen ist (2s)
   renderDinoTokens(d.tokens);
   el('di-dino').textContent = d.dino || 'Dino';
   el('di-name').textContent = `${d.gender || ''} · ${d.name || ''}`;
@@ -1803,17 +1810,24 @@ async function connect({ token, url }) {
 }
 
 async function toggleConnect() {
-  if (room) { await room.disconnect(); room = null; micEnabled = false; voiceConnected = false; el('connBtn').textContent = 'Verbinden'; setMicState('disconnected'); updateVoiceWarn(); }
+  if (room) { await room.disconnect(); room = null; micEnabled = false; voiceConnected = false; el('connBtn').textContent = 'Verbinden'; setMicState('disconnected'); setMicBtn(); updateVoiceWarn(); }
   else {
     if (!me) { showToast('Voice nur auf dem BlackFossil-Server verfügbar', 'error'); return; }
     const s = await window.bf.getSession(); if (s) connectWithSession(s);
   }
 }
 
+// Button-Text spiegelt den AKTUELLEN Status (nicht die Aktion) + gleicher Stil wie Deafen.
+function setMicBtn() {
+  const b = el('micBtn'); if (!b) return;
+  b.textContent = micEnabled ? '🎤 Mikro an' : '🔇 Mikro aus';
+  b.classList.toggle('secondary', !micEnabled);
+}
+
 async function toggleMic() {
   if (!room) return;
   micEnabled = !micEnabled;
-  el('micBtn').textContent = micEnabled ? 'Mikro aus' : 'Mikro an';
+  setMicBtn();
   await applyMic();
 }
 
