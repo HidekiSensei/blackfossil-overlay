@@ -282,7 +282,10 @@ function openOverlay() {
     x: bounds.x, y: bounds.y, width: bounds.width, height: bounds.height,
     transparent: true, frame: false, resizable: false, movable: false,
     skipTaskbar: true, hasShadow: false, fullscreenable: false, show: false, icon: appIcon(),
-    webPreferences: { preload: path.join(__dirname, 'preload.js'), contextIsolation: true },
+    // backgroundThrottling:false → Poll (/positions) läuft auch weiter, wenn das Fenster
+    // beim Raustabben versteckt wird. Sonst drosselt Chromium den Timer → Overlay-Aktivität
+    // veraltet → Overlay-Pflicht kickt fälschlich.
+    webPreferences: { preload: path.join(__dirname, 'preload.js'), contextIsolation: true, backgroundThrottling: false },
   });
   overlayWindow.setAlwaysOnTop(true, 'screen-saver');
   overlayWindow.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: true });
