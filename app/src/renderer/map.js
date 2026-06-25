@@ -174,8 +174,17 @@ export function drawFullMap(view, players, waypoints = [], teleports = [], hover
     const { nx, ny } = worldToNorm(t.x, t.y);
     drawTeleport(ctx, nx * w, ny * h, t.number, t.id === hoveredTp, iconScale);
   }
-  // Nur die eigene Position anzeigen (keine fremden Spielerpunkte)
+  // Eigene Position + Gruppen-Mitglieder (gleiche groupId), farbig
   const self = players.find((p) => p.isYou);
+  if (self) {
+    for (const p of players) {
+      if (p.isYou || p.isDead) continue;
+      const inGroup = (self.groupId && p.groupId === self.groupId) || p.ovgroup;
+      if (!inGroup) continue;
+      const { nx, ny } = worldToNorm(p.x, p.y);
+      drawGroupMember(ctx, nx * w, ny * h, p, iconScale);
+    }
+  }
   if (self && !self.isDead) {
     const { nx, ny } = worldToNorm(self.x, self.y);
     drawPlayer(ctx, nx * w, ny * h, self, iconScale);
@@ -265,6 +274,21 @@ export function drawMinimap(view, players, me, speakRange = 0) {
     ctx.restore();
   }
 
+  // Gruppen-Mitglieder (gleiche groupId), in den Kreis geclippt
+  if (me) {
+    ctx.save();
+    ctx.beginPath(); ctx.arc(w/2, h/2, w/2 - 1, 0, Math.PI*2); ctx.clip();
+    for (const p of players) {
+      if (p.isYou || p.isDead) continue;
+      const inGroup = (me.groupId && p.groupId === me.groupId) || p.ovgroup;
+      if (!inGroup) continue;
+      const { nx, ny } = worldToNorm(p.x, p.y);
+      const { px, py } = toPx(nx, ny);
+      drawGroupMember(ctx, px, py, p, 0.9);
+    }
+    ctx.restore();
+  }
+
   // eigener Punkt immer in der Mitte
   if (me) drawPlayer(ctx, w/2, h/2, { ...me, isYou: true }, 1);
 
@@ -295,6 +319,28 @@ function drawZones(ctx, project) {
   }
 }
 
+// Deterministische Farbe je Gruppen-Mitglied (gleiche Farbe auch im Gruppen-Panel)
+const GROUP_COLORS = ['#2dd4bf', '#f59e0b', '#60a5fa', '#f472b6', '#a3e635', '#fb923c', '#22d3ee', '#c084fc'];
+export function groupColorFor(id) {
+  let h = 0; const s = String(id || '');
+  for (let i = 0; i < s.length; i++) h = (h * 31 + s.charCodeAt(i)) >>> 0;
+  return GROUP_COLORS[h % GROUP_COLORS.length];
+}
+function drawGroupMember(ctx, px, py, p, scale) {
+  const r = 5 * scale, col = groupColorFor(p.steamId);
+  if (typeof p.heading === 'number') {
+    const a = (p.heading - 90) * Math.PI / 180;
+    ctx.strokeStyle = col; ctx.lineWidth = 2 * scale;
+    ctx.beginPath(); ctx.moveTo(px, py); ctx.lineTo(px + Math.cos(a) * r * 2.4, py + Math.sin(a) * r * 2.4); ctx.stroke();
+  }
+  ctx.beginPath(); ctx.arc(px, py, r, 0, Math.PI * 2); ctx.fillStyle = col; ctx.fill();
+  ctx.lineWidth = 1.5 * scale; ctx.strokeStyle = 'rgba(0,0,0,0.6)'; ctx.stroke();
+  if (p.name) {
+    ctx.font = `bold ${11 * scale}px system-ui`; ctx.textAlign = 'center'; ctx.textBaseline = 'bottom';
+    ctx.strokeStyle = 'rgba(0,0,0,0.75)'; ctx.lineWidth = 3 * scale; ctx.strokeText(p.name, px, py - r - 2 * scale);
+    ctx.fillStyle = col; ctx.fillText(p.name, px, py - r - 2 * scale);
+  }
+}
 function drawPlayer(ctx, px, py, p, scale) {
   const r = 5 * scale;
   // Blickrichtungs-Pfeil

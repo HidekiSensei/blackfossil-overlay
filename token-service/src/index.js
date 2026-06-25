@@ -234,6 +234,7 @@ app.get('/positions', async (req, res) => {
     });
     if (!r.ok) throw new Error(`Game-Server HTTP ${r.status}`);
     const data = await r.json();
+    const ovMembers = new Set(ovMembersOf(readOv(), payload.steamId));
     const players = (data.Players ?? []).map((p) => ({
       steamId: p.steamId,
       name: p.playerName,
@@ -247,6 +248,7 @@ app.get('/positions', async (req, res) => {
       groupId: p.groupId ?? null,
       grow: p.grow ?? null,
       partnerSteamId: p.partnerSteamId ?? null,
+      ovgroup: ovMembers.has(p.steamId) && p.steamId !== payload.steamId,
     }));
     // Ausstehende Overlay-Toasts für diesen Spieler ausliefern + leeren
     let toasts = [];
@@ -719,6 +721,143 @@ app.post('/admin/gift', express.json(), async (req, res) => {
     if (type === 'points') addPoints(sid, amt); else addToken(sid, type, amt);
   }
   res.json({ ok: true, affected: steamIds.length, type, amount: amt });
+});
+
+// Eigene Support-Tickets (Status, Bearbeiter, neue-Nachricht-Flag) fürs Overlay
+app.get('/me/tickets', async (req, res) => {
+  const s = sessionFrom(req);
+  if (!s) return res.status(401).json({ error: 'Keine Session' });
+  const all = readJson(`${BOT_DATA_DIR}/tickets.json`, {});
+  const mine = Object.entries(all).filter(([, m]) => m && m.openerId === s.discordId);
+  let nameOf = () => null;
+  try {
+    if (DISCORD_BOT_TOKEN && DISCORD_GUILD_ID && mine.some(([, m]) => m.claimedBy)) {
+      const members = await guildMembers();
+      const map = new Map(members.filter((x) => x.user).map((x) => [x.user.id, x.nick || x.user.global_name || x.user.username]));
+      nameOf = (id) => map.get(id) || null;
+    }
+  } catch {}
+  const tickets = mine.map(([channelId, m]) => ({
+    channelId,
+    ticketId: m.ticketId,
+    category: m.category,
+    status: m.claimedBy ? 'in_bearbeitung' : 'offen',
+    handler: m.claimedBy ? nameOf(m.claimedBy) : null,
+    createdAt: m.createdAt,
+    lastMessageAt: m.lastMessageAt || m.createdAt || 0,
+    lastFromOther: m.lastMessageBy ? m.lastMessageBy !== s.discordId : false,
+  })).sort((a, b) => (b.lastMessageAt || 0) - (a.lastMessageAt || 0));
+  res.json({ tickets });
+});
+
+// Discord-Scheduled-Events, an denen der User „interessiert" ist (mit 60s-Cache)
+let _evCache = { at: 0, events: null };
+const _evUsers = new Map(); // eventId → { at, ids:Set }
+async function guildEvents() {
+  if (_evCache.events && Date.now() - _evCache.at < 60000) return _evCache.events;
+  const ev = await discordApi(`/guilds/${DISCORD_GUILD_ID}/scheduled-events?with_user_count=true`);
+  _evCache = { at: Date.now(), events: ev };
+  return ev;
+}
+async function eventUserIds(eventId) {
+  const c = _evUsers.get(eventId);
+  if (c && Date.now() - c.at < 60000) return c.ids;
+  const users = await discordApi(`/guilds/${DISCORD_GUILD_ID}/scheduled-events/${eventId}/users?limit=100`);
+  const ids = new Set(users.map((u) => u.user?.id).filter(Boolean));
+  _evUsers.set(eventId, { at: Date.now(), ids });
+  return ids;
+}
+app.get('/me/events', async (req, res) => {
+  const s = sessionFrom(req);
+  if (!s) return res.status(401).json({ error: 'Keine Session' });
+  if (!DISCORD_BOT_TOKEN || !DISCORD_GUILD_ID) return res.json({ events: [] });
+  try {
+    const events = await guildEvents();
+    const out = [];
+    for (const ev of events) {
+      let interested = false;
+      try { interested = (await eventUserIds(ev.id)).has(s.discordId); } catch {}
+      if (interested) out.push({ id: ev.id, name: ev.name, start: ev.scheduled_start_time, description: (ev.description || '').slice(0, 200), userCount: ev.user_count ?? null });
+    }
+    out.sort((a, b) => new Date(a.start || 0) - new Date(b.start || 0));
+    res.json({ events: out });
+  } catch (e) { res.status(502).json({ error: e.message }); }
+});
+
+// ── Overlay-Gruppen (diät-übergreifend, rein overlay-verwaltet) ──────────────
+const OVGROUPS_FILE = `${BOT_DATA_DIR}/ovgroups.json`;
+const DIET = {
+  Tyrannosaurus: 'carni', Rex: 'carni', Allosaurus: 'carni', Carnotaurus: 'carni', Ceratosaurus: 'carni', Deinosuchus: 'carni', Dilophosaurus: 'carni', Herrerasaurus: 'carni', Omniraptor: 'carni', Pteranodon: 'carni', Troodon: 'carni',
+  Triceratops: 'herbi', Stegosaurus: 'herbi', Diabloceratops: 'herbi', Tenontosaurus: 'herbi', Maiasaura: 'herbi', Maiasaurus: 'herbi', Pachycephalosaurus: 'herbi', Dryosaurus: 'herbi', Hypsilophodon: 'herbi',
+  Gallimimus: 'both', Beipiaosaurus: 'both',
+};
+const dietOf = (dino) => DIET[dino] || 'both';
+const sameDiet = (a, b) => { const x = dietOf(a), y = dietOf(b); return x === y || x === 'both' || y === 'both'; };
+function readOv() { return readJson(OVGROUPS_FILE, { groups: {}, invites: [] }); }
+function writeOv(d) { writeJsonFile(OVGROUPS_FILE, d); }
+function myOvGroupId(ov, steamId) { for (const [gid, g] of Object.entries(ov.groups || {})) if ((g.members || []).includes(steamId)) return gid; return null; }
+function ovMembersOf(ov, steamId) { const gid = myOvGroupId(ov, steamId); return gid ? (ov.groups[gid].members || []) : []; }
+
+app.get('/ovgroup', async (req, res) => {
+  const s = sessionFrom(req); if (!s) return res.status(401).json({ error: 'Keine Session' });
+  const ov = readOv();
+  const gid = myOvGroupId(ov, s.steamId);
+  let players = []; try { players = await fetchPlayers(); } catch {}
+  const pName = (sid) => { const p = players.find((x) => x.steamId === sid); return p ? p.playerName : sid; };
+  const members = gid ? (ov.groups[gid].members || []).map((sid) => ({ steamId: sid, name: pName(sid), me: sid === s.steamId })) : [];
+  const invites = (ov.invites || []).filter((i) => i.to === s.steamId).map((i) => ({ gid: i.gid, fromName: i.fromName || pName(i.from) }));
+  res.json({ groupId: gid, members, invites });
+});
+
+app.get('/ovgroup/invitable', async (req, res) => {
+  const s = sessionFrom(req); if (!s) return res.status(401).json({ error: 'Keine Session' });
+  let players = []; try { players = await fetchPlayers(); } catch (e) { return res.status(502).json({ error: e.message }); }
+  const me = players.find((p) => p.steamId === s.steamId);
+  if (!me) return res.json({ players: [] });
+  const ov = readOv(); const mine = new Set(ovMembersOf(ov, s.steamId));
+  const out = players
+    .filter((p) => p.steamId !== s.steamId && !p.isDead && !mine.has(p.steamId) && sameDiet(me.dinoClass, p.dinoClass))
+    .map((p) => ({ steamId: p.steamId, name: p.playerName, dino: p.dinoClass }))
+    .sort((a, b) => a.name.localeCompare(b.name));
+  res.json({ players: out });
+});
+
+app.post('/ovgroup/invite', express.json(), async (req, res) => {
+  const s = sessionFrom(req); if (!s) return res.status(401).json({ error: 'Keine Session' });
+  const to = String(req.body?.toSteamId || ''); if (!/^\d{17}$/.test(to)) return res.status(400).json({ error: 'Ungültige SteamID' });
+  let players = []; try { players = await fetchPlayers(); } catch (e) { return res.status(502).json({ error: e.message }); }
+  const me = players.find((p) => p.steamId === s.steamId), tp = players.find((p) => p.steamId === to);
+  if (!me) return res.status(409).json({ error: 'Du bist nicht im Spiel.' });
+  if (!tp) return res.status(409).json({ error: 'Spieler ist nicht im Spiel.' });
+  if (!sameDiet(me.dinoClass, tp.dinoClass)) return res.status(400).json({ error: 'Andere Diät — Einladung nicht möglich.' });
+  const ov = readOv();
+  let gid = myOvGroupId(ov, s.steamId);
+  if (!gid) { gid = genId(); ov.groups[gid] = { members: [s.steamId] }; }
+  ov.invites = (ov.invites || []).filter((i) => !(i.to === to && i.gid === gid));
+  ov.invites.push({ to, from: s.steamId, fromName: me.playerName, gid, at: Date.now() });
+  writeOv(ov);
+  res.json({ ok: true });
+});
+
+app.post('/ovgroup/accept', express.json(), (req, res) => {
+  const s = sessionFrom(req); if (!s) return res.status(401).json({ error: 'Keine Session' });
+  const gid = String(req.body?.gid || '');
+  const ov = readOv();
+  const inv = (ov.invites || []).find((i) => i.to === s.steamId && i.gid === gid);
+  if (!inv || !ov.groups[gid]) return res.status(404).json({ error: 'Einladung nicht gefunden' });
+  const old = myOvGroupId(ov, s.steamId);
+  if (old && old !== gid) { ov.groups[old].members = ov.groups[old].members.filter((x) => x !== s.steamId); if (!ov.groups[old].members.length) delete ov.groups[old]; }
+  if (!ov.groups[gid].members.includes(s.steamId)) ov.groups[gid].members.push(s.steamId);
+  ov.invites = ov.invites.filter((i) => !(i.to === s.steamId && i.gid === gid));
+  writeOv(ov);
+  res.json({ ok: true });
+});
+
+app.post('/ovgroup/leave', (req, res) => {
+  const s = sessionFrom(req); if (!s) return res.status(401).json({ error: 'Keine Session' });
+  const ov = readOv(); const gid = myOvGroupId(ov, s.steamId);
+  if (gid) { ov.groups[gid].members = ov.groups[gid].members.filter((x) => x !== s.steamId); if (ov.groups[gid].members.length <= 1) delete ov.groups[gid]; ov.invites = (ov.invites || []).filter((i) => i.from !== s.steamId); writeOv(ov); }
+  res.json({ ok: true });
 });
 
 // Karten-Daten aus einem Garage-/Markt-Slot (Farben, Vitals, Mutationen)

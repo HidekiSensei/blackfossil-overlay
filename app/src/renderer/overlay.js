@@ -1,5 +1,5 @@
 import { Room, RoomEvent, Track, ParticipantEvent } from 'livekit-client';
-import { loadMapImage, drawFullMap, drawMinimap, drawHeatmap, normToWorld, worldToNorm, zoneAt, resetCal, solveAffine, getCal, setCalAffine, setZones, ZONES, loadZoneLayer, setZoneLayer, isZoneLayerVisible } from './map.js';
+import { loadMapImage, drawFullMap, drawMinimap, drawHeatmap, normToWorld, worldToNorm, zoneAt, resetCal, solveAffine, getCal, setCalAffine, setZones, ZONES, loadZoneLayer, setZoneLayer, isZoneLayerVisible, groupColorFor } from './map.js';
 
 const el = (id) => document.getElementById(id);
 
@@ -576,6 +576,26 @@ function renderBigMap() {
   else drawFullMap(view, players, waypoints, teleports, hoveredTp, 1 / mapZoom);
   ctx.setTransform(1, 0, 0, 1, 0, 0);
   if (calibMode) drawCalibOverlay(ctx, cv.width, cv.height);
+  renderMapGroup();
+}
+
+// Gruppe unten-rechts auf der großen Karte (Mitglieder mit Map-Farbe + Distanz)
+function renderMapGroup() {
+  const box = el('mapGroup'); if (!box) return;
+  const myG = me && me.groupId;
+  const members = players.filter((p) => !p.isYou && !p.isDead && ((myG && p.groupId === myG) || p.ovgroup));
+  if (!members.length) { box.style.display = 'none'; return; }
+  members.sort((a, b) => Math.hypot(a.x - me.x, a.y - me.y) - Math.hypot(b.x - me.x, b.y - me.y));
+  box.style.display = 'block';
+  box.innerHTML = `<div style="font-weight:700;margin-bottom:6px">👥 Gruppe (${members.length})</div>` +
+    members.map((p) => {
+      const col = groupColorFor(p.steamId);
+      const dist = `${Math.round(Math.hypot(p.x - me.x, p.y - me.y) / UNITS_PER_M)} m`;
+      return `<div style="display:flex;align-items:center;gap:7px;padding:3px 0;font-size:12px">
+        <span style="width:9px;height:9px;border-radius:50%;background:${col};flex:none"></span>
+        <span style="flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${escapeHtml(p.name || '?')}</span>
+        <span style="color:var(--muted);flex:none">${dist}</span></div>`;
+    }).join('');
 }
 
 // Bildschirm-Event → normalisierte Kartenkoordinate (berücksichtigt Zoom/Pan)
@@ -1421,8 +1441,8 @@ function toggleFeature(id) {
   if (id === 'dinoInfo') renderDinoInfo();
   else if (id === 'garage') renderGarage();
   else if (id === 'market') renderMarket();
-  else if (id === 'group') renderGroup();
-  else if (id === 'profile') renderProfile();
+  else if (id === 'group') { ovInviteOpen = false; renderGroup(); loadOvGroup(); }
+  else if (id === 'profile') { renderProfile(); loadMyTickets(); loadMyEvents(); }
   else if (id === 'lexikon') renderLexikon();
   else if (id === 'skinEditor') renderSkinEditor();
   el(id).style.display = 'block';
@@ -1436,11 +1456,16 @@ function closeAllFeatures(skipInteractive) {
 }
 
 // ── Gruppen-Ansicht (Mitglieder mit gleicher groupId, Partner + Distanz) ─────
+let ovGroupState = { groupId: null, members: [], invites: [] };
+let ovInvitable = [];
+let ovInviteOpen = false;
+const ovInviteSeen = new Set();
+
 function renderGroup() {
   const panel = el('group');
   const myG = me && me.groupId;
-  const members = (myG && players.length) ? players.filter((p) => p.groupId === myG) : (me ? [me] : []);
-  // eigener Eintrag zuerst, Rest nach Distanz
+  let members = players.filter((p) => p.isYou || (myG && p.groupId === myG) || p.ovgroup);
+  if (!members.length && me) members = [me];
   members.sort((a, b) => {
     if (a.isYou) return -1; if (b.isYou) return 1;
     if (!me) return 0;
@@ -1451,14 +1476,14 @@ function renderGroup() {
   if (!me) {
     body = '<p>Du bist gerade nicht auf dem Server.</p>';
   } else if (members.length <= 1) {
-    body = '<p style="color:var(--muted)">Du bist in keiner Gruppe.<br>Bilde im Spiel eine Gruppe — deine Mitglieder erscheinen dann hier mit Dino, Wachstum & Entfernung.</p>';
+    body = '<p style="color:var(--muted)">Noch keine Gruppe. Bilde eine im Spiel — oder lade unten Spieler <b>gleicher Diät</b> in eine Overlay-Gruppe ein (auch andere Spezies).</p>';
   } else {
     body = members.map((p) => {
       const you = !!p.isYou;
       const partner = me.partnerSteamId && p.steamId === me.partnerSteamId;
       const grow = p.grow != null ? `${Math.round(p.grow * 100)}%` : '';
       const dist = (!you && me) ? `${Math.round(Math.hypot(p.x - me.x, p.y - me.y) / UNITS_PER_M)} m` : '';
-      const tag = you ? ' <span style="color:var(--accent-2)">(Du)</span>' : (partner ? ' 💞' : '');
+      const tag = you ? ' <span style="color:var(--accent-2)">(Du)</span>' : (partner ? ' 💞' : (p.ovgroup ? ' 🔗' : ''));
       return `<div style="display:flex;justify-content:space-between;align-items:center;gap:10px;padding:8px 10px;margin-bottom:6px;border-radius:9px;background:${you ? 'rgba(139,92,246,0.18)' : 'rgba(255,255,255,0.04)'};border:1px solid ${you ? 'var(--accent)' : 'transparent'}">
         <span style="font-weight:600;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${escapeHtml(p.name || '?')}${tag}</span>
         <span style="color:var(--muted);font-size:12px;flex:none">${escapeHtml(p.dino || '—')}${grow ? ' · ' + grow : ''}</span>
@@ -1467,10 +1492,67 @@ function renderGroup() {
     }).join('');
   }
 
+  const inv = (ovGroupState.invites || []).map((i) => `<div style="display:flex;justify-content:space-between;align-items:center;gap:8px;padding:6px 8px;margin-bottom:5px;background:rgba(34,197,94,0.12);border:1px solid var(--border);border-radius:8px">
+    <span style="font-size:12px">📨 Einladung von <b>${escapeHtml(i.fromName || '?')}</b></span>
+    <button data-acc="${i.gid}" style="width:auto;padding:5px 10px;font-size:12px">Beitreten</button></div>`).join('');
+  let invitable = '';
+  if (ovInviteOpen) {
+    invitable = ovInvitable.length
+      ? ovInvitable.map((p) => `<div style="display:flex;justify-content:space-between;align-items:center;gap:8px;padding:6px 8px;margin-bottom:4px;background:rgba(255,255,255,0.04);border-radius:8px">
+          <span style="font-size:12px;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${escapeHtml(p.name)} <span style="color:var(--muted)">· ${escapeHtml(p.dino)}</span></span>
+          <button data-inv="${p.steamId}" style="width:auto;padding:5px 10px;font-size:12px">＋ Einladen</button></div>`).join('')
+      : '<div style="color:var(--muted);font-size:12px">Keine einladbaren Spieler (gleiche Diät, online).</div>';
+  }
+
   panel.innerHTML = `<h2>👥 Gruppe ${members.length > 1 ? `<span style="font-size:13px;color:var(--muted);font-weight:400">· ${members.length} Mitglieder</span>` : ''}</h2>
-    <div style="max-height:50vh;overflow:auto">${body}</div>
-    <button class="closeFeature secondary" style="margin-top:10px">Schließen</button>`;
+    <div style="max-height:36vh;overflow:auto">${body}</div>
+    ${inv ? `<div class="sec-title" style="margin-top:12px">📨 Einladungen</div>${inv}` : ''}
+    <div class="sec-title" style="margin-top:12px">🔗 Overlay-Gruppe <span style="color:var(--muted);font-weight:400;font-size:11px">(gleiche Diät, übers Overlay)</span></div>
+    <button id="ovInviteToggle" style="width:100%;margin:6px 0">${ovInviteOpen ? '▲ Einladen schließen' : '➕ Spieler einladen'}</button>
+    ${invitable}
+    ${ovGroupState.groupId ? '<button id="ovLeave" class="secondary" style="width:100%;margin-top:6px">Overlay-Gruppe verlassen</button>' : ''}
+    <button class="closeFeature secondary" style="margin-top:12px">Schließen</button>`;
   panel.querySelector('.closeFeature').onclick = () => closeAllFeatures();
+  const tgl = el('ovInviteToggle'); if (tgl) tgl.onclick = () => { ovInviteOpen = !ovInviteOpen; if (ovInviteOpen) loadOvInvitable(); else renderGroup(); };
+  panel.querySelectorAll('[data-acc]').forEach((b) => { b.onclick = () => ovAccept(b.dataset.acc); });
+  panel.querySelectorAll('[data-inv]').forEach((b) => { b.onclick = () => ovInvite(b.dataset.inv); });
+  const lv = el('ovLeave'); if (lv) lv.onclick = () => ovLeave();
+}
+
+async function loadOvGroup() {
+  if (!sessionToken) return;
+  try {
+    const r = await fetch(`${config.tokenBase}/ovgroup`, { headers: { Authorization: `Bearer ${sessionToken}` } });
+    if (!r.ok) return;
+    ovGroupState = await r.json();
+    for (const i of (ovGroupState.invites || [])) {
+      if (!ovInviteSeen.has(i.gid)) { ovInviteSeen.add(i.gid); showToast(`📨 Gruppen-Einladung von ${i.fromName || '?'}`, 'success'); }
+    }
+    if (featureOpen === 'group') renderGroup();
+  } catch {}
+}
+async function loadOvInvitable() {
+  if (!sessionToken) return;
+  try { const r = await fetch(`${config.tokenBase}/ovgroup/invitable`, { headers: { Authorization: `Bearer ${sessionToken}` } }); if (r.ok) ovInvitable = (await r.json()).players || []; } catch {}
+  if (featureOpen === 'group') renderGroup();
+}
+async function ovInvite(sid) {
+  try {
+    const r = await fetch(`${config.tokenBase}/ovgroup/invite`, { method: 'POST', headers: { Authorization: `Bearer ${sessionToken}`, 'Content-Type': 'application/json' }, body: JSON.stringify({ toSteamId: sid }) });
+    const d = await r.json(); if (!r.ok) throw new Error(d.error || 'Fehler');
+    showToast('📨 Einladung gesendet', 'success');
+    ovInvitable = ovInvitable.filter((p) => p.steamId !== sid); if (featureOpen === 'group') renderGroup();
+  } catch (e) { showToast(e.message, 'error'); }
+}
+async function ovAccept(gid) {
+  try {
+    const r = await fetch(`${config.tokenBase}/ovgroup/accept`, { method: 'POST', headers: { Authorization: `Bearer ${sessionToken}`, 'Content-Type': 'application/json' }, body: JSON.stringify({ gid }) });
+    const d = await r.json(); if (!r.ok) throw new Error(d.error || 'Fehler');
+    showToast('✅ Overlay-Gruppe beigetreten', 'success'); loadOvGroup();
+  } catch (e) { showToast(e.message, 'error'); }
+}
+async function ovLeave() {
+  try { await fetch(`${config.tokenBase}/ovgroup/leave`, { method: 'POST', headers: { Authorization: `Bearer ${sessionToken}` } }); showToast('Overlay-Gruppe verlassen', ''); loadOvGroup(); } catch {}
 }
 
 // ── Profil / persönliche Stats (aus /me) ─────────────────────────────────────
@@ -1525,8 +1607,73 @@ function renderProfile() {
     </div>
     ${dinoBlock}
     <div style="margin-top:10px;font-size:12px;color:var(--muted)">🎟️ Token: <span style="color:#eee">${escapeHtml(tokenList)}</span></div>
-    <button class="closeFeature secondary" style="margin-top:12px">Schließen</button>`;
+    <div style="display:flex;gap:12px;margin-top:16px">
+      <div style="flex:1;min-width:0">
+        <div class="sec-title" style="margin-bottom:6px">📅 Events</div>
+        ${profileEventsHtml()}
+      </div>
+      <div style="flex:1;min-width:0">
+        <div class="sec-title" style="margin-bottom:6px">🎫 Tickets</div>
+        ${profileTicketsHtml()}
+      </div>
+    </div>
+    <button class="closeFeature secondary" style="margin-top:14px">Schließen</button>`;
   close();
+}
+
+// ── Events & Tickets (Player-Info) ───────────────────────────────────────────
+let myEvents = [];
+let myTickets = [];
+function fmtEventTime(iso) {
+  if (!iso) return '';
+  try { return new Date(iso).toLocaleString('de-DE', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' }); } catch { return ''; }
+}
+function profileEventsHtml() {
+  if (!myEvents.length) return '<div style="color:var(--muted);font-size:12px">Keine Events, für die du dich interessierst.</div>';
+  return myEvents.map((e) => `<div style="padding:7px 9px;margin-bottom:5px;background:rgba(255,255,255,0.04);border-radius:8px">
+    <div style="font-size:13px;font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${escapeHtml(e.name || '?')}</div>
+    <div style="font-size:11px;color:var(--accent-2)">🗓️ ${fmtEventTime(e.start)}${e.userCount != null ? ` · ${e.userCount} interessiert` : ''}</div>
+  </div>`).join('');
+}
+function profileTicketsHtml() {
+  if (!myTickets.length) return '<div style="color:var(--muted);font-size:12px">Keine offenen Tickets.</div>';
+  return myTickets.map((t) => {
+    const st = t.status === 'in_bearbeitung' ? `<span style="color:#22c55e">In Bearbeitung${t.handler ? ' · ' + escapeHtml(t.handler) : ''}</span>` : '<span style="color:#f59e0b">Offen</span>';
+    const neu = t.lastFromOther ? ' <span style="background:rgba(34,197,94,0.2);color:#86efac;border-radius:5px;padding:1px 6px;font-size:10px">💬 neue Antwort</span>' : '';
+    return `<div style="padding:7px 9px;margin-bottom:5px;background:rgba(255,255,255,0.04);border-radius:8px">
+      <div style="font-size:13px;font-weight:600">#${t.ticketId} · ${escapeHtml(t.category || '')}${neu}</div>
+      <div style="font-size:11px">${st}</div>
+    </div>`;
+  }).join('');
+}
+function ticketSeen() { try { return JSON.parse(localStorage.getItem('bf-ticket-seen')) || {}; } catch { return {}; } }
+function setTicketSeen(o) { localStorage.setItem('bf-ticket-seen', JSON.stringify(o)); }
+async function loadMyTickets() {
+  if (!sessionToken) return;
+  try {
+    const r = await fetch(`${config.tokenBase}/me/tickets`, { headers: { Authorization: `Bearer ${sessionToken}` } });
+    if (!r.ok) return;
+    myTickets = (await r.json()).tickets || [];
+    const seen = ticketSeen(); let changed = false;
+    for (const t of myTickets) {
+      const last = t.lastMessageAt || 0;
+      if (t.lastFromOther && last > (seen[t.channelId] || 0)) {
+        showToast(`💬 Neue Support-Antwort — Ticket #${t.ticketId}`, 'success');
+        seen[t.channelId] = last; changed = true;
+      } else if (!(t.channelId in seen)) { seen[t.channelId] = last; changed = true; }
+    }
+    if (changed) setTicketSeen(seen);
+    if (featureOpen === 'profile') renderProfile();
+  } catch {}
+}
+async function loadMyEvents() {
+  if (!sessionToken) return;
+  try {
+    const r = await fetch(`${config.tokenBase}/me/events`, { headers: { Authorization: `Bearer ${sessionToken}` } });
+    if (!r.ok) return;
+    myEvents = (await r.json()).events || [];
+    if (featureOpen === 'profile') renderProfile();
+  } catch {}
 }
 
 // ── Dino-Lexikon (statischer Content, von Hideki/Team pflegbar) ───────────────
@@ -1669,6 +1816,10 @@ function renderDinoInfo() {
     <div class="di-head"><span class="di-dino" id="di-dino">Dino</span><span class="di-sub" id="di-grow"></span></div>
     <div class="di-sub" id="di-name"></div>
     <div class="di-badges" id="di-badges"></div>
+    <div style="margin:10px 0 2px">
+      <div class="stat-top"><span>🌱 Wachstum</span><span class="val" id="di-grow-v">—</span></div>
+      <div class="stat-track" style="height:11px"><div class="stat-fill" id="di-grow-f" style="background:#84cc16"></div></div>
+    </div>
     <div class="di-main">
       <div class="di-elder-col">
         <div class="sec-title">⏳ Elder-Fortschritt</div>
@@ -2070,6 +2221,7 @@ async function updateDinoInfo() {
     el('di-elder').innerHTML = '<span style="color:var(--muted);font-size:12px">—</span>';
     Object.keys(VITAL_TOKEN).forEach((k) => { const c = el(`di-tok-${k}`); if (c) c.innerHTML = ''; });
     DI_STATS.forEach((s) => { el(`di-${s.key}-f`).style.width = '0%'; el(`di-${s.key}-v`).textContent = '—'; });
+    { const gf = el('di-grow-f'); if (gf) gf.style.width = '0%'; const gv = el('di-grow-v'); if (gv) gv.textContent = '—'; }
     checkPrimes(null);   // offline → Prime-Basis zurücksetzen
     return;
   }
@@ -2078,7 +2230,9 @@ async function updateDinoInfo() {
   renderDinoTokens(d.tokens);
   el('di-dino').textContent = d.dino || 'Dino';
   el('di-name').textContent = `${d.gender || ''} · ${d.name || ''}`;
-  el('di-grow').textContent = `Wachstum ${Math.round((d.grow || 0) * 100)}%`;
+  const gp = Math.round((d.grow || 0) * 100);
+  el('di-grow').textContent = `Wachstum ${gp}%`;
+  { const gf = el('di-grow-f'); if (gf) gf.style.width = gp + '%'; const gv = el('di-grow-v'); if (gv) gv.textContent = gp + '%'; }
 
   // Elder-Checker + Status-Badges
   const stage = d.isElder ? 'Elder' : d.isHatchling ? 'Hatchling' : 'Adult';
@@ -2229,6 +2383,11 @@ async function connectWithSession(session) {
     isAdmin = !!data.admin;
     { const ab = el('openAdminBtn'); if (ab) ab.style.display = isAdmin ? 'block' : 'none'; }
     { const da = el('dockAdmin'); if (da) da.style.display = isAdmin ? 'flex' : 'none'; }
+    // Tickets/Events/Overlay-Gruppe laden + periodisch (Benachrichtigungen)
+    loadMyTickets(); loadMyEvents(); loadOvGroup();
+    if (!loadMyTickets._t) loadMyTickets._t = setInterval(loadMyTickets, 20000);
+    if (!loadMyEvents._t) loadMyEvents._t = setInterval(loadMyEvents, 60000);
+    if (!loadOvGroup._t) loadOvGroup._t = setInterval(loadOvGroup, 15000);
     // Kalibrierung & Zonen sind fertig (server-gespeichert) — Tools ausgeblendet,
     // damit niemand versehentlich etwas überschreibt. Bei Bedarf wieder einblendbar.
     el('calibBtn').style.display = 'none';
