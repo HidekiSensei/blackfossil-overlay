@@ -160,7 +160,7 @@ app.get('/auth/callback', async (req, res) => {
 
     // App-Session ausstellen (30 Tage)
     const session = jwt.sign(
-      { steamId, discordId: user.id, name: user.global_name || user.username, admin, team, rank, tier, staff },
+      { steamId, discordId: user.id, name: user.global_name || user.username, admin, team, rank, tier, staff, avatar: user.avatar ?? null },
       SESSION_SECRET,
       { expiresIn: '30d' }
     );
@@ -286,10 +286,11 @@ app.get('/me', async (req, res) => {
     const p = (data.Players ?? []).find((x) => x.steamId === payload.steamId);
     const tokens = getInventory(payload.steamId);
     const playtime = readJson(`${BOT_DATA_DIR}/playtime.json`, {})[payload.discordId]?.totalSeconds ?? 0;
-    if (!p) return res.json({ online: false, points, tier, name: payload.name, tokens, playtime });
+    const avatarUrl = payload.avatar ? `https://cdn.discordapp.com/avatars/${payload.discordId}/${payload.avatar}.png?size=64` : null;
+    if (!p) return res.json({ online: false, points, tier, name: payload.name, tokens, playtime, avatarUrl });
     res.json({
       online: true,
-      points, tier, tokens, playtime,
+      points, tier, tokens, playtime, avatarUrl,
       name: p.playerName,
       dino: p.dinoClass,
       gender: p.gender,

@@ -110,6 +110,19 @@
       background: rgba(180,30,30,0.92); color: #fff; padding: 10px 18px; border-radius: 10px; font-size: 13px;
       font-weight: 600; border: 1px solid #ef4444; max-width: 60vw; text-align: center; }
 
+    /* Dock (Overlay-Modus, Alt) */
+    #dock { position: absolute; bottom: 16px; left: 50%; transform: translateX(-50%); display: none; gap: 6px;
+      background: var(--panel); border: 1px solid var(--border); border-radius: 16px; padding: 8px 10px; z-index: 55;
+      backdrop-filter: var(--blur); -webkit-backdrop-filter: var(--blur); animation: bfDock .16s ease-out; }
+    .dock-btn { display: flex; flex-direction: column; align-items: center; gap: 3px; width: 56px; padding: 7px 0;
+      border-radius: 11px; background: transparent; border: 0; color: var(--muted); cursor: pointer; font-size: 20px; line-height: 1;
+      transition: background .12s, color .12s, transform .1s; }
+    .dock-btn span { font-size: 10px; font-weight: 600; }
+    .dock-btn:hover { background: rgba(139,92,246,0.18); color: #eee; }
+    .dock-btn:active { transform: scale(0.94); }
+    @keyframes bfDock { from { opacity: 0; transform: translateX(-50%) translateY(10px); } to { opacity: 1; transform: translateX(-50%) translateY(0); } }
+    @keyframes bfPop { from { opacity: 0; transform: translate(-50%,-50%) scale(0.97); } to { opacity: 1; transform: translate(-50%,-50%) scale(1); } }
+    .feature-panel, #settings, #adminPanel { animation: bfPop .14s ease-out; }
     /* Feature-Panels */
     .feature-panel { position: absolute; top: 50%; left: 50%; transform: translate(-50%,-50%); display: none;
       background: var(--panel); border: 1px solid var(--border); border-radius: 16px; padding: 26px; width: clamp(400px, 34vw, 600px); max-height: 84vh; overflow: auto; font-size: 14px; box-shadow: var(--glow-strong); }
@@ -487,6 +500,19 @@
   <div id="group" class="feature-panel"></div>
   <div id="profile" class="feature-panel"></div>
   <div id="lexikon" class="feature-panel"></div>
+
+  <!-- Dock (Overlay-Modus / Alt): klickbare Schnellzugriffe -->
+  <div id="dock">
+    <button class="dock-btn" data-act="profile" aria-label="Profil">🦖<span>Profil</span></button>
+    <button class="dock-btn" data-act="group" aria-label="Gruppe">👥<span>Gruppe</span></button>
+    <button class="dock-btn" data-act="lexikon" aria-label="Lexikon">📖<span>Lexikon</span></button>
+    <button class="dock-btn" data-act="garage" aria-label="Garage">🚗<span>Garage</span></button>
+    <button class="dock-btn" data-act="market" aria-label="Markt">🦕<span>Markt</span></button>
+    <button class="dock-btn" data-act="map" aria-label="Karte">🗺️<span>Karte</span></button>
+    <button class="dock-btn" data-act="skin" aria-label="Skin">🎨<span>Skin</span></button>
+    <button class="dock-btn" data-act="settings" aria-label="Einstellungen">⚙️<span>Settings</span></button>
+    <button class="dock-btn" id="dockAdmin" data-act="admin" aria-label="Admin" style="display:none">🛡️<span>Admin</span></button>
+  </div>
   <div id="skinEditor" class="feature-panel"><h2>🎨 Skin Editor</h2><p>Wird in Kürze verfügbar sein.</p><button class="closeFeature secondary">Schließen</button></div>
   <div id="garage" class="feature-panel"><h2>🚗 Garage</h2><p>Ein- und Ausparken deiner Dinos — kommt in Phase 4.</p><button class="closeFeature secondary">Schließen</button></div>
   <div id="market" class="feature-panel"><h2>🦖 Dino-Markt</h2><p>Dinos kaufen & verkaufen — kommt in Phase 4.</p><button class="closeFeature secondary">Schließen</button></div>

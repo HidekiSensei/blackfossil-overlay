@@ -331,6 +331,8 @@ catch (err) { console.error('uiohook nicht verfügbar:', err.message); }
 
 let pttCode = null, ptmCode = null, pttDown = false, ptmDown = false;
 let pttMouse = null, ptmMouse = null; // Maustasten-Codes (uiohook e.button)
+let altDown = false, altDirty = false; // für Overlay-Modus (sauberer Alt-Tap)
+function isAltKey(kc) { return !!UiohookKey && (kc === UiohookKey.Alt || kc === UiohookKey.AltRight); }
 
 function accelToUiohookCode(accel) {
   if (!accel || !UiohookKey) return null;
@@ -355,17 +357,25 @@ function startVoiceHook() {
   if (!uiohook) return;
   uiohook.on('keydown', (e) => {
     if (!hotkeysActive) return; // The Isle nicht im Vordergrund → PTT/PTM blockiert
+    // Overlay-Modus: sauberer Alt-Tap (ohne Kombi) schaltet den Klick-Modus um
+    if (isAltKey(e.keycode)) { if (!altDown) { altDown = true; altDirty = false; } }
+    else if (altDown) { altDirty = true; } // andere Taste während Alt → kein sauberer Tap
     if (pttCode && e.keycode === pttCode && !pttDown) { pttDown = true; sendVoiceKey('ptt', true); }
     if (ptmCode && e.keycode === ptmCode && !ptmDown) { ptmDown = true; sendVoiceKey('ptm', true); }
   });
   uiohook.on('keyup', (e) => {
-    if (!hotkeysActive) { pttDown = false; ptmDown = false; return; }
+    if (!hotkeysActive) { pttDown = false; ptmDown = false; altDown = false; return; }
+    if (isAltKey(e.keycode) && altDown) {
+      altDown = false;
+      if (!altDirty && overlayWindow) overlayWindow.webContents.send('hotkey', 'overlay-mode');
+    }
     if (pttCode && e.keycode === pttCode && pttDown) { pttDown = false; sendVoiceKey('ptt', false); }
     if (ptmCode && e.keycode === ptmCode && ptmDown) { ptmDown = false; sendVoiceKey('ptm', false); }
   });
   // Maustasten (z.B. Seitentasten) für PTT/PTM
   uiohook.on('mousedown', (e) => {
     if (!hotkeysActive) return;
+    if (altDown) altDirty = true; // Alt+Klick ist kein sauberer Tap
     if (pttMouse && e.button === pttMouse && !pttDown) { pttDown = true; sendVoiceKey('ptt', true); }
     if (ptmMouse && e.button === ptmMouse && !ptmDown) { ptmDown = true; sendVoiceKey('ptm', true); }
   });

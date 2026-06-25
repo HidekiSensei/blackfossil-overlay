@@ -258,7 +258,7 @@ async function init() {
   });
   // Raustabben → offene Overlay-Fenster schließen (Main blendet das Fenster ohnehin aus)
   window.bf.onGameFocus?.((focused) => {
-    if (!focused) { toggleSettings(false); toggleMap(false); closeAllFeatures(); }
+    if (!focused) { toggleSettings(false); toggleMap(false); closeAllFeatures(); toggleOverlayMode(false); }
   });
 
   // The Isle wurde geschlossen → Voice trennen (Overlay blendet das Main-Prozess aus)
@@ -292,6 +292,9 @@ async function init() {
   window.addEventListener('mouseup', () => { dragging = false; });
   cv.addEventListener('mousemove', tpHoverHitTest);
   cv.addEventListener('mouseleave', () => setHoveredTp(null));
+  // Dock (Overlay-Modus / Alt)
+  document.querySelectorAll('.dock-btn').forEach((b) => { b.onclick = () => dockAction(b.dataset.act); });
+
   // Admin-Panel (eigenständiges Modal, nur Admins)
   el('openAdminBtn').onclick = () => openAdminPanel();
   el('adminCloseBtn').onclick = () => closeAdminPanel();
@@ -1208,7 +1211,8 @@ function shareCalibration() {
 
 // ── Hotkeys ─────────────────────────────────────────────────────────────────
 function handleHotkey(action) {
-  if (!me) return; // Off-Server: alle Hotkeys blockiert (nur Hinweis sichtbar)
+  if (action === 'overlay-mode') return toggleOverlayMode(); // Alt: Klick-Modus, auch off-server
+  if (!me) return; // Off-Server: alle anderen Hotkeys blockiert (nur Hinweis sichtbar)
   if (action === 'admin-menu') return openAdminMenu();
   if (action === 'voice-connect') toggleConnect();
   else if (action === 'mic-toggle') toggleMic();
@@ -1494,10 +1498,16 @@ function renderProfile() {
        ${vitalBar('⚡ Ausdauer', d.stamina, '#22c55e')}
        ${vitalBar('🩸 Blut', d.blood, '#e11d48')}`
     : `<p style="color:var(--muted);margin:12px 0">Aktuell nicht im Spiel — Vitals erscheinen, sobald du auf dem Server bist.</p>`;
+  const avatar = d.avatarUrl
+    ? `<img src="${d.avatarUrl}" alt="" style="width:46px;height:46px;border-radius:50%;border:2px solid var(--accent);object-fit:cover">`
+    : `<span style="width:46px;height:46px;border-radius:50%;border:2px solid var(--accent);display:flex;align-items:center;justify-content:center;background:#1a1230;color:var(--accent-2);font-size:22px">🦖</span>`;
   panel.innerHTML = `<h2>🦖 Profil</h2>
-    <div style="display:flex;align-items:center;gap:10px;margin-bottom:12px">
-      <span style="font-size:18px;font-weight:600">${escapeHtml(d.name || '?')}</span>
-      <span class="tier-badge tier-${d.tier || 'Fossil'}">${escapeHtml(d.tier || 'Fossil')}</span>
+    <div style="display:flex;align-items:center;gap:11px;margin-bottom:14px">
+      ${avatar}
+      <div>
+        <div style="font-size:17px;font-weight:600">${escapeHtml(d.name || '?')}</div>
+        <span class="tier-badge tier-${d.tier || 'Fossil'}" style="margin-top:3px;display:inline-block">${escapeHtml(d.tier || 'Fossil')}</span>
+      </div>
     </div>
     <div style="display:flex;gap:18px;margin-bottom:4px;font-size:13px">
       <span>💰 <b>${(d.points || 0).toLocaleString('de-DE')}</b> Punkte</span>
@@ -2026,7 +2036,22 @@ async function updateDinoInfo() {
 
 function updateInteractive() {
   // Maus durchlassen nur wenn Overlay-UI geschlossen ist
-  window.bf.setInteractive(settingsOpen || mapOpen || adminOpen || !!featureOpen);
+  window.bf.setInteractive(settingsOpen || mapOpen || adminOpen || overlayMode || !!featureOpen);
+}
+
+// ── Overlay-Modus (Alt): Dock einblenden + Overlay klickbar machen ───────────
+let overlayMode = false;
+function toggleOverlayMode(force) {
+  overlayMode = force !== undefined ? force : !overlayMode;
+  const d = el('dock'); if (d) d.style.display = overlayMode ? 'flex' : 'none';
+  updateInteractive();
+}
+function dockAction(act) {
+  if (act === 'map') toggleMap();
+  else if (act === 'settings') toggleSettings();
+  else if (act === 'admin') openAdminPanel();
+  else if (act === 'skin') toggleFeature('skinEditor');
+  else toggleFeature(act); // profile | group | lexikon | garage | market
 }
 
 function toggleSettings(force) {
@@ -2084,6 +2109,7 @@ async function connectWithSession(session) {
     const data = await res.json();
     isAdmin = !!data.admin;
     { const ab = el('openAdminBtn'); if (ab) ab.style.display = isAdmin ? 'block' : 'none'; }
+    { const da = el('dockAdmin'); if (da) da.style.display = isAdmin ? 'flex' : 'none'; }
     // Kalibrierung & Zonen sind fertig (server-gespeichert) — Tools ausgeblendet,
     // damit niemand versehentlich etwas überschreibt. Bei Bedarf wieder einblendbar.
     el('calibBtn').style.display = 'none';
