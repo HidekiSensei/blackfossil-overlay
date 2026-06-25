@@ -305,16 +305,15 @@
         <div class="set-block">
           <div class="set-label">Mikrofon-Modus</div>
           <div class="vmode-stack">
-            <button class="vmode" data-mode="voice" id="vmodeVoice">🎚️ Sprachaktivierung</button>
+            <button class="vmode" data-mode="voice" id="vmodeVoice">🔊 Offenes Mikro</button>
             <button class="vmode secondary" data-mode="ptt" id="vmodePtt">⌨️ Push-to-Talk</button>
             <button class="vmode secondary" data-mode="ptm" id="vmodePtm">🔇 Push-to-Mute</button>
           </div>
         </div>
         <div class="set-block">
-          <div class="set-label">🎚️ Mikro-Pegel & Sprachschwelle</div>
-          <div class="level-meter"><div id="levelFill" class="level-fill"></div><div id="levelThresh" class="level-thresh"></div></div>
-          <input id="vadThresh" type="range" min="0" max="100" value="18" style="width:100%;margin-top:8px">
-          <div style="font-size:11px;color:var(--muted)">Mikro öffnet ab dem weißen Strich (nur bei Sprachaktivierung). Balken zeigt deinen Live-Pegel.</div>
+          <div class="set-label">🎙️ Mikrofon-Lautstärke</div>
+          <input id="micGain" type="range" min="0" max="200" step="5" value="100" style="width:100%;accent-color:var(--accent)">
+          <div style="font-size:11px;color:var(--muted)">Macht dein eigenes Mikro für alle anderen lauter oder leiser (100&nbsp;%&nbsp;=&nbsp;normal).</div>
         </div>
       </div>
 
@@ -335,6 +334,11 @@
         </div>
         <div class="set-block">
           <div class="set-label">🎚️ Lautstärke pro Spieler <span style="color:var(--muted)">(nur für dich)</span></div>
+          <div style="display:flex;align-items:center;gap:8px;margin-bottom:8px">
+            <span style="font-size:12px;white-space:nowrap">🔊 Alle Spieler</span>
+            <input id="masterGain" type="range" min="0" max="200" step="5" value="100" style="flex:1;accent-color:var(--accent)">
+            <span id="masterGainVal" style="width:42px;text-align:right;font-size:12px;color:var(--muted)">100%</span>
+          </div>
           <input id="voiceSearch" placeholder="🔍 Spieler suchen…" style="width:100%;margin-bottom:6px;padding:7px;border-radius:6px;border:1px solid var(--border);background:rgba(0,0,0,0.25);color:#eee;box-sizing:border-box">
           <div id="voiceUsers" style="max-height:220px;overflow:auto"></div>
         </div>
