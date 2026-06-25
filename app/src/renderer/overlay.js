@@ -298,6 +298,12 @@ async function init() {
     b.insertAdjacentHTML('afterbegin', DOCK_ICONS[b.dataset.act] || '');
     b.onclick = () => navTo(b.dataset.act);
   });
+  // „^" auch schließen, wenn das Overlay den Fokus hat (dann verschluckt der globale
+  // Hook den Dead-Key — der DOM-Event kommt hier aber zuverlässig an). Backquote = „^"/„`".
+  window.addEventListener('keydown', (e) => {
+    const tag = (e.target && e.target.tagName) || '';
+    if (e.code === 'Backquote' && !/^(INPUT|TEXTAREA|SELECT)$/.test(tag)) { e.preventDefault(); toggleOverlayMode(); }
+  });
 
   // Admin-Panel (eigenständiges Modal, nur Admins)
   el('openAdminBtn').onclick = () => openAdminPanel();
@@ -1849,52 +1855,93 @@ async function renderSkinEditor() {
   skinState = { skinVariation: sk.skinVariation || 0, patternIndex: sk.patternIndex || 0, themeIndex: sk.themeIndex || 0, colors: {} };
   for (const [k] of SKIN_GROUPS) skinState.colors[k] = (sk.colors && sk.colors[k]) ? sk.colors[k] : [0.5, 0.5, 0.5];
 
-  const rows = SKIN_GROUPS.map(([k, l]) => `<div style="display:flex;justify-content:space-between;align-items:center;padding:5px 0"><span style="font-size:13px">${l}</span><input type="color" data-col="${k}" value="${linToHex(skinState.colors[k])}" style="width:46px;height:28px;border:0;background:none;cursor:pointer"></div>`).join('');
+  const swatches = SKIN_GROUPS.map(([k, l]) => `<label style="display:flex;justify-content:space-between;align-items:center;gap:8px;padding:6px 8px;background:rgba(255,255,255,0.04);border-radius:8px;font-size:13px;cursor:pointer"><span style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${l}</span><input type="color" data-col="${k}" value="${linToHex(skinState.colors[k])}" style="width:40px;height:26px;border:0;background:none;cursor:pointer;flex:none"></label>`).join('');
   panel.innerHTML = `<h2>🎨 Skin Editor — ${me.dino}</h2>
-    <div id="skPreview" style="height:90px;border-radius:12px;overflow:hidden;margin-bottom:14px"></div>
-    <div class="sec-title">Muster</div>
-    <div style="display:flex;gap:6px;margin:6px 0 12px">${[0, 1, 2].map((i) => `<button data-pat="${i}" style="flex:1" class="${skinState.patternIndex === i ? '' : 'secondary'}">Muster ${i + 1}</button>`).join('')}</div>
-    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px"><span style="font-size:13px">Skin-Variation</span><input id="skVar" type="number" min="0" value="${skinState.skinVariation}" style="width:80px;padding:6px;border-radius:6px;border:1px solid var(--border);background:#120d24;color:#eee"></div>
-    <div class="sec-title">Farben</div>${rows}
-    <button id="skApply" style="width:100%;margin-top:14px">✅ Skin anwenden</button>
-    <div class="sec-title" style="margin-top:16px">📁 Vorlagen <span style="color:var(--muted);font-weight:400;font-size:11px">(dino-übergreifend)</span></div>
+    <div id="skPreview" style="height:96px;border-radius:12px;overflow:hidden;margin-bottom:6px"></div>
+    <div id="skLive" style="font-size:12px;color:#22c55e;margin-bottom:14px">🟢 Änderungen werden live übernommen</div>
+    <div class="sec-title">Farben</div>
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:6px;margin:8px 0 14px">${swatches}</div>
+    <div class="sec-title">Muster & Variation</div>
+    <div style="display:flex;gap:6px;margin:8px 0 8px">${[0, 1, 2].map((i) => `<button data-pat="${i}" style="flex:1" class="${skinState.patternIndex === i ? '' : 'secondary'}">Muster ${i + 1}</button>`).join('')}</div>
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px"><span style="font-size:13px">Skin-Variation</span><input id="skVar" type="number" min="0" value="${skinState.skinVariation}" style="width:80px;padding:6px;border-radius:6px;border:1px solid var(--border);background:#120d24;color:#eee"></div>
+    <div class="sec-title" style="margin-top:16px">🔗 Farben teilen</div>
+    <button id="skShare" style="width:100%;margin:8px 0">📋 Farb-Code kopieren</button>
+    <div style="display:flex;gap:6px;margin-bottom:4px">
+      <input id="skImport" placeholder="Farb-Code einfügen…" style="flex:1;min-width:0;padding:8px;border-radius:6px;border:1px solid var(--border);background:#120d24;color:#eee">
+      <button id="skImportBtn" class="secondary" style="width:auto;padding:8px 12px">Anwenden</button>
+    </div>
+    <div class="sec-title" style="margin-top:16px">📁 Eigene Vorlagen <span style="color:var(--muted);font-weight:400;font-size:11px">(dino-übergreifend)</span></div>
     <div style="display:flex;gap:6px;margin:8px 0">
       <input id="skTplName" placeholder="Vorlagen-Name…" maxlength="30" style="flex:1;min-width:0;padding:8px;border-radius:6px;border:1px solid var(--border);background:#120d24;color:#eee">
       <button id="skTplSave" style="width:auto;padding:8px 12px">💾 Speichern</button>
     </div>
     <div id="skTplList"></div>
-    <button class="closeFeature secondary" style="width:100%;margin-top:12px">Schließen (F7)</button>`;
+    <button class="closeFeature secondary" style="width:100%;margin-top:12px">Schließen</button>`;
   panel.querySelector('.closeFeature').onclick = closeAllFeatures;
   el('skTplSave').onclick = () => saveSkinTemplate();
+  el('skShare').onclick = () => copySkinCode();
+  el('skImportBtn').onclick = () => importSkinCode(el('skImport').value);
   renderSkinTemplates();
   updateSkinPreview();
   // Live-Anwendung: nach kurzer Pause automatisch übernehmen (kein Bestätigen nötig)
   panel.querySelectorAll('[data-col]').forEach((inp) => inp.oninput = () => { skinState.colors[inp.dataset.col] = hexToLin(inp.value); updateSkinPreview(); scheduleSkinApply(); });
   panel.querySelectorAll('[data-pat]').forEach((b) => b.onclick = () => { skinState.patternIndex = parseInt(b.dataset.pat); panel.querySelectorAll('[data-pat]').forEach((x) => x.className = x === b ? '' : 'secondary'); scheduleSkinApply(); });
   el('skVar').oninput = () => { skinState.skinVariation = parseInt(el('skVar').value) || 0; scheduleSkinApply(); };
-  el('skApply').onclick = () => applySkin();
+}
+function setSkinLive(txt, color) { const h = el('skLive'); if (h) { h.textContent = txt; h.style.color = color || '#22c55e'; } }
+// Spiegelt skinState → UI (nach Import/Vorlage)
+function syncSkinUI() {
+  for (const [k] of SKIN_GROUPS) { const inp = document.querySelector(`#skinEditor [data-col="${k}"]`); if (inp) inp.value = linToHex(skinState.colors[k]); }
+  const sv = el('skVar'); if (sv) sv.value = skinState.skinVariation;
+  document.querySelectorAll('#skinEditor [data-pat]').forEach((x) => x.className = parseInt(x.dataset.pat) === skinState.patternIndex ? '' : 'secondary');
+  updateSkinPreview();
 }
 let skinApplyTimer = null;
 function scheduleSkinApply() {
   clearTimeout(skinApplyTimer);
-  const hint = el('skApply'); if (hint) hint.textContent = '… wird übernommen';
+  setSkinLive('… wird übernommen', '#f59e0b');
   skinApplyTimer = setTimeout(() => applySkin(true), 650);
+}
+
+// ── Farben teilen (Code) ─────────────────────────────────────────────────────
+function skinCode() {
+  const s = skinState;
+  const payload = { v: s.skinVariation, p: s.patternIndex, c: SKIN_GROUPS.map(([k]) => s.colors[k].map((x) => Math.round(x * 1000) / 1000)) };
+  return 'BFSKIN1:' + btoa(JSON.stringify(payload));
+}
+function copySkinCode() {
+  const code = skinCode();
+  navigator.clipboard.writeText(code).then(() => showToast('📋 Farb-Code kopiert — zum Teilen einfügen', 'success')).catch(() => showToast('Kopieren fehlgeschlagen', 'error'));
+}
+function importSkinCode(raw) {
+  try {
+    let code = (raw || '').trim();
+    if (code.startsWith('BFSKIN1:')) code = code.slice(8);
+    const p = JSON.parse(atob(code));
+    skinState.skinVariation = p.v || 0;
+    skinState.patternIndex = p.p || 0;
+    SKIN_GROUPS.forEach(([k], i) => { if (p.c && Array.isArray(p.c[i]) && p.c[i].length === 3) skinState.colors[k] = p.c[i].map(Number); });
+    syncSkinUI();
+    applySkin();
+    const imp = el('skImport'); if (imp) imp.value = '';
+    showToast('🎨 Farben übernommen', 'success');
+  } catch { showToast('Ungültiger Farb-Code', 'error'); }
 }
 function updateSkinPreview() {
   const c = skinState.colors;
   el('skPreview').innerHTML = dinoPreviewSVG({ id: 'sk', colors: { body: c.bodyColor, markings: c.markingsColor, underbelly: c.underbellyColor, flank: c.flankColor, detail: c.detailColor, eyes: c.eyesColor } });
 }
 async function applySkin(auto) {
-  const btn = el('skApply'); if (btn) { btn.disabled = true; btn.textContent = auto ? '… wird übernommen' : 'Wird angewendet…'; }
+  setSkinLive('… wird übernommen', '#f59e0b');
   try {
     const body = { skinVariation: skinState.skinVariation, patternIndex: skinState.patternIndex, themeIndex: skinState.themeIndex, ...skinState.colors };
     const send = () => fetch(`${config.tokenBase}/skin`, { method: 'POST', headers: { Authorization: `Bearer ${sessionToken}`, 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
     let res = await send();
     if (res.status === 502) { await new Promise((r) => setTimeout(r, 1200)); res = await send(); } // ein Retry bei Server-Hänger
     const d = await res.json(); if (!res.ok) throw new Error(d.error || 'Fehler');
+    setSkinLive('🟢 Live übernommen', '#22c55e');
     if (!auto) showToast('🎨 Skin angewendet!', 'success');
-  } catch (err) { showToast(err.message, 'error'); }
-  if (btn) { btn.disabled = false; btn.textContent = '✅ Skin anwenden'; }
+  } catch (err) { setSkinLive('⚠️ ' + err.message, '#ef4444'); showToast(err.message, 'error'); }
 }
 
 // ── Skin-Vorlagen (lokal, dino-übergreifend) ────────────────────────────────
@@ -1918,11 +1965,7 @@ function applySkinTemplate(t) {
   skinState.patternIndex = t.patternIndex || 0;
   skinState.themeIndex = t.themeIndex || 0;
   for (const [k] of SKIN_GROUPS) if (t.colors && t.colors[k]) skinState.colors[k] = t.colors[k].slice();
-  // UI angleichen
-  for (const [k] of SKIN_GROUPS) { const inp = document.querySelector(`#skinEditor [data-col="${k}"]`); if (inp) inp.value = linToHex(skinState.colors[k]); }
-  const sv = el('skVar'); if (sv) sv.value = skinState.skinVariation;
-  document.querySelectorAll('#skinEditor [data-pat]').forEach((x) => x.className = parseInt(x.dataset.pat) === skinState.patternIndex ? '' : 'secondary');
-  updateSkinPreview();
+  syncSkinUI();
   applySkin(); // direkt anwenden
   showToast(`🎨 Vorlage „${t.name}" angewendet`, 'success');
 }
@@ -2057,7 +2100,15 @@ function updateInteractive() {
 
 // ── Overlay-/Nav-Modus („^"): Dock einblenden + Overlay klickbar machen ───────
 let overlayMode = false;
+let lastOverlayToggleAt = 0;
 function toggleOverlayMode(force) {
+  // Entprellen: uiohook (global) UND DOM-Keydown (wenn Overlay Fokus hat) können
+  // beide für denselben „^"-Druck feuern → nur ein Toggle pro 250 ms.
+  if (force === undefined) {
+    const now = Date.now();
+    if (now - lastOverlayToggleAt < 250) return;
+    lastOverlayToggleAt = now;
+  }
   overlayMode = force !== undefined ? force : !overlayMode;
   const d = el('dock'); if (d) d.style.display = overlayMode ? 'flex' : 'none';
   if (!overlayMode) closeAllPanels(); // „^" aus → alle Fenster zu

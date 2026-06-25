@@ -25,6 +25,12 @@ jobs:
       - name: Build Windows installer (NO publish)
         run: npx electron-builder --win --publish never
 
+      - name: Versionierten Dateinamen setzen (gegen Verwechslung mit Public-Release)
+        shell: bash
+        run: |
+          V=$(node -p "require('./package.json').version")
+          mv "release/BlackFossil-Overlay-Setup.exe" "release/BlackFossil-Overlay-${V}.exe"
+
       - name: Upload installer artifact
         uses: actions/upload-artifact@v4
         with:

@@ -1139,7 +1139,9 @@ app.post('/skin', express.json(), async (req, res) => {
   payload.patternIndex = Number(b.patternIndex) || 0;
   payload.themeIndex = Number(b.themeIndex) || 0;
   for (const k of ['maleDisplayColor', 'markingsColor', 'bodyColor', 'flankColor', 'underbellyColor', 'teethColor', 'mouthColor', 'clawsColor', 'detailColor', 'eyesColor']) {
-    if (Array.isArray(b[k]) && b[k].length === 3) payload[k] = b[k].map(Number);
+    // The Isle behandelt exakt 0,0,0 als „kein Override" → Skins greifen dann nicht.
+    // Auf einen winzigen Epsilon clampen (optisch weiter schwarz, aber != 0).
+    if (Array.isArray(b[k]) && b[k].length === 3) payload[k] = b[k].map((v) => Math.max(0.0001, Number(v) || 0));
   }
   try {
     const r = await fetch(`${PANEL_BASE_URL}/players/${encodeURIComponent(s.steamId)}/skin`, {
