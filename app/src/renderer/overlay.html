@@ -182,6 +182,11 @@
       cursor: pointer; transition: transform 0.12s, border-color 0.12s, box-shadow 0.12s; }
     .dino-card:hover { transform: translateY(-3px); border-color: var(--accent); box-shadow: 0 8px 24px rgba(139,92,246,0.35); }
     .dino-card .prev { height: 80px; display: block; }
+    .prevwrap { position: relative; display: block; }
+    .prevwrap .prev { width: 100%; height: 100%; display: block; }
+    .prevwrap .photo { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; }
+    .dino-card .prevwrap { height: 80px; }
+    .prevwrap.dd { width: 110px; height: 70px; border-radius: 10px; overflow: hidden; flex: none; }
     .dino-card .body { padding: 8px 10px; }
     .dino-card .nm { font-weight: 700; font-size: 13px; display: flex; align-items: center; gap: 4px; }
     .dino-card .mt { font-size: 11px; color: var(--muted); margin-top: 2px; }
