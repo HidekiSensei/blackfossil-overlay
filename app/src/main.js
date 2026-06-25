@@ -184,6 +184,7 @@ const DEFAULT_HOTKEYS = {
   'garage':          'F8',
   'market':          'F9',
   'group':           'F2',
+  'profile':         'F1',
   'settings-toggle': 'F10',
   'admin-menu':      'Alt+Shift+A',  // Team-Menü (nur sichtbar fürs Team)
   'voice-connect':   'F11',

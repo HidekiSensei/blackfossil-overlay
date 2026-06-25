@@ -138,8 +138,11 @@ function setStaff(staff) {
   if (staff) { b.style.display = ''; b.textContent = staff; b.className = 'staff-badge staff-' + staff; }
   else b.style.display = 'none';
 }
+let lastMe = null;
 function updateHud(d) {
   if (!d) return;
+  lastMe = d;
+  if (featureOpen === 'profile') renderProfile();
   if (d.name) document.getElementById('hudName').textContent = d.name;
   if (typeof d.points === 'number') document.getElementById('hudPoints').textContent = `${d.points.toLocaleString('de-DE')} Pkt.`;
   if (d.tier) setTier(d.tier);
@@ -1217,6 +1220,7 @@ function handleHotkey(action) {
   else if (action === 'garage') toggleFeature('garage');
   else if (action === 'market') toggleFeature('market');
   else if (action === 'group') toggleFeature('group');
+  else if (action === 'profile') toggleFeature('profile');
   else if (action === 'range-cycle') cycleRange();
 }
 
@@ -1247,6 +1251,7 @@ const HK_LABELS = {
   'garage': 'Garage',
   'market': 'Dino-Markt',
   'group': 'Gruppe',
+  'profile': 'Profil',
   'settings-toggle': 'Einstellungen',
   'admin-menu': 'Admin-/Team-Menü',
   'voice-connect': 'Voice verbinden/trennen',
@@ -1401,12 +1406,13 @@ function toggleFeature(id) {
   else if (id === 'garage') renderGarage();
   else if (id === 'market') renderMarket();
   else if (id === 'group') renderGroup();
+  else if (id === 'profile') renderProfile();
   else if (id === 'skinEditor') renderSkinEditor();
   el(id).style.display = 'block';
   updateInteractive();
 }
 function closeAllFeatures(skipInteractive) {
-  ['dinoInfo', 'skinEditor', 'garage', 'market', 'group'].forEach((id) => { el(id).style.display = 'none'; });
+  ['dinoInfo', 'skinEditor', 'garage', 'market', 'group', 'profile'].forEach((id) => { el(id).style.display = 'none'; });
   if (featureOpen === 'dinoInfo') stopDinoInfo();
   featureOpen = null;
   if (!skipInteractive) updateInteractive();
@@ -1448,6 +1454,56 @@ function renderGroup() {
     <div style="max-height:50vh;overflow:auto">${body}</div>
     <button class="closeFeature secondary" style="margin-top:10px">Schließen</button>`;
   panel.querySelector('.closeFeature').onclick = () => closeAllFeatures();
+}
+
+// ── Profil / persönliche Stats (aus /me) ─────────────────────────────────────
+function fmtPlaytime(sec) {
+  sec = Math.max(0, Math.round(sec || 0));
+  const h = Math.floor(sec / 3600), m = Math.floor((sec % 3600) / 60);
+  return h > 0 ? `${h} h ${m} min` : `${m} min`;
+}
+function vitalBar(label, val, color) {
+  const v = Math.max(0, Math.min(100, Math.round(val ?? 0)));
+  return `<div style="margin-bottom:6px">
+    <div style="display:flex;justify-content:space-between;font-size:12px;margin-bottom:2px"><span>${label}</span><span style="color:var(--muted)">${v}%</span></div>
+    <div style="height:7px;border-radius:4px;background:rgba(255,255,255,0.08);overflow:hidden"><div style="height:100%;width:${v}%;background:${color}"></div></div>
+  </div>`;
+}
+function renderProfile() {
+  const panel = el('profile');
+  const d = lastMe;
+  const close = () => { panel.querySelector('.closeFeature').onclick = () => closeAllFeatures(); };
+  if (!d) {
+    panel.innerHTML = `<h2>🦖 Profil</h2><p style="color:var(--muted)">Lädt…</p><button class="closeFeature secondary">Schließen</button>`;
+    close(); pollHud(); return;
+  }
+  const tokenList = Object.entries(d.tokens || {}).filter(([, n]) => n > 0).map(([k, n]) => `${k.replace(/_/g, ' ')} ×${n}`).join('  ·  ') || '—';
+  const tags = [];
+  if (d.isHatchling) tags.push('🥚 Hatchling');
+  if (d.isElder) tags.push(`🪦 Elder${d.elderStacks ? ` ×${d.elderStacks}` : ''}`);
+  if (d.isPrime) tags.push('⭐ Prime');
+  if (d.isBleeding) tags.push('🩸 blutet');
+  const dinoBlock = d.online
+    ? `<div style="margin:12px 0 8px"><b>${escapeHtml(d.dino || '?')}</b> · ${d.gender === 'Female' ? '♀' : '♂'} · ${Math.round((d.grow || 0) * 100)}% ${tags.length ? `<span style="color:var(--muted);font-size:12px">· ${tags.join(' · ')}</span>` : ''}</div>
+       ${vitalBar('❤️ Gesundheit', d.health, '#ef4444')}
+       ${vitalBar('🍖 Hunger', d.hunger, '#f59e0b')}
+       ${vitalBar('💧 Durst', d.thirst, '#38bdf8')}
+       ${vitalBar('⚡ Ausdauer', d.stamina, '#22c55e')}
+       ${vitalBar('🩸 Blut', d.blood, '#e11d48')}`
+    : `<p style="color:var(--muted);margin:12px 0">Aktuell nicht im Spiel — Vitals erscheinen, sobald du auf dem Server bist.</p>`;
+  panel.innerHTML = `<h2>🦖 Profil</h2>
+    <div style="display:flex;align-items:center;gap:10px;margin-bottom:12px">
+      <span style="font-size:18px;font-weight:600">${escapeHtml(d.name || '?')}</span>
+      <span class="tier-badge tier-${d.tier || 'Fossil'}">${escapeHtml(d.tier || 'Fossil')}</span>
+    </div>
+    <div style="display:flex;gap:18px;margin-bottom:4px;font-size:13px">
+      <span>💰 <b>${(d.points || 0).toLocaleString('de-DE')}</b> Punkte</span>
+      <span>⏱️ <b>${fmtPlaytime(d.playtime)}</b> gespielt</span>
+    </div>
+    ${dinoBlock}
+    <div style="margin-top:10px;font-size:12px;color:var(--muted)">🎟️ Token: <span style="color:#eee">${escapeHtml(tokenList)}</span></div>
+    <button class="closeFeature secondary" style="margin-top:12px">Schließen</button>`;
+  close();
 }
 
 // ── Elder / Prime-Bedingungen ────────────────────────────────────────────────
@@ -2159,6 +2215,7 @@ const MOVABLE = [
   { id: 'garage',      label: 'Garage' },
   { id: 'market',      label: 'Markt' },
   { id: 'group',       label: 'Gruppe (F2)' },
+  { id: 'profile',     label: 'Profil (F1)' },
 ];
 let editMode = false;
 function loadPositions() { try { return JSON.parse(localStorage.getItem('bf-layout')) || {}; } catch { return {}; } }

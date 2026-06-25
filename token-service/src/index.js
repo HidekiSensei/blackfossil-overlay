@@ -285,10 +285,11 @@ app.get('/me', async (req, res) => {
     const tier = payload.tier || 'Fossil';
     const p = (data.Players ?? []).find((x) => x.steamId === payload.steamId);
     const tokens = getInventory(payload.steamId);
-    if (!p) return res.json({ online: false, points, tier, name: payload.name, tokens });
+    const playtime = readJson(`${BOT_DATA_DIR}/playtime.json`, {})[payload.discordId]?.totalSeconds ?? 0;
+    if (!p) return res.json({ online: false, points, tier, name: payload.name, tokens, playtime });
     res.json({
       online: true,
-      points, tier, tokens,
+      points, tier, tokens, playtime,
       name: p.playerName,
       dino: p.dinoClass,
       gender: p.gender,
