@@ -244,6 +244,9 @@ app.get('/positions', async (req, res) => {
       heading: p.lookDirection ?? 0,
       isDead: !!p.isDead,
       isYou: p.steamId === payload.steamId,
+      groupId: p.groupId ?? null,
+      grow: p.grow ?? null,
+      partnerSteamId: p.partnerSteamId ?? null,
     }));
     // Ausstehende Overlay-Toasts für diesen Spieler ausliefern + leeren
     let toasts = [];

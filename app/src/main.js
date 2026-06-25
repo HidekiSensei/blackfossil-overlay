@@ -183,6 +183,7 @@ const DEFAULT_HOTKEYS = {
   'skin-editor':     'F7',
   'garage':          'F8',
   'market':          'F9',
+  'group':           'F2',
   'settings-toggle': 'F10',
   'admin-menu':      'Alt+Shift+A',  // Team-Menü (nur sichtbar fürs Team)
   'voice-connect':   'F11',

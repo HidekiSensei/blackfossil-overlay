@@ -414,6 +414,7 @@ function startPositionPolling() {
         updateProximityVolumes();
         if (settingsOpen) renderVoiceUsers();
         if (mapOpen) renderBigMap();
+        if (featureOpen === 'group') renderGroup();
       }
     } catch {}
   };
@@ -1215,6 +1216,7 @@ function handleHotkey(action) {
   else if (action === 'skin-editor') toggleFeature('skinEditor');
   else if (action === 'garage') toggleFeature('garage');
   else if (action === 'market') toggleFeature('market');
+  else if (action === 'group') toggleFeature('group');
   else if (action === 'range-cycle') cycleRange();
 }
 
@@ -1244,6 +1246,7 @@ const HK_LABELS = {
   'skin-editor': 'Skin Editor',
   'garage': 'Garage',
   'market': 'Dino-Markt',
+  'group': 'Gruppe',
   'settings-toggle': 'Einstellungen',
   'admin-menu': 'Admin-/Team-Menü',
   'voice-connect': 'Voice verbinden/trennen',
@@ -1397,15 +1400,54 @@ function toggleFeature(id) {
   if (id === 'dinoInfo') renderDinoInfo();
   else if (id === 'garage') renderGarage();
   else if (id === 'market') renderMarket();
+  else if (id === 'group') renderGroup();
   else if (id === 'skinEditor') renderSkinEditor();
   el(id).style.display = 'block';
   updateInteractive();
 }
 function closeAllFeatures(skipInteractive) {
-  ['dinoInfo', 'skinEditor', 'garage', 'market'].forEach((id) => { el(id).style.display = 'none'; });
+  ['dinoInfo', 'skinEditor', 'garage', 'market', 'group'].forEach((id) => { el(id).style.display = 'none'; });
   if (featureOpen === 'dinoInfo') stopDinoInfo();
   featureOpen = null;
   if (!skipInteractive) updateInteractive();
+}
+
+// ── Gruppen-Ansicht (Mitglieder mit gleicher groupId, Partner + Distanz) ─────
+function renderGroup() {
+  const panel = el('group');
+  const myG = me && me.groupId;
+  const members = (myG && players.length) ? players.filter((p) => p.groupId === myG) : (me ? [me] : []);
+  // eigener Eintrag zuerst, Rest nach Distanz
+  members.sort((a, b) => {
+    if (a.isYou) return -1; if (b.isYou) return 1;
+    if (!me) return 0;
+    return Math.hypot(a.x - me.x, a.y - me.y) - Math.hypot(b.x - me.x, b.y - me.y);
+  });
+
+  let body;
+  if (!me) {
+    body = '<p>Du bist gerade nicht auf dem Server.</p>';
+  } else if (members.length <= 1) {
+    body = '<p style="color:var(--muted)">Du bist in keiner Gruppe.<br>Bilde im Spiel eine Gruppe — deine Mitglieder erscheinen dann hier mit Dino, Wachstum & Entfernung.</p>';
+  } else {
+    body = members.map((p) => {
+      const you = !!p.isYou;
+      const partner = me.partnerSteamId && p.steamId === me.partnerSteamId;
+      const grow = p.grow != null ? `${Math.round(p.grow * 100)}%` : '';
+      const dist = (!you && me) ? `${Math.round(Math.hypot(p.x - me.x, p.y - me.y) / UNITS_PER_M)} m` : '';
+      const tag = you ? ' <span style="color:var(--accent-2)">(Du)</span>' : (partner ? ' 💞' : '');
+      return `<div style="display:flex;justify-content:space-between;align-items:center;gap:10px;padding:8px 10px;margin-bottom:6px;border-radius:9px;background:${you ? 'rgba(139,92,246,0.18)' : 'rgba(255,255,255,0.04)'};border:1px solid ${you ? 'var(--accent)' : 'transparent'}">
+        <span style="font-weight:600;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${escapeHtml(p.name || '?')}${tag}</span>
+        <span style="color:var(--muted);font-size:12px;flex:none">${escapeHtml(p.dino || '—')}${grow ? ' · ' + grow : ''}</span>
+        <span style="color:var(--accent-2);font-size:12px;flex:none;min-width:42px;text-align:right">${dist}</span>
+      </div>`;
+    }).join('');
+  }
+
+  panel.innerHTML = `<h2>👥 Gruppe ${members.length > 1 ? `<span style="font-size:13px;color:var(--muted);font-weight:400">· ${members.length} Mitglieder</span>` : ''}</h2>
+    <div style="max-height:50vh;overflow:auto">${body}</div>
+    <button class="closeFeature secondary" style="margin-top:10px">Schließen</button>`;
+  panel.querySelector('.closeFeature').onclick = () => closeAllFeatures();
 }
 
 // ── Elder / Prime-Bedingungen ────────────────────────────────────────────────
@@ -2116,6 +2158,7 @@ const MOVABLE = [
   { id: 'skinEditor',  label: 'Skin-Editor' },
   { id: 'garage',      label: 'Garage' },
   { id: 'market',      label: 'Markt' },
+  { id: 'group',       label: 'Gruppe (F2)' },
 ];
 let editMode = false;
 function loadPositions() { try { return JSON.parse(localStorage.getItem('bf-layout')) || {}; } catch { return {}; } }
