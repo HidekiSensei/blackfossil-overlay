@@ -1221,6 +1221,7 @@ function handleHotkey(action) {
   else if (action === 'market') toggleFeature('market');
   else if (action === 'group') toggleFeature('group');
   else if (action === 'profile') toggleFeature('profile');
+  else if (action === 'lexikon') toggleFeature('lexikon');
   else if (action === 'range-cycle') cycleRange();
 }
 
@@ -1252,6 +1253,7 @@ const HK_LABELS = {
   'market': 'Dino-Markt',
   'group': 'Gruppe',
   'profile': 'Profil',
+  'lexikon': 'Dino-Lexikon',
   'settings-toggle': 'Einstellungen',
   'admin-menu': 'Admin-/Team-Menü',
   'voice-connect': 'Voice verbinden/trennen',
@@ -1407,12 +1409,13 @@ function toggleFeature(id) {
   else if (id === 'market') renderMarket();
   else if (id === 'group') renderGroup();
   else if (id === 'profile') renderProfile();
+  else if (id === 'lexikon') renderLexikon();
   else if (id === 'skinEditor') renderSkinEditor();
   el(id).style.display = 'block';
   updateInteractive();
 }
 function closeAllFeatures(skipInteractive) {
-  ['dinoInfo', 'skinEditor', 'garage', 'market', 'group', 'profile'].forEach((id) => { el(id).style.display = 'none'; });
+  ['dinoInfo', 'skinEditor', 'garage', 'market', 'group', 'profile', 'lexikon'].forEach((id) => { el(id).style.display = 'none'; });
   if (featureOpen === 'dinoInfo') stopDinoInfo();
   featureOpen = null;
   if (!skipInteractive) updateInteractive();
@@ -1504,6 +1507,74 @@ function renderProfile() {
     <div style="margin-top:10px;font-size:12px;color:var(--muted)">🎟️ Token: <span style="color:#eee">${escapeHtml(tokenList)}</span></div>
     <button class="closeFeature secondary" style="margin-top:12px">Schließen</button>`;
   close();
+}
+
+// ── Dino-Lexikon (statischer Content, von Hideki/Team pflegbar) ───────────────
+const DINO_LEXIKON = {
+  Tyrannosaurus:    { diet: 'carni', role: 'Apex-Räuber', growth: 'langsam', strengths: ['Höchster Schaden & HP', 'Einschüchterung', 'Bisskraft'], weaknesses: ['Wendet langsam', 'Ziel für Rudel', 'Hoher Hunger'], tip: 'Meide offene Kämpfe gegen Gruppen — nutze Deckung und gezielte Bisse.' },
+  Allosaurus:       { diet: 'carni', role: 'Apex / Rudel', growth: 'mittel', strengths: ['Starker Bleed', 'Rudeltaktik', 'Ausgewogen'], weaknesses: ['Einzeln verwundbar'], tip: 'Jage im Rudel und setze auf Blutung statt Dauer-Tank.' },
+  Carnotaurus:      { diet: 'carni', role: 'Schneller Mid-Carni', growth: 'mittel', strengths: ['Hohe Geschwindigkeit', 'Sprint'], weaknesses: ['Wenig HP', 'Schwach im Dauerkampf'], tip: 'Hit & Run — schlage zu und löse dich, lass dich nicht festklammern.' },
+  Ceratosaurus:     { diet: 'carni', role: 'Mid-Carni (semi-aquatisch)', growth: 'mittel', strengths: ['Bleed', 'Wendig', 'Wasser'], weaknesses: ['Zerbrechlich'], tip: 'Nutze Wasser zum Jagen und Fliehen.' },
+  Deinosuchus:      { diet: 'carni', role: 'Aquatischer Apex', growth: 'langsam', strengths: ['Tödlich im Wasser', 'Grab/Latch'], weaknesses: ['An Land langsam & hilflos'], tip: 'Kämpfe nur im oder am Wasser — locke Beute ans Ufer.' },
+  Dilophosaurus:    { diet: 'carni', role: 'Small-Carni', growth: 'schnell', strengths: ['Giftspucke aus Distanz', 'Wendig'], weaknesses: ['Sehr fragil'], tip: 'Schwäche aus Distanz an, stell dich nie offen.' },
+  Herrerasaurus:    { diet: 'carni', role: 'Small-Carni', growth: 'schnell', strengths: ['Schnell', 'Bleed', 'Agil'], weaknesses: ['Winzige HP'], tip: 'Hit & Run gegen Kleintiere, Kämpfe gegen Große meiden.' },
+  Omniraptor:       { diet: 'carni', role: 'Rudel-Raptor', growth: 'schnell', strengths: ['Rudel', 'Pounce/Sprung', 'Wendig'], weaknesses: ['Einzeln schwach'], tip: 'Nur im Rudel stark — koordiniert Pounces.' },
+  Pteranodon:       { diet: 'carni', role: 'Flieger / Scout', growth: 'mittel', strengths: ['Flug', 'Aufklärung', 'Fisch'], weaknesses: ['Am Boden hilflos'], tip: 'Bleib in der Luft und scoute für deine Gruppe.' },
+  Troodon:          { diet: 'carni', role: 'Nacht-Jäger (Small)', growth: 'schnell', strengths: ['Nachtsicht', 'Gift', 'Rudel'], weaknesses: ['Extrem fragil'], tip: 'Jage nachts und nur in der Gruppe.' },
+  Triceratops:      { diet: 'herbi', role: 'Tank-Herbi (Apex)', growth: 'langsam', strengths: ['Enorme HP', 'Charge', 'Konter'], weaknesses: ['Langsam', 'Wendet schlecht'], tip: 'Stell dich und kontere Angreifer mit der Charge.' },
+  Stegosaurus:      { diet: 'herbi', role: 'Tank-Herbi', growth: 'mittel', strengths: ['Thagomizer-Schwanz', 'Hohe Defensive'], weaknesses: ['Langsam', 'Nach vorn verwundbar'], tip: 'Halte Angreifer hinter dir und triff mit dem Schwanz.' },
+  Diabloceratops:   { diet: 'herbi', role: 'Konter-Herbi (Mid)', growth: 'mittel', strengths: ['Hörner', 'Wendig', 'Konter'], weaknesses: ['Mittlere HP'], tip: 'Aggressiver Konter — nutze die Hörner offensiv.' },
+  Tenontosaurus:    { diet: 'herbi', role: 'Mid-Herbi', growth: 'mittel', strengths: ['Schwanzschlag', 'Zäh'], weaknesses: ['Kein Burst'], tip: 'Defensiv kämpfen, mit dem Schwanz auf Abstand halten.' },
+  Maiasaura:        { diet: 'herbi', role: 'Herden-Herbi / Nester', growth: 'mittel', strengths: ['Tritt', 'Soziale Herde', 'Nest-Heilung'], weaknesses: ['Kein starker Burst'], tip: 'In der Herde sicher — tritt nach hinten aus.' },
+  Pachycephalosaurus:{ diet: 'herbi', role: 'Ramm-Herbi (Small-Mid)', growth: 'schnell', strengths: ['Aufgeladene Ramm-Charge', 'Knockback', 'Wendig'], weaknesses: ['Wenig HP'], tip: 'Lade Rammstöße auf und kite Carnivoren.' },
+  Dryosaurus:       { diet: 'herbi', role: 'Fluchttier (Small)', growth: 'schnell', strengths: ['Sehr schnell', 'Ausdauernd'], weaknesses: ['Keine Offensive'], tip: 'Reines Fluchttier — renne, setze auf Ausdauer-Mutationen.' },
+  Hypsilophodon:    { diet: 'herbi', role: 'Tiny-Herbi', growth: 'schnell', strengths: ['Winzig', 'Schnell', 'Versteckt'], weaknesses: ['Wehrlos'], tip: 'Bleib unsichtbar, nutze Büsche und Deckung.' },
+  Gallimimus:       { diet: 'both', role: 'Speed-Omni (Small)', growth: 'schnell', strengths: ['Extrem schnell', 'Ausdauer'], weaknesses: ['Kaum Verteidigung'], tip: 'Speed-Build — fliehe statt zu kämpfen.' },
+  Beipiaosaurus:    { diet: 'both', role: 'Krallen-Herbi (Small)', growth: 'schnell', strengths: ['Krallen', 'Wendig'], weaknesses: ['Fragil'], tip: 'Defensiv spielen und in Deckung wachsen.' },
+};
+const DIET_LABEL = { carni: '🥩 Fleischfresser', herbi: '🌿 Pflanzenfresser', both: '🍽️ Allesfresser' };
+const DIET_DOT = { carni: '#ef4444', herbi: '#22c55e', both: '#f59e0b' };
+let lexSel = null;
+
+function renderLexikon() {
+  const panel = el('lexikon');
+  const wire = () => { panel.querySelector('.closeFeature').onclick = () => closeAllFeatures(); };
+
+  if (lexSel && DINO_LEXIKON[lexSel]) {
+    const d = DINO_LEXIKON[lexSel];
+    const li = (arr, col) => arr.map((s) => `<li style="color:${col}">${escapeHtml(s)}</li>`).join('');
+    panel.innerHTML = `<h2>📖 ${escapeHtml(lexSel)}</h2>
+      <div style="font-size:13px;margin-bottom:10px"><span style="color:${DIET_DOT[d.diet]}">●</span> ${DIET_LABEL[d.diet]} · <b>${escapeHtml(d.role)}</b> · Wachstum: ${escapeHtml(d.growth)}</div>
+      <div style="display:flex;gap:18px;flex-wrap:wrap">
+        <div style="flex:1;min-width:150px"><div style="font-weight:600;color:#22c55e;margin-bottom:4px">Stärken</div><ul style="margin:0 0 0 16px;font-size:13px;line-height:1.6">${li(d.strengths, '#cbd5b0')}</ul></div>
+        <div style="flex:1;min-width:150px"><div style="font-weight:600;color:#ef4444;margin-bottom:4px">Schwächen</div><ul style="margin:0 0 0 16px;font-size:13px;line-height:1.6">${li(d.weaknesses, '#e4b8b8')}</ul></div>
+      </div>
+      <div style="margin-top:12px;padding:9px 11px;background:rgba(139,92,246,0.12);border:1px solid var(--border);border-radius:8px;font-size:13px">💡 ${escapeHtml(d.tip)}</div>
+      <div style="display:flex;gap:8px;margin-top:14px">
+        <button id="lexBack" style="flex:1">← Zurück</button>
+        <button class="closeFeature secondary" style="flex:1">Schließen</button>
+      </div>`;
+    panel.querySelector('#lexBack').onclick = () => { lexSel = null; renderLexikon(); };
+    wire();
+    return;
+  }
+
+  const order = ['carni', 'herbi', 'both'];
+  const names = Object.keys(DINO_LEXIKON).sort();
+  let html = '';
+  for (const diet of order) {
+    const group = names.filter((n) => DINO_LEXIKON[n].diet === diet);
+    if (!group.length) continue;
+    html += `<div style="font-weight:600;color:var(--accent);margin:10px 0 6px">${DIET_LABEL[diet]}</div>`;
+    html += group.map((n) => `<button class="lexItem secondary" data-dino="${n}" style="display:flex;justify-content:space-between;align-items:center;width:100%;margin-bottom:5px;text-align:left">
+      <span><span style="color:${DIET_DOT[diet]}">●</span> ${escapeHtml(n)}</span>
+      <span style="color:var(--muted);font-size:12px;font-weight:400">${escapeHtml(DINO_LEXIKON[n].role)}</span></button>`).join('');
+  }
+  panel.innerHTML = `<h2>📖 Dino-Lexikon <span style="font-size:13px;color:var(--muted);font-weight:400">· ${names.length} Spezies</span></h2>
+    <div style="max-height:55vh;overflow:auto;padding-right:4px">${html}</div>
+    <button class="closeFeature secondary" style="margin-top:10px">Schließen</button>`;
+  panel.querySelectorAll('.lexItem').forEach((b) => { b.onclick = () => { lexSel = b.dataset.dino; renderLexikon(); }; });
+  wire();
 }
 
 // ── Elder / Prime-Bedingungen ────────────────────────────────────────────────
@@ -2216,6 +2287,7 @@ const MOVABLE = [
   { id: 'market',      label: 'Markt' },
   { id: 'group',       label: 'Gruppe (F2)' },
   { id: 'profile',     label: 'Profil (F1)' },
+  { id: 'lexikon',     label: 'Dino-Lexikon' },
 ];
 let editMode = false;
 function loadPositions() { try { return JSON.parse(localStorage.getItem('bf-layout')) || {}; } catch { return {}; } }
