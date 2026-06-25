@@ -1857,8 +1857,7 @@ async function renderSkinEditor() {
 
   const swatches = SKIN_GROUPS.map(([k, l]) => `<label style="display:flex;justify-content:space-between;align-items:center;gap:8px;padding:6px 8px;background:rgba(255,255,255,0.04);border-radius:8px;font-size:13px;cursor:pointer"><span style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${l}</span><input type="color" data-col="${k}" value="${linToHex(skinState.colors[k])}" style="width:40px;height:26px;border:0;background:none;cursor:pointer;flex:none"></label>`).join('');
   panel.innerHTML = `<h2>🎨 Skin Editor — ${me.dino}</h2>
-    <div id="skPreview" style="height:96px;border-radius:12px;overflow:hidden;margin-bottom:6px"></div>
-    <div id="skLive" style="font-size:12px;color:#22c55e;margin-bottom:14px">🟢 Änderungen werden live übernommen</div>
+    <div id="skLive" style="font-size:12px;color:#22c55e;margin:2px 0 14px">🟢 Änderungen werden live im Spiel übernommen</div>
     <div class="sec-title">Farben</div>
     <div style="display:grid;grid-template-columns:1fr 1fr;gap:6px;margin:8px 0 14px">${swatches}</div>
     <div class="sec-title">Muster & Variation</div>
@@ -1909,9 +1908,12 @@ function skinCode() {
   const payload = { v: s.skinVariation, p: s.patternIndex, c: SKIN_GROUPS.map(([k]) => s.colors[k].map((x) => Math.round(x * 1000) / 1000)) };
   return 'BFSKIN1:' + btoa(JSON.stringify(payload));
 }
-function copySkinCode() {
+async function copySkinCode() {
   const code = skinCode();
-  navigator.clipboard.writeText(code).then(() => showToast('📋 Farb-Code kopiert — zum Teilen einfügen', 'success')).catch(() => showToast('Kopieren fehlgeschlagen', 'error'));
+  let ok = false;
+  try { ok = await window.bf.copyText(code); } catch {}                 // Main-Prozess (auch ohne Fokus)
+  if (!ok) { try { await navigator.clipboard.writeText(code); ok = true; } catch {} } // Fallback
+  showToast(ok ? '📋 Farb-Code kopiert — zum Teilen einfügen' : 'Kopieren fehlgeschlagen', ok ? 'success' : 'error');
 }
 function importSkinCode(raw) {
   try {
@@ -1928,8 +1930,9 @@ function importSkinCode(raw) {
   } catch { showToast('Ungültiger Farb-Code', 'error'); }
 }
 function updateSkinPreview() {
+  const p = el('skPreview'); if (!p) return; // Vorschau entfernt — Farben sieht man live im Spiel
   const c = skinState.colors;
-  el('skPreview').innerHTML = dinoPreviewSVG({ id: 'sk', colors: { body: c.bodyColor, markings: c.markingsColor, underbelly: c.underbellyColor, flank: c.flankColor, detail: c.detailColor, eyes: c.eyesColor } });
+  p.innerHTML = dinoPreviewSVG({ id: 'sk', colors: { body: c.bodyColor, markings: c.markingsColor, underbelly: c.underbellyColor, flank: c.flankColor, detail: c.detailColor, eyes: c.eyesColor } });
 }
 async function applySkin(auto) {
   setSkinLive('… wird übernommen', '#f59e0b');

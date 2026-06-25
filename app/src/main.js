@@ -1,4 +1,4 @@
-const { app, BrowserWindow, ipcMain, shell, session, globalShortcut, screen, Tray, Menu, nativeImage } = require('electron');
+const { app, BrowserWindow, ipcMain, shell, session, globalShortcut, screen, Tray, Menu, nativeImage, clipboard } = require('electron');
 const path = require('node:path');
 const fs = require('node:fs');
 const http = require('node:http');
@@ -426,13 +426,20 @@ ipcMain.on('update-check', () => checkForUpdates());
 ipcMain.on('update-download', () => { if (app.isPackaged) autoUpdater.downloadUpdate().catch((e) => console.error('[update] Download:', e?.message || e)); });
 ipcMain.on('update-install', () => { isQuitting = true; try { autoUpdater.quitAndInstall(false, true); } catch (e) { console.error('[update] Install:', e?.message || e); } });
 
+ipcMain.handle('copy-text', (_e, t) => { try { clipboard.writeText(String(t ?? '')); return true; } catch { return false; } });
+
 ipcMain.on('set-interactive', (_e, interactive) => {
   if (!overlayWindow) return;
   overlayInteractive = !!interactive; // verhindert Ausblenden, während Map/Settings offen sind
   overlayWindow.setIgnoreMouseEvents(!interactive, { forward: true });
   if (interactive) {
     overlayWindow.setAlwaysOnTop(true, 'screen-saver');
-    overlayWindow.focus();           // Overlay holt Fokus → Spiel bekommt keine Eingaben
+    // Fokus möglichst hart vom (Vollbild-)Spiel holen — sonst landen Klicks im Spiel
+    // (Kameradrehung/Biss). show() aktiviert das Fenster, focus()+moveTop() forcieren es.
+    try { overlayWindow.setFocusable(true); } catch {}
+    try { overlayWindow.show(); } catch {}        // aktiviert (anders als showInactive)
+    try { overlayWindow.focus(); } catch {}
+    try { overlayWindow.moveTop(); } catch {}
   } else {
     overlayWindow.blur();            // gibt den Fokus zurück ans Spiel
   }
