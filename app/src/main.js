@@ -434,13 +434,19 @@ ipcMain.on('set-interactive', (_e, interactive) => {
   overlayWindow.setIgnoreMouseEvents(!interactive, { forward: true });
   if (interactive) {
     overlayWindow.setAlwaysOnTop(true, 'screen-saver');
-    // Fokus möglichst hart vom (Vollbild-)Spiel holen — sonst landen Klicks im Spiel
-    // (Kameradrehung/Biss). show() aktiviert das Fenster, focus()+moveTop() forcieren es.
+    // Fokus möglichst hart vom Spiel holen — sonst landen Klicks im Spiel (Kameradrehung/
+    // Biss). Windows sperrt den Foreground-Steal teils; app.focus({steal}) + ein kurzes
+    // setFocusable-Toggle umgeht das zuverlässiger als focus() allein.
     try { overlayWindow.setFocusable(true); } catch {}
     try { overlayWindow.show(); } catch {}        // aktiviert (anders als showInactive)
-    try { overlayWindow.focus(); } catch {}
     try { overlayWindow.moveTop(); } catch {}
+    try { overlayWindow.focus(); } catch {}
+    try { app.focus({ steal: true }); } catch {}  // App-Ebene: Foreground hart stehlen
+    // Zweiter Versuch nach einem Tick — manche Fullscreen-Spiele geben den Fokus
+    // erst leicht verzögert frei.
+    setTimeout(() => { try { if (overlayInteractive && overlayWindow) { overlayWindow.focus(); app.focus({ steal: true }); } } catch {} }, 60);
   } else {
+    try { overlayWindow.setFocusable(true); } catch {}
     overlayWindow.blur();            // gibt den Fokus zurück ans Spiel
   }
 });
