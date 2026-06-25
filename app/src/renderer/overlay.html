@@ -14,7 +14,7 @@
     * { box-sizing: border-box; margin: 0; padding: 0; }
     html, body { width: 100%; height: 100%; background: transparent; overflow: hidden; font-family: system-ui, sans-serif; color: #eee; user-select: none; }
     /* Glas-Optik für alle Panels mit var(--panel) */
-    #hud, .toast, #micIndicator, #zoneBox, #rangeBox, #settings, .feature-panel,
+    #hud, .toast, #micIndicator, #zoneBox, #rangeBox, #settings, #adminPanel, .feature-panel,
     #zonePanel, #calibPanel, #dinoDetail .box {
       backdrop-filter: var(--blur); -webkit-backdrop-filter: var(--blur);
     }
@@ -85,6 +85,11 @@
 
     /* Settings: 3-Spalten-Layout */
     #settings.wide { width: clamp(760px, 82vw, 1120px); }
+    /* Admin-Panel: eigenständiges Modal wie Settings */
+    #adminPanel { position: absolute; top: 50%; left: 50%; transform: translate(-50%,-50%); display: none;
+      background: var(--panel); border: 1px solid var(--border); border-radius: 16px; padding: 26px;
+      box-shadow: var(--glow-strong); width: clamp(760px, 82vw, 1120px); z-index: 60; }
+    #adminPanel h2 { font-size: 16px; margin-bottom: 14px; }
     .settings-cols { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 20px; max-height: 66vh; overflow: auto; padding-right: 4px; }
     .settings-col { min-width: 0; display: flex; flex-direction: column; }
     .settings-col .col-head { font-size: 14px; font-weight: 800; color: var(--accent); letter-spacing: .3px; padding-bottom: 8px; margin-bottom: 12px; border-bottom: 1px solid var(--border); }
@@ -270,42 +275,7 @@
         <div id="tpListItems"><div style="color:var(--muted)">Keine Punkte.</div></div>
       </div>
 
-      <!-- Admin-Button + Panel (nur Admins) -->
-      <button id="adminBtn" style="display:none;position:absolute;top:12px;left:234px;width:auto;padding:8px 14px;background:var(--panel);border:1px solid var(--border);color:#eee;border-radius:8px;font-size:13px;font-weight:600;cursor:pointer">⚙️ Admin</button>
-      <div id="adminPanel" style="display:none;position:absolute;top:56px;left:234px;width:286px;background:var(--panel);border:1px solid var(--border);border-radius:10px;padding:14px;font-size:12px">
-        <div style="font-weight:700;margin-bottom:8px">⚙️ Admin-Menü</div>
-        <button id="adminCalibBtn" style="width:100%;margin-bottom:12px">🔧 Karte kalibrieren (global)</button>
-        <div style="font-weight:600;margin-bottom:5px">📍 TP-Punkt an aktueller Position</div>
-        <input id="tpName" placeholder="Name" maxlength="40" style="width:100%;margin-bottom:5px;padding:7px;border-radius:6px;border:1px solid var(--border);background:rgba(0,0,0,0.25);color:#eee;box-sizing:border-box">
-        <div style="display:flex;gap:5px;margin-bottom:6px">
-          <input id="tpPrice" type="number" min="0" placeholder="Preis" style="flex:1;min-width:0;padding:7px;border-radius:6px;border:1px solid var(--border);background:rgba(0,0,0,0.25);color:#eee;box-sizing:border-box">
-          <input id="tpCooldown" type="number" min="0" placeholder="Cooldown (Min)" style="flex:1;min-width:0;padding:7px;border-radius:6px;border:1px solid var(--border);background:rgba(0,0,0,0.25);color:#eee;box-sizing:border-box">
-        </div>
-        <button id="tpCreateBtn" style="width:100%;margin-bottom:12px">＋ Erstellen</button>
-        <div style="font-weight:600;margin-bottom:5px">Vorhandene Punkte</div>
-        <div id="adminTpList" style="max-height:150px;overflow:auto"></div>
-
-        <div style="border-top:1px solid var(--border);margin:12px 0 10px"></div>
-        <div style="font-weight:700;margin-bottom:8px">🦖 AI-Dinos</div>
-        <div style="display:flex;gap:5px;margin-bottom:6px">
-          <select id="aiSpecies" class="bf-select" style="flex:2"></select>
-          <input id="aiCount" type="number" min="1" max="50" value="1" style="flex:1;min-width:0;padding:7px;border-radius:6px;border:1px solid var(--border);background:rgba(0,0,0,0.25);color:#eee">
-        </div>
-        <button id="aiSpawnMapBtn" style="width:100%;margin-bottom:8px">🗺️ Auf Karte klicken zum Spawnen</button>
-        <div style="display:flex;gap:5px;margin-bottom:5px">
-          <button id="aiStartBtn" style="flex:1;background:#16a34a">▶️ Start</button>
-          <button id="aiStopBtn" class="secondary" style="flex:1">⏹️ Stop</button>
-        </div>
-        <div style="display:flex;gap:5px;margin-bottom:5px">
-          <button id="aiDespawnBtn" class="secondary" style="flex:1">🧹 Despawn</button>
-          <button id="aiKillBtn" style="flex:1;background:#b91c1c">💀 Kill</button>
-        </div>
-        <div style="display:flex;gap:5px">
-          <button id="aiPanicBtn" style="flex:1;background:#dc2626">🆘 PANIC</button>
-          <button id="aiDisableBtn" class="secondary" style="flex:1">🛑 DLL aus</button>
-        </div>
-        <div id="aiStatus" style="margin-top:8px;font-size:11px;color:var(--muted)"></div>
-      </div>
+      <!-- Admin-Panel ist jetzt ein eigenständiges Modal (siehe #adminPanel unten) -->
 
       <!-- TP-Bestätigung -->
       <div id="tpConfirm" style="display:none;position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);z-index:5;background:rgba(15,10,30,0.98);border:1px solid var(--accent);border-radius:12px;padding:18px;font-size:14px;text-align:center;box-shadow:var(--glow);min-width:270px">
@@ -393,8 +363,103 @@
     </div>
     <div id="versionInfo" style="text-align:center;font-size:11px;color:var(--muted);margin:10px 0 4px">v…</div>
     <div class="btnrow">
+      <button id="openAdminBtn" style="display:none;background:#dc2626">🛡️ Admin-Panel</button>
       <button id="logoutBtn" class="secondary">Abmelden</button>
       <button id="closeBtn" class="secondary">Schließen</button>
+    </div>
+  </div>
+
+  <!-- Admin-Panel (eigenständiges Modal, NUR Admins — kein Support) -->
+  <div id="adminPanel">
+    <button id="adminCloseBtn" class="secondary" style="position:absolute;top:16px;right:18px;flex:none;width:auto;padding:6px 12px">✕</button>
+    <h2>🛡️ Admin-Panel</h2>
+    <div class="settings-cols">
+
+      <!-- Spalte 1: Spieler-Verwaltung -->
+      <div class="settings-col">
+        <div class="col-head">👤 Spieler-Verwaltung</div>
+        <div class="set-block">
+          <div class="set-label">Discord-User suchen</div>
+          <input id="admUserSearch" list="admUserList" placeholder="Name tippen…" class="bf-select" style="cursor:text" autocomplete="off">
+          <datalist id="admUserList"></datalist>
+          <button id="admUserLoad" style="width:100%;margin-top:8px">🔍 Info laden</button>
+        </div>
+        <div id="admUserInfo" class="set-block" style="display:none;font-size:12px;line-height:1.6"></div>
+        <div id="admUserActions" class="set-block" style="display:none">
+          <button id="admLightningBtn" style="width:100%;background:#dc2626">⚡ Lightning Strike (Slay)</button>
+        </div>
+      </div>
+
+      <!-- Spalte 2: Beschenken -->
+      <div class="settings-col">
+        <div class="col-head">🎁 Beschenken</div>
+        <div class="set-block">
+          <div class="set-label">Ziel</div>
+          <select id="giftTargetKind" class="bf-select">
+            <option value="user">👤 Einzelner User</option>
+            <option value="role">👥 Rolle (alle Mitglieder)</option>
+            <option value="online">🌐 Alle Online</option>
+          </select>
+        </div>
+        <div id="giftUserBox" class="set-block">
+          <div class="set-label">User</div>
+          <input id="giftUserSearch" list="admUserList" placeholder="Name tippen…" class="bf-select" style="cursor:text" autocomplete="off">
+        </div>
+        <div id="giftRoleBox" class="set-block" style="display:none">
+          <div class="set-label">Rolle</div>
+          <select id="giftRoleSel" class="bf-select"></select>
+        </div>
+        <div class="set-block">
+          <div class="set-label">Was</div>
+          <select id="giftType" class="bf-select"></select>
+        </div>
+        <div class="set-block">
+          <div class="set-label">Menge</div>
+          <input id="giftAmount" type="number" min="1" value="1" class="bf-select" style="cursor:text">
+        </div>
+        <button id="giftSubmit" style="width:100%;margin-top:14px;background:#16a34a">🎁 Vergeben</button>
+        <div id="giftResult" style="font-size:11px;color:var(--muted);margin-top:8px"></div>
+      </div>
+
+      <!-- Spalte 3: Karte, TP & AI -->
+      <div class="settings-col">
+        <div class="col-head">🗺️ Karte, TP & AI</div>
+        <div class="set-block">
+          <button id="adminCalibBtn" style="width:100%">🔧 Karte kalibrieren (global)</button>
+        </div>
+        <div class="set-block">
+          <div class="set-label">📍 TP-Punkt an aktueller Position</div>
+          <input id="tpName" placeholder="Name" maxlength="40" class="bf-select" style="cursor:text;margin-bottom:6px">
+          <div style="display:flex;gap:6px;margin-bottom:8px">
+            <input id="tpPrice" type="number" min="0" placeholder="Preis" class="bf-select" style="flex:1">
+            <input id="tpCooldown" type="number" min="0" placeholder="Cooldown (Min)" class="bf-select" style="flex:1">
+          </div>
+          <button id="tpCreateBtn" style="width:100%">＋ Erstellen</button>
+          <div id="adminTpList" style="max-height:120px;overflow:auto;margin-top:8px;font-size:12px"></div>
+        </div>
+        <div class="set-block">
+          <div class="set-label">🦖 AI-Dinos</div>
+          <div style="display:flex;gap:6px;margin-bottom:8px">
+            <select id="aiSpecies" class="bf-select" style="flex:2"></select>
+            <input id="aiCount" type="number" min="1" max="50" value="1" class="bf-select" style="flex:1">
+          </div>
+          <button id="aiSpawnMapBtn" style="width:100%;margin-bottom:8px">🗺️ Auf Karte klicken zum Spawnen</button>
+          <div style="display:flex;gap:6px;margin-bottom:6px">
+            <button id="aiStartBtn" style="flex:1;background:#16a34a">▶️ Start</button>
+            <button id="aiStopBtn" class="secondary" style="flex:1">⏹️ Stop</button>
+          </div>
+          <div style="display:flex;gap:6px;margin-bottom:6px">
+            <button id="aiDespawnBtn" class="secondary" style="flex:1">🧹 Despawn</button>
+            <button id="aiKillBtn" style="flex:1;background:#b91c1c">💀 Kill</button>
+          </div>
+          <div style="display:flex;gap:6px">
+            <button id="aiPanicBtn" style="flex:1;background:#dc2626">🆘 PANIC</button>
+            <button id="aiDisableBtn" class="secondary" style="flex:1">🛑 DLL aus</button>
+          </div>
+          <div id="aiStatus" style="margin-top:8px;font-size:11px;color:var(--muted)"></div>
+        </div>
+      </div>
+
     </div>
   </div>
 

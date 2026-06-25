@@ -531,8 +531,13 @@ function sessionFrom(req) {
 // Team = Owner/Admin/Support — darf Admin-Menü + TP/Kalibrierung nutzen.
 // (s.staff als Fallback für alte Sessions; FORCE_TEAM_STEAMIDS als harte Garantie.)
 const FORCE_TEAM_STEAMIDS = (process.env.FORCE_TEAM_STEAMIDS ?? '').split(',').map((s) => s.trim()).filter(Boolean);
+const FORCE_ADMIN_STEAMIDS = (process.env.FORCE_ADMIN_STEAMIDS ?? '').split(',').map((s) => s.trim()).filter(Boolean);
 function isTeamMember(s) {
   return !!(s && (s.team || s.admin || s.staff || FORCE_TEAM_STEAMIDS.includes(s.steamId)));
+}
+// Admin = NUR Owner/Admin (kein Support). Gilt für das ganze Admin-Panel.
+function isAdminMember(s) {
+  return !!(s && (s.admin || FORCE_ADMIN_STEAMIDS.includes(s.steamId)));
 }
 
 // ── AI-Dinos: Proxy zum control-server (Game-Box), nur Team ──────────────────
@@ -577,6 +582,139 @@ async function fetchPlayers() {
   if (!r.ok) throw new Error(`Game-Server HTTP ${r.status}`);
   return (await r.json()).Players ?? [];
 }
+
+// ── Admin-Verwaltung (NUR Admin): User-Info, Lightning, Beschenken ───────────
+function addPoints(steamId, n) { setPointsVal(steamId, getPoints(steamId) + n); }
+function addToken(steamId, type, n) {
+  const all = readJson(INVENTORY_FILE, {});
+  if (!all[steamId]) all[steamId] = {};
+  all[steamId][type] = (all[steamId][type] ?? 0) + n;
+  writeJsonFile(INVENTORY_FILE, all);
+}
+async function discordApi(path) {
+  const r = await fetch(`https://discord.com/api${path}`, {
+    headers: { Authorization: `Bot ${DISCORD_BOT_TOKEN}` },
+    signal: AbortSignal.timeout(8000),
+  });
+  if (!r.ok) throw new Error(`Discord ${r.status}`);
+  return r.json();
+}
+let _membersCache = { at: 0, list: null };
+async function guildMembers() {
+  if (_membersCache.list && Date.now() - _membersCache.at < 60_000) return _membersCache.list;
+  const list = await discordApi(`/guilds/${DISCORD_GUILD_ID}/members?limit=1000`);
+  _membersCache = { at: Date.now(), list };
+  return list;
+}
+
+// Liste aller verknüpften Discord-User (für das Such-Dropdown)
+app.get('/admin/users', async (req, res) => {
+  const s = sessionFrom(req);
+  if (!isAdminMember(s)) return res.status(403).json({ error: 'Nur für Admins' });
+  if (!DISCORD_BOT_TOKEN || !DISCORD_GUILD_ID) return res.status(503).json({ error: 'Discord nicht konfiguriert' });
+  try {
+    const accounts = readJson(ACCOUNTS_PATH, {});
+    const members = await guildMembers();
+    const users = members
+      .filter((m) => m.user && accounts[m.user.id])
+      .map((m) => ({ discordId: m.user.id, name: m.nick || m.user.global_name || m.user.username, steamId: accounts[m.user.id] }))
+      .sort((a, b) => a.name.localeCompare(b.name));
+    res.json({ users });
+  } catch (e) { res.status(502).json({ error: e.message }); }
+});
+
+// Liste aller Rollen (für Beschenken an Rolle)
+app.get('/admin/roles', async (req, res) => {
+  const s = sessionFrom(req);
+  if (!isAdminMember(s)) return res.status(403).json({ error: 'Nur für Admins' });
+  if (!DISCORD_BOT_TOKEN || !DISCORD_GUILD_ID) return res.status(503).json({ error: 'Discord nicht konfiguriert' });
+  try {
+    const roles = await discordApi(`/guilds/${DISCORD_GUILD_ID}/roles`);
+    const out = roles
+      .filter((r) => r.name !== '@everyone' && !r.managed)
+      .sort((a, b) => b.position - a.position)
+      .map((r) => ({ id: r.id, name: r.name }));
+    res.json({ roles: out });
+  } catch (e) { res.status(502).json({ error: e.message }); }
+});
+
+// User-Info: Punkte, Token, Rang/Rollen, Live-Dino
+app.post('/admin/user-info', express.json(), async (req, res) => {
+  const s = sessionFrom(req);
+  if (!isAdminMember(s)) return res.status(403).json({ error: 'Nur für Admins' });
+  const steamId = String(req.body?.steamId || '').trim();
+  if (!/^\d{17}$/.test(steamId)) return res.status(400).json({ error: 'Ungültige SteamID' });
+  const accounts = readJson(ACCOUNTS_PATH, {});
+  const discordId = Object.keys(accounts).find((d) => accounts[d] === steamId) || null;
+  let name = null, rank = null, roles = [];
+  if (discordId && DISCORD_BOT_TOKEN && DISCORD_GUILD_ID) {
+    try {
+      const [member, allRoles] = await Promise.all([
+        discordApi(`/guilds/${DISCORD_GUILD_ID}/members/${discordId}`),
+        discordApi(`/guilds/${DISCORD_GUILD_ID}/roles`),
+      ]);
+      name = member.nick || member.user?.global_name || member.user?.username || null;
+      const mine = new Set(member.roles || []);
+      roles = allRoles.filter((r) => mine.has(r.id) && r.name !== '@everyone').map((r) => r.name);
+      rank = RANK_ROLES.find((n) => roles.includes(n)) || null;
+    } catch {}
+  }
+  let dino = { online: false };
+  try {
+    const players = await fetchPlayers();
+    const p = players.find((x) => x.steamId === steamId);
+    if (p) dino = { online: true, dinoClass: p.dinoClass, gender: p.gender, grow: p.grow, health: p.health, isElder: p.isElder, elderReplicationStacks: p.elderReplicationStacks };
+  } catch {}
+  res.json({ steamId, discordId, name, rank, roles, points: getPoints(steamId), tokens: getInventory(steamId), dino });
+});
+
+// Lightning Strike (Slay) auf den aktiven Ingame-Dino
+app.post('/admin/lightning', express.json(), async (req, res) => {
+  const s = sessionFrom(req);
+  if (!isAdminMember(s)) return res.status(403).json({ error: 'Nur für Admins' });
+  const steamId = String(req.body?.steamId || '').trim();
+  if (!/^\d{17}$/.test(steamId)) return res.status(400).json({ error: 'Ungültige SteamID' });
+  try {
+    const r = await fetch(`${PANEL_BASE_URL}/players/${encodeURIComponent(steamId)}/lightning`, {
+      method: 'POST', headers: { Authorization: `Bearer ${PANEL_ADMIN_TOKEN}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ slay: true }), signal: AbortSignal.timeout(8000),
+    });
+    const d = await r.json().catch(() => ({}));
+    if (!r.ok) return res.status(502).json({ error: d.Msg || d.error || `HTTP ${r.status}` });
+    res.json({ ok: true, slayed: !!d.slayed });
+  } catch (e) { res.status(502).json({ error: e.message }); }
+});
+
+// Beschenken: Punkte/Token an einen User, eine Rolle oder alle Online
+app.post('/admin/gift', express.json(), async (req, res) => {
+  const s = sessionFrom(req);
+  if (!isAdminMember(s)) return res.status(403).json({ error: 'Nur für Admins' });
+  const { targetKind, targetId, type } = req.body || {};
+  const amt = Math.round(Number(req.body?.amount));
+  if (!amt || amt < 1) return res.status(400).json({ error: 'Menge ungültig' });
+  if (type !== 'points' && !TOKEN_ORDER.includes(type)) return res.status(400).json({ error: 'Typ ungültig' });
+  let steamIds = [];
+  try {
+    if (targetKind === 'user') {
+      if (!/^\d{17}$/.test(String(targetId || ''))) return res.status(400).json({ error: 'Ungültige SteamID' });
+      steamIds = [String(targetId)];
+    } else if (targetKind === 'online') {
+      steamIds = (await fetchPlayers()).map((p) => p.steamId).filter(Boolean);
+    } else if (targetKind === 'role') {
+      const accounts = readJson(ACCOUNTS_PATH, {});
+      const members = await guildMembers();
+      steamIds = members.filter((m) => (m.roles || []).includes(String(targetId)) && m.user && accounts[m.user.id]).map((m) => accounts[m.user.id]);
+    } else {
+      return res.status(400).json({ error: 'Ziel ungültig' });
+    }
+  } catch (e) { return res.status(502).json({ error: e.message }); }
+  steamIds = [...new Set(steamIds)];
+  if (!steamIds.length) return res.status(400).json({ error: 'Keine Empfänger gefunden' });
+  for (const sid of steamIds) {
+    if (type === 'points') addPoints(sid, amt); else addToken(sid, type, amt);
+  }
+  res.json({ ok: true, affected: steamIds.length, type, amount: amt });
+});
 
 // Karten-Daten aus einem Garage-/Markt-Slot (Farben, Vitals, Mutationen)
 function slotCard(slot) {

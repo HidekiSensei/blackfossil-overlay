@@ -289,8 +289,13 @@ async function init() {
   window.addEventListener('mouseup', () => { dragging = false; });
   cv.addEventListener('mousemove', tpHoverHitTest);
   cv.addEventListener('mouseleave', () => setHoveredTp(null));
-  // Teleport-Punkte + Admin-Menü
-  el('adminBtn').onclick = () => toggleAdminPanel();
+  // Admin-Panel (eigenständiges Modal, nur Admins)
+  el('openAdminBtn').onclick = () => openAdminPanel();
+  el('adminCloseBtn').onclick = () => closeAdminPanel();
+  el('admUserLoad').onclick = () => admLoadUserInfo();
+  el('admLightningBtn').onclick = () => admLightning();
+  el('giftTargetKind').onchange = () => updateGiftTarget();
+  el('giftSubmit').onclick = () => admGift();
   el('adminCalibBtn').onclick = () => adminCalibrate();
   el('tpCreateBtn').onclick = () => createTp();
 
@@ -744,7 +749,6 @@ async function loadTeleports() {
     teleports = d.teleports || [];
     myPoints = d.points || 0;
     tpIsAdmin = !!(d.isTeam || d.isAdmin);
-    const ab = el('adminBtn'); if (ab) ab.style.display = tpIsAdmin ? 'block' : 'none';
     updateVersionInfo();
     renderTpList();
     renderAdminTpList();
@@ -817,19 +821,168 @@ function tpHoverHitTest(e) {
   setHoveredTp(best);
 }
 
-// ── Admin: TP-Punkte + globale Kalibrierung ──────────────────────────────────
-function toggleAdminPanel() {
-  const p = el('adminPanel');
-  p.style.display = p.style.display === 'block' ? 'none' : 'block';
-  if (p.style.display === 'block') renderAdminTpList();
+// ── Admin-Panel (eigenständiges Modal, NUR Admins) ───────────────────────────
+let adminOpen = false;
+let adminUserMap = new Map();   // Option-Text → { steamId, discordId, name }
+let admSelectedSteamId = null;
+
+function openAdminPanel() {
+  if (!isAdmin) { showToast('Nur für Admins', 'error'); return; }
+  adminOpen = true;
+  el('adminPanel').style.display = 'block';
+  updateInteractive();
+  ensureGiftTypeOptions();
+  loadAdminUsers();
+  loadAdminRoles();
+  loadTeleports();
+  renderAdminTpList();
+}
+function closeAdminPanel() {
+  adminOpen = false;
+  el('adminPanel').style.display = 'none';
+  updateInteractive();
+}
+// Hotkey „admin-menu": Panel umschalten (nur Admins)
+function openAdminMenu() {
+  if (!isAdmin) { loadTeleports(); return; }
+  if (adminOpen) closeAdminPanel(); else openAdminPanel();
 }
 
-// Admin-/Team-Menü per Hotkey: Karte öffnen + Panel zeigen (nur fürs Team)
-function openAdminMenu() {
-  if (!tpIsAdmin) { loadTeleports(); return; } // nicht im Team → nichts tun (lädt Status nach)
-  toggleMap(true);
-  el('adminPanel').style.display = 'block';
-  renderAdminTpList();
+// Discord-User laden → Such-Datalists füllen + Name→SteamID-Map
+async function loadAdminUsers() {
+  if (!sessionToken) return;
+  try {
+    const res = await fetch(`${config.tokenBase}/admin/users`, { headers: { Authorization: `Bearer ${sessionToken}` } });
+    if (!res.ok) return;
+    const d = await res.json();
+    adminUserMap = new Map();
+    const dl = el('admUserList');
+    dl.innerHTML = '';
+    const seen = new Set();
+    for (const u of (d.users || [])) {
+      let key = u.name;
+      if (seen.has(key)) key = `${u.name} (…${u.steamId.slice(-4)})`;
+      seen.add(key);
+      adminUserMap.set(key, u);
+      const opt = document.createElement('option');
+      opt.value = key;
+      dl.appendChild(opt);
+    }
+  } catch {}
+}
+
+// Rollen laden → Beschenken-Rollen-Dropdown
+async function loadAdminRoles() {
+  if (!sessionToken) return;
+  try {
+    const res = await fetch(`${config.tokenBase}/admin/roles`, { headers: { Authorization: `Bearer ${sessionToken}` } });
+    if (!res.ok) return;
+    const d = await res.json();
+    const sel = el('giftRoleSel');
+    sel.innerHTML = '';
+    for (const r of (d.roles || [])) {
+      const o = document.createElement('option');
+      o.value = r.id; o.textContent = r.name;
+      sel.appendChild(o);
+    }
+  } catch {}
+}
+
+const GIFT_TYPES = [
+  { value: 'points', label: '💰 Punkte' },
+  { value: 'hunger', label: '🍖 Hunger-Token' },
+  { value: 'thirst', label: '💧 Durst-Token' },
+  { value: 'protein', label: '🥩 Protein-Token' },
+  { value: 'carbs', label: '🌿 Carbs-Token' },
+  { value: 'lipid', label: '🥑 Lipid-Token' },
+  { value: 'heal', label: '❤️ Heal-Token' },
+  { value: 'grow_boost', label: '📈 Grow-Boost-Token' },
+  { value: 'insta_grow', label: '⚡ Insta-Grow-Token' },
+];
+function ensureGiftTypeOptions() {
+  const sel = el('giftType');
+  if (sel.options.length) return;
+  for (const t of GIFT_TYPES) { const o = document.createElement('option'); o.value = t.value; o.textContent = t.label; sel.appendChild(o); }
+}
+function updateGiftTarget() {
+  const kind = el('giftTargetKind').value;
+  el('giftUserBox').style.display = kind === 'user' ? 'block' : 'none';
+  el('giftRoleBox').style.display = kind === 'role' ? 'block' : 'none';
+}
+
+function resolveAdminUser(inputId) {
+  const v = (el(inputId).value || '').trim();
+  return adminUserMap.get(v) || null;
+}
+
+async function admLoadUserInfo() {
+  const u = resolveAdminUser('admUserSearch');
+  if (!u) { showToast('Bitte einen User aus der Liste wählen', 'error'); return; }
+  admSelectedSteamId = u.steamId;
+  el('admUserInfo').style.display = 'block';
+  el('admUserInfo').innerHTML = '<span style="color:var(--muted)">Lädt…</span>';
+  el('admUserActions').style.display = 'none';
+  try {
+    const res = await fetch(`${config.tokenBase}/admin/user-info`, {
+      method: 'POST', headers: { Authorization: `Bearer ${sessionToken}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ steamId: u.steamId }),
+    });
+    const d = await res.json(); if (!res.ok) throw new Error(d.error || 'Fehler');
+    const toks = Object.entries(d.tokens || {}).filter(([, n]) => n > 0).map(([k, n]) => `${k} ×${n}`).join(', ') || '—';
+    const dino = d.dino && d.dino.online
+      ? `${escapeHtml(d.dino.dinoClass || '?')} · ${Math.round((d.dino.grow || 0) * 100)}%${d.dino.elderReplicationStacks ? ` · 🪦${d.dino.elderReplicationStacks}` : ''}`
+      : 'offline';
+    el('admUserInfo').innerHTML =
+      `<div><b>${escapeHtml(d.name || u.name)}</b> ${d.rank ? `<span style="color:var(--accent)">${escapeHtml(d.rank)}</span>` : ''}</div>` +
+      `<div style="color:var(--muted)">SteamID: ${d.steamId}</div>` +
+      `<div>💰 Punkte: <b>${d.points}</b></div>` +
+      `<div>🎟️ Token: ${escapeHtml(toks)}</div>` +
+      `<div>🦖 Live-Dino: ${dino}</div>`;
+    el('admUserActions').style.display = 'block';
+  } catch (e) { el('admUserInfo').innerHTML = `<span style="color:var(--off)">${escapeHtml(e.message)}</span>`; }
+}
+
+async function admLightning() {
+  if (!admSelectedSteamId) { showToast('Erst einen User laden', 'error'); return; }
+  if (!window.confirm('Lightning Strike (Slay) auf den aktiven Dino dieses Spielers ausführen?')) return;
+  try {
+    const res = await fetch(`${config.tokenBase}/admin/lightning`, {
+      method: 'POST', headers: { Authorization: `Bearer ${sessionToken}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ steamId: admSelectedSteamId }),
+    });
+    const d = await res.json(); if (!res.ok) throw new Error(d.error || 'Fehler');
+    showToast(d.slayed ? '⚡ Spieler geslayed' : '⚡ Blitz gesendet (kein aktiver Dino?)', d.slayed ? 'success' : '');
+  } catch (e) { showToast(e.message, 'error'); }
+}
+
+async function admGift() {
+  const kind = el('giftTargetKind').value;
+  const type = el('giftType').value;
+  const amount = parseInt(el('giftAmount').value) || 0;
+  if (amount < 1) { showToast('Menge ≥ 1', 'error'); return; }
+  const body = { targetKind: kind, type, amount };
+  let label = '';
+  if (kind === 'user') {
+    const u = resolveAdminUser('giftUserSearch');
+    if (!u) { showToast('User wählen', 'error'); return; }
+    body.targetId = u.steamId; label = u.name;
+  } else if (kind === 'role') {
+    const sel = el('giftRoleSel');
+    if (!sel.value) { showToast('Rolle wählen', 'error'); return; }
+    body.targetId = sel.value; label = `Rolle ${sel.options[sel.selectedIndex].text}`;
+  } else { label = 'alle Online'; }
+  const typeLabel = (GIFT_TYPES.find((t) => t.value === type) || {}).label || type;
+  if (!window.confirm(`${amount}× ${typeLabel} an ${label} vergeben?`)) return;
+  el('giftResult').textContent = 'Vergebe…';
+  try {
+    const res = await fetch(`${config.tokenBase}/admin/gift`, {
+      method: 'POST', headers: { Authorization: `Bearer ${sessionToken}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    });
+    const d = await res.json(); if (!res.ok) throw new Error(d.error || 'Fehler');
+    el('giftResult').textContent = `✅ An ${d.affected} Spieler vergeben.`;
+    showToast(`🎁 ${amount}× ${typeLabel} → ${d.affected} Spieler`, 'success');
+  } catch (e) { el('giftResult').textContent = ''; showToast(e.message, 'error'); }
 }
 
 function renderAdminTpList() {
@@ -874,6 +1027,7 @@ async function deleteTp(t) {
 }
 
 async function adminCalibrate() {
+  closeAdminPanel(); // Kalibrierung läuft auf der Karte → Modal schließen
   const ok = await startAutoCalibration();
   if (!ok) return;
   try {
@@ -1703,7 +1857,7 @@ async function updateDinoInfo() {
 
 function updateInteractive() {
   // Maus durchlassen nur wenn Overlay-UI geschlossen ist
-  window.bf.setInteractive(settingsOpen || mapOpen || !!featureOpen);
+  window.bf.setInteractive(settingsOpen || mapOpen || adminOpen || !!featureOpen);
 }
 
 function toggleSettings(force) {
@@ -1760,6 +1914,7 @@ async function connectWithSession(session) {
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
     const data = await res.json();
     isAdmin = !!data.admin;
+    { const ab = el('openAdminBtn'); if (ab) ab.style.display = isAdmin ? 'block' : 'none'; }
     // Kalibrierung & Zonen sind fertig (server-gespeichert) — Tools ausgeblendet,
     // damit niemand versehentlich etwas überschreibt. Bei Bedarf wieder einblendbar.
     el('calibBtn').style.display = 'none';
@@ -1936,6 +2091,8 @@ async function aiControl(action, label) {
 }
 function toggleAiSpawnMode() {
   aiSpawnMode = !aiSpawnMode;
+  // Zum Klicken auf die Karte das Admin-Modal schließen + Karte öffnen
+  if (aiSpawnMode) { closeAdminPanel(); toggleMap(true); }
   const b = el('aiSpawnMapBtn');
   if (b) { b.classList.toggle('secondary', !aiSpawnMode); b.textContent = aiSpawnMode ? '🗺️ Klicke auf die Karte…' : '🗺️ Auf Karte klicken zum Spawnen'; }
   showToast(aiSpawnMode ? '🗺️ Spawn-Modus AN — klick auf die Karte' : 'Spawn-Modus aus', '');
