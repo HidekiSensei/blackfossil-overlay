@@ -143,6 +143,7 @@ function updateHud(d) {
   if (!d) return;
   lastMe = d;
   if (featureOpen === 'profile') renderProfile();
+  { const av = document.getElementById('hudAvatar'); if (av) { if (d.avatarUrl) { if (av.src !== d.avatarUrl) av.src = d.avatarUrl; av.style.display = 'inline-block'; } else av.style.display = 'none'; } }
   if (d.name) document.getElementById('hudName').textContent = d.name;
   if (typeof d.points === 'number') document.getElementById('hudPoints').textContent = `${d.points.toLocaleString('de-DE')} Pkt.`;
   if (d.tier) setTier(d.tier);
@@ -293,7 +294,10 @@ async function init() {
   cv.addEventListener('mousemove', tpHoverHitTest);
   cv.addEventListener('mouseleave', () => setHoveredTp(null));
   // Dock (Overlay-Modus / Alt)
-  document.querySelectorAll('.dock-btn').forEach((b) => { b.onclick = () => dockAction(b.dataset.act); });
+  document.querySelectorAll('.dock-btn').forEach((b) => {
+    b.insertAdjacentHTML('afterbegin', DOCK_ICONS[b.dataset.act] || '');
+    b.onclick = () => navTo(b.dataset.act);
+  });
 
   // Admin-Panel (eigenständiges Modal, nur Admins)
   el('openAdminBtn').onclick = () => openAdminPanel();
@@ -2035,23 +2039,73 @@ async function updateDinoInfo() {
 }
 
 function updateInteractive() {
+  updateDockActive(); // Dock-Highlight immer am aktuellen Stand halten
   // Maus durchlassen nur wenn Overlay-UI geschlossen ist
   window.bf.setInteractive(settingsOpen || mapOpen || adminOpen || overlayMode || !!featureOpen);
 }
 
-// ── Overlay-Modus (Alt): Dock einblenden + Overlay klickbar machen ───────────
+// ── Overlay-/Nav-Modus („^"): Dock einblenden + Overlay klickbar machen ───────
 let overlayMode = false;
 function toggleOverlayMode(force) {
   overlayMode = force !== undefined ? force : !overlayMode;
   const d = el('dock'); if (d) d.style.display = overlayMode ? 'flex' : 'none';
+  if (!overlayMode) closeAllPanels(); // „^" aus → alle Fenster zu
   updateInteractive();
 }
-function dockAction(act) {
-  if (act === 'map') toggleMap();
-  else if (act === 'settings') toggleSettings();
-  else if (act === 'admin') openAdminPanel();
-  else if (act === 'skin') toggleFeature('skinEditor');
-  else toggleFeature(act); // profile | group | lexikon | garage | market
+
+// Schließt jedes offene Dock-Panel (Feature/Karte/Settings/Admin) — Grundlage
+// der „immer nur ein Fenster offen"-Navigation.
+function closeAllPanels() {
+  closeAllFeatures(true);
+  if (mapOpen) toggleMap(false);
+  if (settingsOpen) toggleSettings(false);
+  if (adminOpen) closeAdminPanel();
+}
+
+// Dock-Icons (Lucide, stroke = currentColor → erbt Button-Farbe)
+const dockSvg = (inner) => `<svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">${inner}</svg>`;
+const DOCK_ICONS = {
+  profile:  dockSvg('<path d="M19 21v-2a4 4 0 0 0-4-4H9a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/>'),
+  dino:     dockSvg('<path d="M22 12h-2.5l-2 7-4-18-3 11H2"/>'),
+  group:    dockSvg('<path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M22 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/>'),
+  lexikon:  dockSvg('<path d="M2 3h6a4 4 0 0 1 4 4v14a3 3 0 0 0-3-3H2z"/><path d="M22 3h-6a4 4 0 0 0-4 4v14a3 3 0 0 1 3-3h7z"/>'),
+  garage:   dockSvg('<path d="M21 8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16Z"/><path d="m3.3 7 8.7 5 8.7-5"/><path d="M12 22V12"/>'),
+  market:   dockSvg('<circle cx="8" cy="21" r="1"/><circle cx="19" cy="21" r="1"/><path d="M2 2h2l2.6 12.4a2 2 0 0 0 2 1.6h9.7a2 2 0 0 0 2-1.6L21.3 6H5.1"/>'),
+  map:      dockSvg('<path d="m3 6 6-3 6 3 6-3v15l-6 3-6-3-6 3z"/><path d="M9 3v15"/><path d="M15 6v15"/>'),
+  skin:     dockSvg('<circle cx="13.5" cy="6.5" r=".8" fill="currentColor" stroke="none"/><circle cx="17.5" cy="10.5" r=".8" fill="currentColor" stroke="none"/><circle cx="6.5" cy="12.5" r=".8" fill="currentColor" stroke="none"/><circle cx="8.5" cy="7.5" r=".8" fill="currentColor" stroke="none"/><path d="M12 2C6.5 2 2 6.5 2 12s4.5 10 10 10c.9 0 1.6-.7 1.6-1.7 0-.4-.2-.8-.4-1.1-.3-.3-.4-.7-.4-1.1a1.6 1.6 0 0 1 1.6-1.6H16c3 0 5.5-2.5 5.5-5.5C22 6 17.5 2 12 2z"/>'),
+  settings: dockSvg('<circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.6 1.6 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.6 1.6 0 0 0-1.8-.3 1.6 1.6 0 0 0-1 1.5V21a2 2 0 0 1-4 0v-.1a1.6 1.6 0 0 0-1-1.5 1.6 1.6 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.6 1.6 0 0 0 .3-1.8 1.6 1.6 0 0 0-1.5-1H3a2 2 0 0 1 0-4h.1a1.6 1.6 0 0 0 1.5-1 1.6 1.6 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.6 1.6 0 0 0 1.8.3H9a1.6 1.6 0 0 0 1-1.5V3a2 2 0 0 1 4 0v.1a1.6 1.6 0 0 0 1 1.5 1.6 1.6 0 0 0 1.8-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.6 1.6 0 0 0-.3 1.8V9a1.6 1.6 0 0 0 1.5 1H21a2 2 0 0 1 0 4h-.1a1.6 1.6 0 0 0-1.5 1z"/>'),
+  admin:    dockSvg('<path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10"/>'),
+};
+
+// Welches Dock-Ziel ist gerade offen? (für das Highlight im Dock)
+function activeNav() {
+  if (settingsOpen) return 'settings';
+  if (mapOpen) return 'map';
+  if (adminOpen) return 'admin';
+  if (featureOpen === 'skinEditor') return 'skin';
+  if (featureOpen === 'dinoInfo') return 'dino';
+  return featureOpen; // profile | group | lexikon | garage | market | null
+}
+function updateDockActive() {
+  const cur = activeNav();
+  document.querySelectorAll('.dock-btn').forEach((b) => b.classList.toggle('active', b.dataset.act === cur));
+}
+
+// Dock als Navigation: Klick wechselt zum Ziel-Fenster (immer nur eins offen);
+// Klick aufs bereits aktive Icon schließt es wieder (zurück zum reinen Dock).
+function navTo(target) {
+  if (target === 'admin' && !isAdmin) { showToast('Nur für Admins', 'error'); return; }
+  const wasActive = activeNav() === target;
+  closeAllPanels();
+  if (!wasActive) {
+    if (target === 'map') toggleMap(true);
+    else if (target === 'settings') toggleSettings(true);
+    else if (target === 'admin') openAdminPanel();
+    else if (target === 'skin') toggleFeature('skinEditor');
+    else if (target === 'dino') toggleFeature('dinoInfo');
+    else toggleFeature(target); // profile | group | lexikon | garage | market
+  }
+  updateInteractive();
 }
 
 function toggleSettings(force) {

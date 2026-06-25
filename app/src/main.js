@@ -176,17 +176,20 @@ const SESSION_FILE = path.join(app.getPath('userData'), 'session.json');
 const HOTKEYS_FILE = path.join(app.getPath('userData'), 'hotkeys.json');
 
 // Standard-Hotkeys (vom Nutzer überschreibbar)
+// Ziel: standardmäßig nur 2 Tasten nötig — „^" (Overlay-/Nav-Modus, fest im
+// uiohook) + Voice. Alle Menü-/Feature-Funktionen sind über das Dock klickbar,
+// daher per Default UNBELEGT (''). In den Einstellungen jederzeit rebindbar.
 const DEFAULT_HOTKEYS = {
-  'map-toggle':      'M',
-  'dino-info':       'F5',
-  'zone-capture':    'F6',
-  'skin-editor':     'F7',
-  'garage':          'F8',
-  'market':          'F9',
-  'group':           'F2',
-  'profile':         'F1',
-  'lexikon':         'Alt+L',
-  'settings-toggle': 'F10',
+  'map-toggle':      '',
+  'dino-info':       '',
+  'zone-capture':    '',
+  'skin-editor':     '',
+  'garage':          '',
+  'market':          '',
+  'group':           '',
+  'profile':         '',
+  'lexikon':         '',
+  'settings-toggle': '',
   'admin-menu':      'Alt+Shift+A',  // Team-Menü (nur sichtbar fürs Team)
   'voice-connect':   'F11',
   'mic-toggle':      'F4',
@@ -331,8 +334,8 @@ catch (err) { console.error('uiohook nicht verfügbar:', err.message); }
 
 let pttCode = null, ptmCode = null, pttDown = false, ptmDown = false;
 let pttMouse = null, ptmMouse = null; // Maustasten-Codes (uiohook e.button)
-let altDown = false, altDirty = false; // für Overlay-Modus (sauberer Alt-Tap)
-function isAltKey(kc) { return !!UiohookKey && (kc === UiohookKey.Alt || kc === UiohookKey.AltRight); }
+let lastCaretAt = 0; // Overlay-/Nav-Modus läuft über „^" (Zirkumflex), nicht mehr Alt
+const CARET_KEYCODE = 43; // „^"-Taste (DE-Layout) — uiohook meldet dafür 43 (NICHT Backquote/41)
 
 function accelToUiohookCode(accel) {
   if (!accel || !UiohookKey) return null;
@@ -357,25 +360,26 @@ function startVoiceHook() {
   if (!uiohook) return;
   uiohook.on('keydown', (e) => {
     if (!hotkeysActive) return; // The Isle nicht im Vordergrund → PTT/PTM blockiert
-    // Overlay-Modus: sauberer Alt-Tap (ohne Kombi) schaltet den Klick-Modus um
-    if (isAltKey(e.keycode)) { if (!altDown) { altDown = true; altDirty = false; } }
-    else if (altDown) { altDirty = true; } // andere Taste während Alt → kein sauberer Tap
+    // Overlay-/Nav-Modus: „^" antippen togglet das Dock. Zeit-Entprellung statt keyup-Flag,
+    // weil „^" als Dead-Key kein zuverlässiges keyup liefert (sonst bliebe es „gedrückt").
+    if (e.keycode === CARET_KEYCODE) {
+      const now = Date.now();
+      if (now - lastCaretAt > 250) {
+        lastCaretAt = now;
+        if (overlayWindow) overlayWindow.webContents.send('hotkey', 'overlay-mode');
+      }
+    }
     if (pttCode && e.keycode === pttCode && !pttDown) { pttDown = true; sendVoiceKey('ptt', true); }
     if (ptmCode && e.keycode === ptmCode && !ptmDown) { ptmDown = true; sendVoiceKey('ptm', true); }
   });
   uiohook.on('keyup', (e) => {
-    if (!hotkeysActive) { pttDown = false; ptmDown = false; altDown = false; return; }
-    if (isAltKey(e.keycode) && altDown) {
-      altDown = false;
-      if (!altDirty && overlayWindow) overlayWindow.webContents.send('hotkey', 'overlay-mode');
-    }
+    if (!hotkeysActive) { pttDown = false; ptmDown = false; return; }
     if (pttCode && e.keycode === pttCode && pttDown) { pttDown = false; sendVoiceKey('ptt', false); }
     if (ptmCode && e.keycode === ptmCode && ptmDown) { ptmDown = false; sendVoiceKey('ptm', false); }
   });
   // Maustasten (z.B. Seitentasten) für PTT/PTM
   uiohook.on('mousedown', (e) => {
     if (!hotkeysActive) return;
-    if (altDown) altDirty = true; // Alt+Klick ist kein sauberer Tap
     if (pttMouse && e.button === pttMouse && !pttDown) { pttDown = true; sendVoiceKey('ptt', true); }
     if (ptmMouse && e.button === ptmMouse && !ptmDown) { ptmDown = true; sendVoiceKey('ptm', true); }
   });

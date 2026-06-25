@@ -110,7 +110,7 @@
       background: rgba(180,30,30,0.92); color: #fff; padding: 10px 18px; border-radius: 10px; font-size: 13px;
       font-weight: 600; border: 1px solid #ef4444; max-width: 60vw; text-align: center; }
 
-    /* Dock (Overlay-Modus, Alt) */
+    /* Dock (Overlay-/Nav-Modus, „^") */
     #dock { position: absolute; bottom: 16px; left: 50%; transform: translateX(-50%); display: none; gap: 6px;
       background: var(--panel); border: 1px solid var(--border); border-radius: 16px; padding: 8px 10px; z-index: 55;
       backdrop-filter: var(--blur); -webkit-backdrop-filter: var(--blur); animation: bfDock .16s ease-out; }
@@ -118,8 +118,10 @@
       border-radius: 11px; background: transparent; border: 0; color: var(--muted); cursor: pointer; font-size: 20px; line-height: 1;
       transition: background .12s, color .12s, transform .1s; }
     .dock-btn span { font-size: 10px; font-weight: 600; }
+    .dock-btn svg { display: block; }
     .dock-btn:hover { background: rgba(139,92,246,0.18); color: #eee; }
     .dock-btn:active { transform: scale(0.94); }
+    .dock-btn.active { background: rgba(139,92,246,0.32); color: #fff; box-shadow: inset 0 0 0 1px rgba(139,92,246,0.6); }
     @keyframes bfDock { from { opacity: 0; transform: translateX(-50%) translateY(10px); } to { opacity: 1; transform: translateX(-50%) translateY(0); } }
     @keyframes bfPop { from { opacity: 0; transform: translate(-50%,-50%) scale(0.97); } to { opacity: 1; transform: translate(-50%,-50%) scale(1); } }
     .feature-panel, #settings, #adminPanel { animation: bfPop .14s ease-out; }
@@ -199,6 +201,7 @@
 
   <!-- Top-HUD -->
   <div id="hud">
+    <img id="hudAvatar" alt="" style="display:none;width:22px;height:22px;border-radius:50%;border:1.5px solid var(--accent);object-fit:cover;vertical-align:middle">
     <span id="hudVoice" class="hud-dot"></span>
     <span id="hudName">…</span>
     <span id="hudStaff" class="staff-badge" style="display:none"></span>
@@ -501,17 +504,18 @@
   <div id="profile" class="feature-panel"></div>
   <div id="lexikon" class="feature-panel"></div>
 
-  <!-- Dock (Overlay-Modus / Alt): klickbare Schnellzugriffe -->
+  <!-- Dock (Overlay-Modus / Alt): klickbare Schnellzugriffe. Icons werden per JS injiziert. -->
   <div id="dock">
-    <button class="dock-btn" data-act="profile" aria-label="Profil">🦖<span>Profil</span></button>
-    <button class="dock-btn" data-act="group" aria-label="Gruppe">👥<span>Gruppe</span></button>
-    <button class="dock-btn" data-act="lexikon" aria-label="Lexikon">📖<span>Lexikon</span></button>
-    <button class="dock-btn" data-act="garage" aria-label="Garage">🚗<span>Garage</span></button>
-    <button class="dock-btn" data-act="market" aria-label="Markt">🦕<span>Markt</span></button>
-    <button class="dock-btn" data-act="map" aria-label="Karte">🗺️<span>Karte</span></button>
-    <button class="dock-btn" data-act="skin" aria-label="Skin">🎨<span>Skin</span></button>
-    <button class="dock-btn" data-act="settings" aria-label="Einstellungen">⚙️<span>Settings</span></button>
-    <button class="dock-btn" id="dockAdmin" data-act="admin" aria-label="Admin" style="display:none">🛡️<span>Admin</span></button>
+    <button class="dock-btn" data-act="profile" aria-label="Profil"><span>Profil</span></button>
+    <button class="dock-btn" data-act="dino" aria-label="Dino"><span>Dino</span></button>
+    <button class="dock-btn" data-act="group" aria-label="Gruppe"><span>Gruppe</span></button>
+    <button class="dock-btn" data-act="lexikon" aria-label="Lexikon"><span>Lexikon</span></button>
+    <button class="dock-btn" data-act="garage" aria-label="Garage"><span>Garage</span></button>
+    <button class="dock-btn" data-act="market" aria-label="Markt"><span>Markt</span></button>
+    <button class="dock-btn" data-act="map" aria-label="Karte"><span>Karte</span></button>
+    <button class="dock-btn" data-act="skin" aria-label="Skin"><span>Skin</span></button>
+    <button class="dock-btn" data-act="settings" aria-label="Einstellungen"><span>Settings</span></button>
+    <button class="dock-btn" id="dockAdmin" data-act="admin" aria-label="Admin" style="display:none"><span>Admin</span></button>
   </div>
   <div id="skinEditor" class="feature-panel"><h2>🎨 Skin Editor</h2><p>Wird in Kürze verfügbar sein.</p><button class="closeFeature secondary">Schließen</button></div>
   <div id="garage" class="feature-panel"><h2>🚗 Garage</h2><p>Ein- und Ausparken deiner Dinos — kommt in Phase 4.</p><button class="closeFeature secondary">Schließen</button></div>
