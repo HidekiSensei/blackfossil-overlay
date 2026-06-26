@@ -921,14 +921,23 @@ app.get('/me/quest', async (req, res) => {
   if (q.active && q.active.status === 'active') {
     try {
       const p = (await fetchPlayers()).find((x) => x.steamId === s.steamId);
-      if (p && !p.isDead) {
-        progress = { online: true, dino: baseClass(p.dinoClass), grow: p.grow ?? 0, isPrime: !!p.isPrime, rightDino: baseClass(p.dinoClass) === q.active.dino };
-        if (!q.active.instaUsed && progress.rightDino && (p.grow ?? 0) >= QUEST_GROW_TARGET && p.isPrime) {
+      const grace = Date.now() - (q.active.startedAt || 0) < 20000;   // 20s Anlauf, bis Dino aufgespielt ist
+      if (!p) {
+        progress = { online: false };
+      } else if (p.isDead) {
+        if (!grace) q.active.status = 'failed';        // als Quest-Dino gestorben → Fehlschlag
+        progress = { online: true, dead: true };
+      } else {
+        const rightDino = baseClass(p.dinoClass) === q.active.dino;
+        progress = { online: true, dino: baseClass(p.dinoClass), grow: p.grow ?? 0, isPrime: !!p.isPrime, rightDino };
+        if (!rightDino) {
+          if (!grace) q.active.status = 'failed';      // Dino gewechselt/neu gespawnt → Fehlschlag
+        } else if (!q.active.instaUsed && (p.grow ?? 0) >= QUEST_GROW_TARGET && p.isPrime) {
           q.active.status = 'done'; q.active.completedAt = Date.now(); q.active.reward = QUEST_REWARD_POINTS;
           addPoints(s.steamId, QUEST_REWARD_POINTS);     // Belohnung gutschreiben
           q.done = q.done || []; q.done.push(q.active); q.active = null; justCompleted = true;
         }
-      } else progress = { online: false };
+      }
     } catch {}
   }
   all[s.steamId] = q; writeJsonFile(QUESTS_FILE, all);
@@ -940,18 +949,51 @@ app.post('/me/quest/roll', express.json(), (req, res) => {
   const type = String(req.body?.type ?? 'rp');
   if (type !== 'rp') return res.status(400).json({ error: 'Diese Quest-Art kommt bald.' });
   const { all, q } = questFor(s.steamId);
-  if (q.active && q.active.status === 'active') return res.status(409).json({ error: 'Du hast bereits eine aktive Quest — erst abschließen oder aufgeben.' });
+  if (q.active) return res.status(409).json({ error: 'Du hast bereits eine Quest — erst abschließen oder aufgeben.' });
   if (q.rollsToday >= QUEST_DAILY_LIMIT) return res.status(429).json({ error: `Tageslimit erreicht (${QUEST_DAILY_LIMIT} pro Tag).` });
   const dino = questPick(QUEST_DINOS);
   q.active = {
     id: `${Date.now()}-${Math.floor(Math.random() * 1e4)}`, type: 'rp',
     dino: dino.key, dinoName: dino.name, diet: dino.diet,
     handicap: questPick(QUEST_HANDICAPS), kleinigkeit: questPick(QUEST_KLEINIGKEITEN), rpRole: questPick(QUEST_RP_ROLES),
-    rolledAt: Date.now(), status: 'active', instaUsed: false,
+    rolledAt: Date.now(), status: 'rolled', instaUsed: false,   // gerollt, aber noch NICHT gestartet
   };
   q.rollsToday += 1;
   all[s.steamId] = q; writeJsonFile(QUESTS_FILE, all);
   res.json({ active: q.active, rollsToday: q.rollsToday, dailyLimit: QUEST_DAILY_LIMIT });
+});
+// Quest STARTEN (auch Neustart nach Fehlschlag): aktuellen Dino einparken + als
+// Quest-Dino-Juvi (25%, zufälliges Geschlecht) aufspielen. So beginnt das Tracking sauber.
+app.post('/me/quest/start', express.json(), async (req, res) => {
+  const s = sessionFrom(req);
+  if (!s) return res.status(401).json({ error: 'Keine Session' });
+  const { all, q } = questFor(s.steamId);
+  if (!q.active || !['rolled', 'failed'].includes(q.active.status)) return res.status(409).json({ error: 'Keine startbare Quest.' });
+  let players; try { players = await fetchPlayers(); } catch (e) { return res.status(502).json({ error: e.message }); }
+  const current = players.find((p) => p.steamId === s.steamId);
+  if (!current || current.isDead) return res.status(409).json({ error: 'Du musst lebend im Spiel auf einem Dino sein.' });
+  // 1) Aktuellen Dino sichern (einparken), damit er nicht verloren geht
+  try {
+    const garage = readJson(GARAGE_FILE, {});
+    garage[s.steamId] = [...(garage[s.steamId] || []), { id: genId(), savedAt: Date.now(), snapshot: current, fromQuest: true }];
+    writeJsonFile(GARAGE_FILE, garage);
+  } catch {}
+  // 2) Quest-Dino als Juvi (25%) mit zufälligem Geschlecht aufspielen
+  const gender = Math.random() < 0.5 ? 'Male' : 'Female';
+  const sid = encodeURIComponent(s.steamId);
+  try {
+    const sr = await fetch(`${PANEL_BASE_URL}/players/${sid}/swap`, {
+      method: 'POST', headers: { Authorization: `Bearer ${PANEL_ADMIN_TOKEN}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ class: q.active.dino, dinoClass: q.active.dino, gender, grow: 0.25, growth: 0.25, keepLocation: true }),
+      signal: AbortSignal.timeout(15000),
+    });
+    if (!sr.ok) { let d = `HTTP ${sr.status}`; try { const e = await sr.json(); d = e.message ?? e.error ?? e.Msg ?? d; } catch {} throw new Error(d); }
+    // Sicherheitshalber Wachstum exakt auf 25% setzen (falls swap es ignoriert)
+    try { await fetch(`${PANEL_BASE_URL}/players/${sid}/grow`, { method: 'POST', headers: { Authorization: `Bearer ${PANEL_ADMIN_TOKEN}`, 'Content-Type': 'application/json' }, body: JSON.stringify({ value: 0.25 }), signal: AbortSignal.timeout(8000) }); } catch {}
+  } catch (err) { return res.status(502).json({ error: `Quest-Dino konnte nicht aufgespielt werden: ${err.message}` }); }
+  q.active.status = 'active'; q.active.startedAt = Date.now(); q.active.gender = gender; q.active.instaUsed = false; q.active.startGrow = 0.25;
+  all[s.steamId] = q; writeJsonFile(QUESTS_FILE, all);
+  res.json({ ok: true, active: q.active });
 });
 app.post('/me/quest/abandon', (req, res) => {
   const s = sessionFrom(req);
