@@ -2312,11 +2312,11 @@ function showDinoDetail(card, ctx) {
       : `<button id="ddSellServer" class="secondary" style="width:100%;opacity:.55;cursor:not-allowed" disabled title="Verkauf erst ab ${minPct}% Wachstum — aktuell ${growPct}% (es fehlen ${minPct - growPct}%).">💰 An Server verkaufen (ab ${minPct}%)</button>`;
     const myDino = ((me && me.dino) || '').split('_')[0];
     const slotDino = (card.dino || '').split('_')[0];
-    const diffSpecies = myDino && slotDino && myDino !== slotDino;
-    const mainBtn = diffSpecies
-      ? `<button id="ddUnpark" style="width:100%">🔄 Wechseln zu ${escapeHtml(slotDino)}</button>`
-      : `<button id="ddUnpark" style="width:100%">⬆️ Ausparken</button>`;
-    action = mainBtn
+    const sameSpecies = myDino && slotDino && myDino === slotDino;
+    // Ausparken (nur gleiche Spezies, aktueller Dino geht verloren) + Swapen (jede Spezies, tauscht)
+    const unparkBtn = sameSpecies ? `<button id="ddUnpark" style="width:100%">⬆️ Ausparken</button>` : '';
+    const swapBtn = `<button id="ddSwap" class="secondary" style="width:100%">🔄 Swapen (Dino tauschen)</button>`;
+    action = unparkBtn + swapBtn
       + sellBtn
       + `<button id="ddDelete" class="secondary" style="width:100%;color:#fca5a5;border-color:#7f1d1d">🗑️ Aus Garage löschen</button>`;
   }
@@ -2341,14 +2341,8 @@ function showDinoDetail(card, ctx) {
     <div id="ddActions" style="margin-top:16px;display:flex;flex-direction:column;gap:8px">${action}<button class="secondary" id="ddClose">Schließen</button></div>`;
   el('dinoDetail').style.display = 'flex';
   box.querySelector('#ddClose').onclick = closeDinoDetail;
-  const u = box.querySelector('#ddUnpark'); if (u) u.onclick = () => {
-    const myD = ((me && me.dino) || '').split('_')[0];
-    const slotD = (card.dino || '').split('_')[0];
-    closeDinoDetail();
-    // Andere Spezies → Swap (parkt aktuellen Dino + spielt Ziel auf); gleiche → Ausparken
-    if (myD && slotD && myD !== slotD) apiAction('/garage/swap', { slotId: card.id }, '🔄 Gewechselt zu {dino}', loadGarage);
-    else unparkById(card.id);
-  };
+  const u = box.querySelector('#ddUnpark'); if (u) u.onclick = () => { closeDinoDetail(); unparkById(card.id); };
+  const sw = box.querySelector('#ddSwap'); if (sw) sw.onclick = () => { closeDinoDetail(); apiAction('/garage/swap', { slotId: card.id }, '🔄 Gswapt zu {dino}', loadGarage); };
   const b = box.querySelector('#ddBuy'); if (b) b.onclick = () => { closeDinoDetail(); buyOfferId(card.id); };
   const ss = box.querySelector('#ddSellServer');
   if (ss && !ss.disabled) ss.onclick = () => {

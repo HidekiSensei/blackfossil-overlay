@@ -500,7 +500,8 @@ function fmtCooldown(ms) {
 // Swap-Regeln (identisch zum Bot)
 const SWAP_COOLDOWN_MS = parseInt(process.env.SWAP_COOLDOWN_MIN ?? '5', 10) * 60_000; // TEST: 5 Min (normal 60)
 const SWAP_MIN_HEALTH = 1.0;
-const SWAP_MIN_STAMINA = 0.75;
+const SWAP_MIN_BLOOD = 1.0;
+const SWAP_MIN_STAMINA = 0.90;
 const SWAP_MIN_DISTANCE_M = 50;
 const WORLD_UNITS_PER_M = parseInt(process.env.WORLD_UNITS_PER_M ?? '200', 10);
 const baseClass = (c) => (c || '').split('_')[0];
@@ -1283,6 +1284,9 @@ app.post('/garage/unpark', express.json(), async (req, res) => {
     const meNow = players.find((p) => p.steamId === s.steamId);
     if (!meNow) return res.status(409).json({ error: 'Du musst im Spiel sein (auf einem Dino).' });
 
+    // Ausparken: nicht im Kampf / nicht blutend (aktueller Dino geht dabei verloren)
+    if (meNow.isBleeding) return res.status(409).json({ error: 'Ausparken nicht möglich: Dein Dino blutet (im Kampf).' });
+
     // Spezies-Check: nur auf gleiche Spezies aufspielbar (Basis, ohne Wachstums-Suffix)
     if (baseClass(meNow.dinoClass) !== baseClass(slot.snapshot?.dinoClass)) {
       return res.status(409).json({ error: `Spezies stimmt nicht: Du spielst ${baseClass(meNow.dinoClass)}, der Token ist ${baseClass(slot.snapshot?.dinoClass)}.` });
@@ -1327,10 +1331,13 @@ app.post('/garage/swap', express.json(), async (req, res) => {
     const current = players.find((p) => p.steamId === s.steamId);
     if (!current) return res.status(409).json({ error: 'Du musst im Spiel sein (auf einem Dino).' });
 
-    // Garage-Wechsel: nur Kampf-Schutz (kein Swap während es blutet) + Cooldown.
-    // Health/Stamina/Abstand-Gates entfernt — sonst war der normale Dino-Wechsel
-    // praktisch immer blockiert (100% Health nötig).
+    // Swap-Regeln: nicht im Kampf, 100% HP + 100% Blut, ≥90% Stamina, Abstand zu Spielern.
     if (current.isBleeding) return res.status(409).json({ error: 'Swap nicht möglich: Dein Dino blutet (im Kampf).' });
+    if ((current.health ?? 0) < SWAP_MIN_HEALTH) return res.status(409).json({ error: `Swap nicht möglich: Health muss 100% sein (aktuell ${Math.round((current.health ?? 0) * 100)}%).` });
+    if ((current.blood ?? 0) < SWAP_MIN_BLOOD) return res.status(409).json({ error: `Swap nicht möglich: Blut muss 100% sein (aktuell ${Math.round((current.blood ?? 0) * 100)}%).` });
+    if ((current.stamina ?? 0) < SWAP_MIN_STAMINA) return res.status(409).json({ error: `Swap nicht möglich: Stamina muss ≥ ${Math.round(SWAP_MIN_STAMINA * 100)}% sein (aktuell ${Math.round((current.stamina ?? 0) * 100)}%).` });
+    const dist = nearestOtherPlayerM(current, players);
+    if (dist < SWAP_MIN_DISTANCE_M) return res.status(409).json({ error: `Swap nicht möglich: Spieler zu nah (${Math.round(dist)} m, nötig ≥ ${SWAP_MIN_DISTANCE_M} m).` });
 
     // 1) Aktuellen Dino IMMER zuerst sichern, damit er nicht verloren geht
     const parkedId = genId();
