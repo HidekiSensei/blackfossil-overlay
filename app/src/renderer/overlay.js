@@ -88,6 +88,11 @@ const DEFAULT_RANGE = 10;     // bis Reichweite empfangen wird
 // Mikros aus. Lokal pro Hörer gespeichert, unabhängig vom Distanz-Verhalten.
 let userGain = {};            // identity(steamId) -> Faktor
 try { userGain = JSON.parse(localStorage.getItem('bf-user-gain') || '{}'); } catch { userGain = {}; }
+// Master-Lautstärke für ALLE Spieler (0..2) — Regler über der Spielerliste.
+let masterGain = (parseFloat(localStorage.getItem('bf-master-gain')) || 1);
+// Eigene Mikrofon-Verstärkung (0..2) — wird per Web-Audio-GainNode auf den
+// gesendeten Mikro-Track gelegt (siehe createMicGainProcessor).
+let micGain = (parseFloat(localStorage.getItem('bf-mic-gain')) || 1);
 // Welt-Einheiten pro angezeigtem Meter. The Isle skaliert kürzer als erwartet,
 // daher 200 statt 100 — so klingt "25 m" auch wirklich nach 25 m.
 const UNITS_PER_M = 200;
@@ -165,11 +170,6 @@ let deafened = false;                                   // eingehenden Ton stumm
 let micDeviceId = localStorage.getItem('bf-mic-dev') || '';   // gewähltes Mikrofon
 let spkDeviceId = localStorage.getItem('bf-spk-dev') || '';   // gewähltes Ausgabegerät
 let aiSpawnMode = false;                                // Karten-Klick-Spawn aktiv
-// Sprachaktivierung (eigene VAD): Mikro öffnet ab Schwelle, mit Nachlaufzeit
-let vadThreshold = (parseFloat(localStorage.getItem('bf-vad-thresh')) || 18) / 100; // 0..1
-let vadOpen = false;
-let vadHangoverUntil = 0;
-let meterStream = null, meterCtx = null, meterAnalyser = null, meterData = null, meterRAF = null;
 let mapOpen = false;
 
 async function init() {
@@ -355,9 +355,12 @@ async function init() {
   enumAudioDevices();
   if (navigator.mediaDevices) navigator.mediaDevices.addEventListener('devicechange', enumAudioDevices);
 
-  // Sprachschwelle (VAD)
-  const vt = el('vadThresh');
-  if (vt) { vt.value = String(Math.round(vadThreshold * 100)); vt.oninput = (e) => setVadThreshold(parseInt(e.target.value)); }
+  // Eigene Mikrofon-Lautstärke (Gain auf den gesendeten Track)
+  const mg = el('micGain');
+  if (mg) { mg.value = String(Math.round(micGain * 100)); mg.oninput = (e) => setMicGain(parseInt(e.target.value)); }
+  // Master-Lautstärke für alle Spieler
+  const mv = el('masterGain');
+  if (mv) { mv.value = String(Math.round(masterGain * 100)); mv.oninput = (e) => setMasterGain(parseInt(e.target.value)); }
 
   // Maustasten als Hotkey (für Push-to-Talk/Mute): während des Neubelegens Klick fangen
   window.addEventListener('mousedown', onRebindMouse, true);
@@ -451,9 +454,11 @@ function updateProximityVolumes() {
       const d = Math.hypot(pos.x - me.x, pos.y - me.y);
       vol = Math.max(0, Math.min(1, 2 * (1 - d / Rw)));
     }
-    // Pro-User-Grundlautstärke obendrauf (gleicht laute/leise Mikros aus)
+    // Pro-User-Grundlautstärke + Master-Regler obendrauf. Bei Deafen alles auf 0.
+    // Dank webAudioMix:true setzt setVolume einen GainNode → Werte >1 wirken wirklich.
     const g = userGain[p.identity] ?? 1;
-    try { p.setVolume(vol * g); } catch {}
+    const factor = deafened ? 0 : masterGain;
+    try { p.setVolume(vol * g * factor); } catch {}
   }
 }
 
@@ -461,6 +466,14 @@ function updateProximityVolumes() {
 function setUserGain(identity, factor) {
   userGain[identity] = factor;
   try { localStorage.setItem('bf-user-gain', JSON.stringify(userGain)); } catch {}
+  updateProximityVolumes();
+}
+
+// Master-Lautstärke für alle Spieler (Regler über der Spielerliste)
+function setMasterGain(pct) {
+  masterGain = Math.max(0, Math.min(2, pct / 100));
+  try { localStorage.setItem('bf-master-gain', String(Math.round(masterGain * 100) / 100)); } catch {}
+  const lbl = el('masterGainVal'); if (lbl) lbl.textContent = `${Math.round(masterGain * 100)}%`;
   updateProximityVolumes();
 }
 
@@ -2356,14 +2369,58 @@ function isMicOn() {
   if (!room) return false;
   if (voiceMode === 'ptt') return pttHeld;                 // nur während Taste gehalten
   if (voiceMode === 'ptm') return micEnabled && !ptmHeld;  // an, außer Taste gehalten
-  return micEnabled && vadOpen;                            // Sprachaktivierung: nur über Schwelle
+  return micEnabled;                                       // offenes Mikro: an solange aktiviert
 }
 
 // Mikro-Sendezustand an den Voice-Modus angleichen
 async function applyMic() {
   if (!room) return;
   try { await room.localParticipant.setMicrophoneEnabled(isMicOn()); } catch {}
+  if (isMicOn()) ensureMicProcessor();   // Gain-Processor auf den frischen Track legen
   refreshMicState();
+}
+
+// ── Eigene Mikrofon-Verstärkung (Web-Audio-GainNode auf dem gesendeten Track) ──
+// LiveKit publisht das Roh-Mikro; ein Track-Processor hängt einen GainNode davor,
+// damit micGain (0..2) das eigene Mikro für alle anderen lauter/leiser macht.
+let micProc = null;
+function createMicGainProcessor() {
+  let src = null, gain = null, dest = null;
+  const proc = {
+    name: 'bf-mic-gain',
+    async init(opts) {
+      const ctx = opts.audioContext;
+      src = ctx.createMediaStreamSource(new MediaStream([opts.track]));
+      gain = ctx.createGain();
+      gain.gain.value = micGain;
+      dest = ctx.createMediaStreamDestination();
+      src.connect(gain); gain.connect(dest);
+      proc.processedTrack = dest.stream.getAudioTracks()[0];
+      proc._ctx = ctx;
+    },
+    async restart(opts) { await proc.destroy(); await proc.init(opts); },
+    async destroy() {
+      try { src && src.disconnect(); } catch {}
+      try { gain && gain.disconnect(); } catch {}
+      try { dest && dest.disconnect(); } catch {}
+    },
+    setGain(v) { if (gain && proc._ctx) gain.gain.setTargetAtTime(v, proc._ctx.currentTime, 0.05); },
+  };
+  return proc;
+}
+async function ensureMicProcessor() {
+  if (!room) return;
+  const pub = room.localParticipant.getTrackPublication(Track.Source.Microphone);
+  const track = pub && pub.track;
+  if (!track || !track.setProcessor) return;
+  if (track.__bfProc) { micProc = track.__bfProc; return; }   // schon gesetzt
+  const proc = createMicGainProcessor();
+  try { await track.setProcessor(proc); track.__bfProc = proc; micProc = proc; } catch {}
+}
+function setMicGain(pct) {
+  micGain = Math.max(0, Math.min(2, pct / 100));
+  try { localStorage.setItem('bf-mic-gain', String(Math.round(micGain * 100) / 100)); } catch {}
+  if (micProc) micProc.setGain(micGain);
 }
 
 function refreshMicState() {
@@ -2408,7 +2465,12 @@ async function connectWithSession(session) {
 
 async function connect({ token, url }) {
   setMicState('connecting');
-  room = new Room({ adaptiveStream: true, dynacast: true });
+  // webAudioMix: leitet alle Remote-Audios über einen gemeinsamen AudioContext +
+  //   GainNodes → setVolume kann >1.0 (Einzel- & Master-Regler wirken wirklich) und
+  //   der Context wird auch auf den lokalen Teilnehmer gesetzt (Mikro-Gain-Processor).
+  // adaptiveStream/dynacast: nur für Video sinnvoll; für reines Audio aus (vermeidet
+  //   pausierte Subscriptions → Cutouts).
+  room = new Room({ adaptiveStream: false, dynacast: false, webAudioMix: true });
   room
     .on(RoomEvent.Connected, () => { voiceConnected = true; refreshMicState(); el('connBtn').textContent = 'Trennen'; broadcastRange(); updateVoiceWarn(); })
     .on(RoomEvent.Disconnected, () => { voiceConnected = false; el('connBtn').textContent = 'Verbinden'; setMicState('disconnected'); updateVoiceWarn(); })
@@ -2422,7 +2484,10 @@ async function connect({ token, url }) {
     })
     .on(RoomEvent.TrackSubscribed, (track) => {
       if (track.kind === Track.Kind.Audio) {
-        const a = track.attach(); a.autoplay = true; a.muted = deafened;
+        // Mit webAudioMix mutet LiveKit das Element selbst und spielt über den
+        // AudioContext. Deafen/Lautstärke laufen daher über setVolume (s.u.),
+        // nicht über a.muted.
+        const a = track.attach(); a.autoplay = true;
         if (spkDeviceId && a.setSinkId) a.setSinkId(spkDeviceId).catch(() => {});
         document.body.appendChild(a);
         updateProximityVolumes();
@@ -2434,7 +2499,6 @@ async function connect({ token, url }) {
   try { if (spkDeviceId) await room.switchActiveDevice('audiooutput', spkDeviceId); } catch {}
   // Sprech-Erkennung des eigenen Mikros
   room.localParticipant.on(ParticipantEvent.IsSpeakingChanged, () => refreshMicState());
-  startMicMeter(); // Live-Pegel + eigene Sprachaktivierung
 }
 
 async function toggleConnect() {
@@ -2459,12 +2523,14 @@ async function toggleMic() {
   await applyMic();
 }
 
-// Eingehenden Ton stummschalten (Deafen) — wirkt auf alle Voice-Audio-Elemente
+// Eingehenden Ton stummschalten (Deafen). Mit webAudioMix läuft der Ton über den
+// AudioContext → über setVolume(0) stummschalten, nicht über a.muted.
 function toggleDeafen() {
   deafened = !deafened;
-  for (const a of document.querySelectorAll('audio')) a.muted = deafened;
+  updateProximityVolumes();   // setzt alle Remote-GainNodes auf 0 bzw. zurück
   const b = el('deafenBtn');
-  if (b) { b.textContent = deafened ? '🔇 Ton aus' : '🔊 Ton an'; b.classList.toggle('secondary', !deafened); }
+  // „Ton an" leuchtet, „Ton aus" ist gedimmt (secondary) — synchron zum Mikro-Button.
+  if (b) { b.textContent = deafened ? '🔇 Ton aus' : '🔊 Ton an'; b.classList.toggle('secondary', deafened); }
 }
 
 // ── Audio-Geräteauswahl ─────────────────────────────────────────────────────
@@ -2488,58 +2554,11 @@ async function enumAudioDevices() {
 async function setMicDevice(id) {
   micDeviceId = id; localStorage.setItem('bf-mic-dev', id);
   try { if (room && id) await room.switchActiveDevice('audioinput', id); } catch (e) { showToast('Mikro-Wechsel fehlgeschlagen', 'error'); }
-  if (room) startMicMeter(); // Pegelmesser auf neues Gerät umstellen
 }
 async function setSpkDevice(id) {
   spkDeviceId = id; localStorage.setItem('bf-spk-dev', id);
   try { if (room && id) await room.switchActiveDevice('audiooutput', id); } catch {}
   for (const a of document.querySelectorAll('audio')) { if (a.setSinkId && id) a.setSinkId(id).catch(() => {}); }
-}
-
-// ── Live-Mikropegel + eigene Sprachaktivierung (VAD) ────────────────────────
-async function startMicMeter() {
-  stopMicMeter();
-  try {
-    meterStream = await navigator.mediaDevices.getUserMedia({ audio: micDeviceId ? { deviceId: { exact: micDeviceId } } : true });
-    meterCtx = new (window.AudioContext || window.webkitAudioContext)();
-    const src = meterCtx.createMediaStreamSource(meterStream);
-    meterAnalyser = meterCtx.createAnalyser();
-    meterAnalyser.fftSize = 512;
-    meterAnalyser.smoothingTimeConstant = 0.4;
-    src.connect(meterAnalyser);
-    meterData = new Uint8Array(meterAnalyser.fftSize);
-    meterLoop();
-  } catch (e) { /* kein Mikro-Zugriff → kein Meter */ }
-}
-function stopMicMeter() {
-  if (meterRAF) cancelAnimationFrame(meterRAF); meterRAF = null;
-  try { if (meterStream) meterStream.getTracks().forEach((t) => t.stop()); } catch {}
-  try { if (meterCtx) meterCtx.close(); } catch {}
-  meterStream = meterCtx = meterAnalyser = meterData = null;
-  vadOpen = false;
-}
-function meterLoop() {
-  if (!meterAnalyser) return;
-  meterAnalyser.getByteTimeDomainData(meterData);
-  // RMS um die Mittellinie (128) → 0..1
-  let sum = 0;
-  for (let i = 0; i < meterData.length; i++) { const v = (meterData[i] - 128) / 128; sum += v * v; }
-  const level = Math.min(1, Math.sqrt(sum / meterData.length) * 2.2);
-
-  const fill = el('levelFill'); if (fill) fill.style.width = `${Math.round(level * 100)}%`;
-  const th = el('levelThresh'); if (th) th.style.left = `${Math.round(vadThreshold * 100)}%`;
-
-  // VAD: öffnet über Schwelle, hält dann kurz nach (Nachlauf), damit es nicht stottert
-  const now = performance.now();
-  if (level >= vadThreshold) vadHangoverUntil = now + 600;
-  const open = now < vadHangoverUntil;
-  if (open !== vadOpen) { vadOpen = open; if (voiceMode === 'voice') applyMic(); }
-
-  meterRAF = requestAnimationFrame(meterLoop);
-}
-function setVadThreshold(pct) {
-  vadThreshold = Math.max(0, Math.min(1, pct / 100));
-  localStorage.setItem('bf-vad-thresh', String(Math.round(vadThreshold * 100)));
 }
 
 // ── AI-Dinos (Team-Steuerung übers Overlay) ─────────────────────────────────
