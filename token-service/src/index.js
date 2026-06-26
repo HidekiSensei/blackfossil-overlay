@@ -932,7 +932,8 @@ app.get('/me/quest', async (req, res) => {
         progress = { online: true, dino: baseClass(p.dinoClass), grow: p.grow ?? 0, isPrime: !!p.isPrime, rightDino };
         if (!rightDino) {
           if (!grace) q.active.status = 'failed';      // Dino gewechselt/neu gespawnt → Fehlschlag
-        } else if (!q.active.instaUsed && (p.grow ?? 0) >= QUEST_GROW_TARGET && p.isPrime) {
+        } else if (!q.active.instaUsed && (p.grow ?? 0) >= QUEST_GROW_TARGET && p.isPrime && Date.now() - (q.active.startedAt || 0) > 30000) {
+          // 30s-Grace: direkt nach dem Start ist der Dino kurz noch auf 100% (bis grow→25% greift)
           q.active.status = 'done'; q.active.completedAt = Date.now(); q.active.reward = QUEST_REWARD_POINTS;
           addPoints(s.steamId, QUEST_REWARD_POINTS);     // Belohnung gutschreiben
           q.done = q.done || []; q.done.push(q.active); q.active = null; justCompleted = true;
@@ -972,12 +973,16 @@ app.post('/me/quest/start', express.json(), async (req, res) => {
   let players; try { players = await fetchPlayers(); } catch (e) { return res.status(502).json({ error: e.message }); }
   const current = players.find((p) => p.steamId === s.steamId);
   if (!current || current.isDead) return res.status(409).json({ error: 'Du musst lebend im Spiel auf einem Dino sein.' });
-  // 1) Aktuellen Dino sichern (einparken), damit er nicht verloren geht
-  try {
-    const garage = readJson(GARAGE_FILE, {});
-    garage[s.steamId] = [...(garage[s.steamId] || []), { id: genId(), savedAt: Date.now(), snapshot: current, fromQuest: true }];
-    writeJsonFile(GARAGE_FILE, garage);
-  } catch {}
+  // 1) Aktuellen Dino sichern — NUR beim ersten Start (status 'rolled') und nur,
+  //    wenn es nicht ohnehin schon der Quest-Dino ist. Beim Neustart nach Tod wird
+  //    NICHT geparkt (sonst sammeln sich Dutzende Quest-Dinos in der Garage an).
+  if (q.active.status === 'rolled' && baseClass(current.dinoClass) !== q.active.dino) {
+    try {
+      const garage = readJson(GARAGE_FILE, {});
+      garage[s.steamId] = [...(garage[s.steamId] || []), { id: genId(), savedAt: Date.now(), snapshot: current, fromQuest: true }];
+      writeJsonFile(GARAGE_FILE, garage);
+    } catch {}
+  }
   // 2) Quest-Dino als Juvi (25%) mit zufälligem Geschlecht aufspielen
   const gender = Math.random() < 0.5 ? 'Male' : 'Female';
   const sid = encodeURIComponent(s.steamId);
@@ -994,8 +999,11 @@ app.post('/me/quest/start', express.json(), async (req, res) => {
       signal: AbortSignal.timeout(15000),
     });
     if (!sr.ok) { let d = `HTTP ${sr.status}`; try { const e = await sr.json(); d = e.message ?? e.error ?? e.Msg ?? d; } catch {} throw new Error(d); }
-    // Sicherheitshalber Wachstum exakt auf 25% setzen (falls swap es ignoriert)
-    try { await fetch(`${PANEL_BASE_URL}/players/${sid}/grow`, { method: 'POST', headers: { Authorization: `Bearer ${PANEL_ADMIN_TOKEN}`, 'Content-Type': 'application/json' }, body: JSON.stringify({ value: 0.25 }), signal: AbortSignal.timeout(8000) }); } catch {}
+    // Swap ist ASYNCHRON (Dino spawnt ~1–3 s später) und ignoriert das grow-Feld.
+    // Deshalb das Wachstum NACH dem Spawn auf 25% setzen — mit kurzer Wartezeit + 1 Retry.
+    const setGrow = async () => { try { await fetch(`${PANEL_BASE_URL}/players/${sid}/grow`, { method: 'POST', headers: { Authorization: `Bearer ${PANEL_ADMIN_TOKEN}`, 'Content-Type': 'application/json' }, body: JSON.stringify({ value: 0.25 }), signal: AbortSignal.timeout(8000) }); } catch {} };
+    await new Promise((r) => setTimeout(r, 2500)); await setGrow();
+    await new Promise((r) => setTimeout(r, 1500)); await setGrow();
   } catch (err) { return res.status(502).json({ error: `Quest-Dino konnte nicht aufgespielt werden: ${err.message}` }); }
   q.active.status = 'active'; q.active.startedAt = Date.now(); q.active.gender = gender; q.active.instaUsed = false; q.active.startGrow = 0.25;
   all[s.steamId] = q; writeJsonFile(QUESTS_FILE, all);
