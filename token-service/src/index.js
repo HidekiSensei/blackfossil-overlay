@@ -800,6 +800,7 @@ app.get('/me/ticket-messages', async (req, res) => {
 const QUESTS_FILE = process.env.QUESTS_FILE ?? '/opt/token-service/quests.json';
 const QUEST_DAILY_LIMIT = 2;
 const QUEST_GROW_TARGET = 0.8;
+const QUEST_REWARD_POINTS = parseInt(process.env.QUEST_REWARD_POINTS ?? '500');   // Belohnung pro erfüllter RP-Quest
 // Dino-Roster (key = Spielklasse via baseClass). Bei Bedarf an den Server anpassen.
 const QUEST_DINOS = [
   { key: 'Tyrannosaurus', name: 'Tyrannosaurus', diet: 'carni' },
@@ -923,14 +924,15 @@ app.get('/me/quest', async (req, res) => {
       if (p && !p.isDead) {
         progress = { online: true, dino: baseClass(p.dinoClass), grow: p.grow ?? 0, isPrime: !!p.isPrime, rightDino: baseClass(p.dinoClass) === q.active.dino };
         if (!q.active.instaUsed && progress.rightDino && (p.grow ?? 0) >= QUEST_GROW_TARGET && p.isPrime) {
-          q.active.status = 'done'; q.active.completedAt = Date.now();
+          q.active.status = 'done'; q.active.completedAt = Date.now(); q.active.reward = QUEST_REWARD_POINTS;
+          addPoints(s.steamId, QUEST_REWARD_POINTS);     // Belohnung gutschreiben
           q.done = q.done || []; q.done.push(q.active); q.active = null; justCompleted = true;
         }
       } else progress = { online: false };
     } catch {}
   }
   all[s.steamId] = q; writeJsonFile(QUESTS_FILE, all);
-  res.json({ dayKey: q.dayKey, rollsToday: q.rollsToday, dailyLimit: QUEST_DAILY_LIMIT, growTarget: QUEST_GROW_TARGET, active: q.active, doneCount: (q.done || []).length, justCompleted, progress });
+  res.json({ dayKey: q.dayKey, rollsToday: q.rollsToday, dailyLimit: QUEST_DAILY_LIMIT, growTarget: QUEST_GROW_TARGET, reward: QUEST_REWARD_POINTS, active: q.active, doneCount: (q.done || []).length, justCompleted, progress });
 });
 app.post('/me/quest/roll', express.json(), (req, res) => {
   const s = sessionFrom(req);
@@ -1453,6 +1455,19 @@ app.post('/market/sell-server', express.json(), (req, res) => {
   res.json({ ok: true, earned, points: getPoints(s.steamId) });
 });
 
+// Dino-Slot direkt aus der Garage löschen (ohne Verkauf)
+app.post('/garage/delete', express.json(), (req, res) => {
+  const s = sessionFrom(req);
+  if (!s) return res.status(401).json({ error: 'Keine Session' });
+  const slotId = req.body?.slotId;
+  const garage = readJson(GARAGE_FILE, {});
+  const slots = garage[s.steamId] ?? [];
+  if (!slots.find((x) => x.id === slotId)) return res.status(404).json({ error: 'Slot nicht gefunden' });
+  garage[s.steamId] = slots.filter((x) => x.id !== slotId);
+  writeJsonFile(GARAGE_FILE, garage);
+  res.json({ ok: true, dino: '' });
+});
+
 // An Spieler verkaufen (Marktplatz-Listing)
 app.post('/market/sell-player', express.json(), (req, res) => {
   const s = sessionFrom(req);
@@ -1526,6 +1541,7 @@ app.post('/skin', express.json(), async (req, res) => {
   payload.skinVariation = Number(b.skinVariation) || 0;
   payload.patternIndex = Number(b.patternIndex) || 0;
   payload.themeIndex = Number(b.themeIndex) || 0;
+  if (b.gender === 'Male' || b.gender === 'Female') payload.gender = b.gender;   // Geschlecht im Skin-Editor umschaltbar
   for (const k of ['maleDisplayColor', 'markingsColor', 'bodyColor', 'flankColor', 'underbellyColor', 'teethColor', 'mouthColor', 'clawsColor', 'detailColor', 'eyesColor']) {
     // The Isle behandelt exakt 0,0,0 als „kein Override" → Skins greifen dann nicht.
     // Auf einen winzigen Epsilon clampen (optisch weiter schwarz, aber != 0).

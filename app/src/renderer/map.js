@@ -227,7 +227,7 @@ export function drawHeatmap(view, players, me) {
 
 // ── Minimap (zentriert, Auto-Zoom auf den Sprechradius) ───────────────────────
 // speakRange = eigene Sprechreichweite in Welt-Einheiten (für Ring + Zoom-Stufe)
-export function drawMinimap(view, players, me, speakRange = 0) {
+export function drawMinimap(view, players, me, speakRange = 0, waypoints = []) {
   const { ctx, w, h } = view;
   ctx.clearRect(0, 0, w, h);
 
@@ -289,6 +289,29 @@ export function drawMinimap(view, players, me, speakRange = 0) {
     ctx.restore();
   }
 
+  // Wegpunkt-Anzeige: innerhalb des Minimap-Kreises als Marker, außerhalb als
+  // Richtungspfeil am Rand (+ Entfernung), damit man weiß, wohin man laufen muss.
+  if (me && waypoints && waypoints.length) {
+    const wp = waypoints[waypoints.length - 1];
+    const wn = worldToNorm(wp.x, wp.y);
+    const px = ((wn.nx - center.nx) / zoom) * (w/2) + w/2;
+    const py = ((wn.ny - center.ny) / zoom) * (h/2) + h/2;
+    const dx = px - w/2, dy = py - h/2, dist = Math.hypot(dx, dy);
+    const R = w/2 - 11;
+    if (dist <= R) {
+      drawWaypoint(ctx, px, py, 0.85);
+    } else {
+      const ang = Math.atan2(dy, dx);
+      const ex = w/2 + Math.cos(ang) * R, ey = h/2 + Math.sin(ang) * R;
+      drawArrow(ctx, ex, ey, ang, 9, '#fbbf24');
+      const meters = Math.round(Math.hypot(wp.x - me.x, wp.y - me.y) / 100);   // 100 Welt-Einh. = 1 m
+      const lx = w/2 + Math.cos(ang) * (R - 16), ly = h/2 + Math.sin(ang) * (R - 16);
+      ctx.font = 'bold 10px system-ui'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+      ctx.strokeStyle = 'rgba(0,0,0,0.8)'; ctx.lineWidth = 3; ctx.strokeText(`${meters}m`, lx, ly);
+      ctx.fillStyle = '#fde68a'; ctx.fillText(`${meters}m`, lx, ly);
+    }
+  }
+
   // eigener Punkt immer in der Mitte
   if (me) drawPlayer(ctx, w/2, h/2, { ...me, isYou: true }, 1);
 
@@ -326,33 +349,36 @@ export function groupColorFor(id) {
   for (let i = 0; i < s.length; i++) h = (h * 31 + s.charCodeAt(i)) >>> 0;
   return GROUP_COLORS[h % GROUP_COLORS.length];
 }
+// Eigene Position: auffällige, klar sichtbare Farbe (Kontrast zu Karte & Theme)
+const SELF_COLOR = '#00e5ff';
+// Kleiner Pfeil, der in Blick-/Bewegungsrichtung zeigt
+function drawArrow(ctx, px, py, angle, size, color) {
+  ctx.save();
+  ctx.translate(px, py); ctx.rotate(angle);
+  ctx.beginPath();
+  ctx.moveTo(size, 0);
+  ctx.lineTo(-size * 0.72, size * 0.66);
+  ctx.lineTo(-size * 0.28, 0);
+  ctx.lineTo(-size * 0.72, -size * 0.66);
+  ctx.closePath();
+  ctx.fillStyle = color; ctx.fill();
+  ctx.lineWidth = 1.4; ctx.strokeStyle = 'rgba(0,0,0,0.8)'; ctx.stroke();
+  ctx.restore();
+}
+function headingAngle(p) { return (typeof p.heading === 'number') ? (p.heading - 90) * Math.PI / 180 : -Math.PI / 2; }
 function drawGroupMember(ctx, px, py, p, scale) {
-  const r = 5 * scale, col = groupColorFor(p.steamId);
-  if (typeof p.heading === 'number') {
-    const a = (p.heading - 90) * Math.PI / 180;
-    ctx.strokeStyle = col; ctx.lineWidth = 2 * scale;
-    ctx.beginPath(); ctx.moveTo(px, py); ctx.lineTo(px + Math.cos(a) * r * 2.4, py + Math.sin(a) * r * 2.4); ctx.stroke();
-  }
-  ctx.beginPath(); ctx.arc(px, py, r, 0, Math.PI * 2); ctx.fillStyle = col; ctx.fill();
-  ctx.lineWidth = 1.5 * scale; ctx.strokeStyle = 'rgba(0,0,0,0.6)'; ctx.stroke();
+  const col = groupColorFor(p.steamId);
+  drawArrow(ctx, px, py, headingAngle(p), 6.5 * scale, col);
   if (p.name) {
     ctx.font = `bold ${11 * scale}px system-ui`; ctx.textAlign = 'center'; ctx.textBaseline = 'bottom';
-    ctx.strokeStyle = 'rgba(0,0,0,0.75)'; ctx.lineWidth = 3 * scale; ctx.strokeText(p.name, px, py - r - 2 * scale);
-    ctx.fillStyle = col; ctx.fillText(p.name, px, py - r - 2 * scale);
+    ctx.strokeStyle = 'rgba(0,0,0,0.75)'; ctx.lineWidth = 3 * scale; ctx.strokeText(p.name, px, py - 9 * scale);
+    ctx.fillStyle = col; ctx.fillText(p.name, px, py - 9 * scale);
   }
 }
 function drawPlayer(ctx, px, py, p, scale) {
-  const r = 5 * scale;
-  // Blickrichtungs-Pfeil
-  if (typeof p.heading === 'number') {
-    const a = (p.heading - 90) * Math.PI / 180;
-    ctx.strokeStyle = p.isYou ? '#8b5cf6' : '#fff'; ctx.lineWidth = 2 * scale;
-    ctx.beginPath(); ctx.moveTo(px, py); ctx.lineTo(px + Math.cos(a)*r*2.4, py + Math.sin(a)*r*2.4); ctx.stroke();
-  }
-  ctx.beginPath(); ctx.arc(px, py, r, 0, Math.PI*2);
-  ctx.fillStyle = p.isYou ? '#8b5cf6' : '#fff';
-  ctx.fill();
-  ctx.lineWidth = 1.5 * scale; ctx.strokeStyle = 'rgba(0,0,0,0.6)'; ctx.stroke();
+  ctx.save(); ctx.shadowColor = SELF_COLOR; ctx.shadowBlur = 8 * scale;   // Glow → klar erkennbar
+  drawArrow(ctx, px, py, headingAngle(p), 8.5 * scale, SELF_COLOR);
+  ctx.restore();
 }
 
 function drawWaypoint(ctx, px, py, scale = 1) {

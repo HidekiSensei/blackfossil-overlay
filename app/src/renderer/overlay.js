@@ -3,6 +3,35 @@ import { loadMapImage, drawFullMap, drawMinimap, drawHeatmap, normToWorld, world
 
 const el = (id) => document.getElementById(id);
 
+// ── Color-Themes (Overlay personalisieren) ───────────────────────────────────
+const BF_THEMES = {
+  violett: { name: 'Violett', accent: '#8b5cf6', accent2: '#a78bfa', accentD: '#7c3aed', border: 'rgba(139,92,246,0.32)' },
+  blau:    { name: 'Blau',    accent: '#3b82f6', accent2: '#60a5fa', accentD: '#2563eb', border: 'rgba(59,130,246,0.32)' },
+  cyan:    { name: 'Cyan',    accent: '#06b6d4', accent2: '#22d3ee', accentD: '#0891b2', border: 'rgba(6,182,212,0.32)' },
+  gruen:   { name: 'Grün',    accent: '#22c55e', accent2: '#4ade80', accentD: '#16a34a', border: 'rgba(34,197,94,0.32)' },
+  gold:    { name: 'Gold',    accent: '#f59e0b', accent2: '#fbbf24', accentD: '#d97706', border: 'rgba(245,158,11,0.32)' },
+  rot:     { name: 'Rot',     accent: '#ef4444', accent2: '#f87171', accentD: '#dc2626', border: 'rgba(239,68,68,0.32)' },
+  pink:    { name: 'Pink',    accent: '#ec4899', accent2: '#f472b6', accentD: '#db2777', border: 'rgba(236,72,153,0.32)' },
+};
+let currentTheme = localStorage.getItem('bf-theme') || 'violett';
+function applyTheme(key) {
+  const t = BF_THEMES[key] || BF_THEMES.violett; currentTheme = BF_THEMES[key] ? key : 'violett';
+  const r = document.documentElement.style;
+  r.setProperty('--accent', t.accent); r.setProperty('--accent-2', t.accent2);
+  r.setProperty('--accent-d', t.accentD); r.setProperty('--border', t.border);
+  localStorage.setItem('bf-theme', currentTheme);
+}
+function renderThemePicker() {
+  const box = el('themePicker'); if (!box) return;
+  box.innerHTML = Object.entries(BF_THEMES).map(([k, t]) =>
+    `<button class="theme-sw${k === currentTheme ? ' on' : ''}" data-theme="${k}" title="${t.name}" style="background:linear-gradient(135deg,${t.accent},${t.accentD})"></button>`).join('');
+  box.querySelectorAll('.theme-sw').forEach((b) => b.onclick = () => {
+    applyTheme(b.dataset.theme);
+    box.querySelectorAll('.theme-sw').forEach((x) => x.classList.toggle('on', x.dataset.theme === currentTheme));
+  });
+}
+applyTheme(currentTheme);   // sofort beim Laden anwenden (kein Flash)
+
 // ── Karten-/Positions-State ─────────────────────────────────────────────────
 let players = [];
 let me = null;
@@ -330,6 +359,7 @@ async function init() {
   el('tpConfirmNo').onclick = () => { el('tpConfirm').style.display = 'none'; tpConfirmTarget = null; };
   el('centerBtn').onclick = () => centerOnMe();
   el('resetViewBtn').onclick = () => { mapZoom = 1; mapPanX = 0; mapPanY = 0; renderBigMap(); };
+  { const c = el('clearWpBtn'); if (c) c.onclick = () => { waypoints = []; renderBigMap(); renderMinimap(); }; }
 
   // Sprechreichweiten-Buttons
   const rbWrap = el('rangeBtns');
@@ -574,7 +604,7 @@ function renderMinimap() {
   const cv = el('minimap');
   const ctx = cv.getContext('2d');
   const { w, h } = fitCanvasDPR(cv, ctx);
-  drawMinimap({ ctx, w, h }, players, me, myRange * UNITS_PER_M);
+  drawMinimap({ ctx, w, h }, players, me, myRange * UNITS_PER_M, waypoints);
   ctx.setTransform(1, 0, 0, 1, 0, 0);
 }
 function renderBigMap() {
@@ -1854,7 +1884,7 @@ async function loadQuest() {
     const prevId = questState.active && questState.active.id;
     questState = d;
     if (featureOpen !== 'quests' || questRolling) return;
-    if (d.justCompleted) { showToast('🏆 RP-Quest erfüllt! Prime mit 80% erreicht!', 'success'); renderQuests(); return; }
+    if (d.justCompleted) { showToast(`🏆 RP-Quest erfüllt! +${(d.reward || 0).toLocaleString('de-DE')} Punkte`, 'success'); pollHud(); renderQuests(); return; }
     // Gleiche aktive Quest → NUR die Fortschritts-Chips updaten (kein Voll-Rerender →
     // kein Flackern, Abbrechen-Button behält seinen Zustand). Sonst neu aufbauen.
     const sameActive = d.active && d.active.id === prevId;
@@ -1894,6 +1924,7 @@ function questStageHtml() {
       + questLinesHtml(a).replace(/class="q-line"/g, 'class="q-line show"')
       + questProgressHtml()
       + `<div style="font-size:11px;color:var(--muted);margin-top:12px">Ziel: Mit diesem Dino <b>Prime</b> erreichen und <b>${Math.round((questState.growTarget || 0.8) * 100)}%</b> wachsen — Insta-Grow zählt nicht.</div>`
+      + `<div style="font-size:12px;color:#fbbf24;font-weight:700;margin-top:6px">🏆 Belohnung: ${(questState.reward || 0).toLocaleString('de-DE')} Punkte</div>`
       + `<button id="qAbandon" class="secondary" style="margin-top:12px">Quest aufgeben</button>`;
   }
   const left = (questState.dailyLimit || 2) - (questState.rollsToday || 0);
@@ -1905,7 +1936,8 @@ function questStageHtml() {
   }
   return `<div style="text-align:center">
     <div class="q-slot" style="font-size:40px">🎲</div>
-    <div style="color:var(--muted);font-size:13px;margin:8px 0 14px">Würfle eine RP-Challenge: ein Dino, ein Handicap, eine RP-Rolle und eine Kleinigkeit.</div>
+    <div style="color:var(--muted);font-size:13px;margin:8px 0 6px">Würfle eine RP-Challenge: ein Dino, ein Handicap, eine RP-Rolle und eine Kleinigkeit.</div>
+    <div style="color:#fbbf24;font-size:12px;font-weight:700;margin-bottom:14px">🏆 Belohnung bei Erfüllung: ${(questState.reward || 0).toLocaleString('de-DE')} Punkte</div>
     <button id="qRoll" style="max-width:280px;margin:0 auto">🎲 Quest würfeln (${left}/${questState.dailyLimit} heute)</button>
   </div>`;
 }
@@ -2224,7 +2256,9 @@ function closeDinoDetail() { el('dinoDetail').style.display = 'none'; }
 function showDinoDetail(card, ctx) {
   const box = el('dinoDetail').querySelector('.box');
   let action = '';
-  if (ctx.mode === 'garage') action = `<button id="ddUnpark" style="width:100%;margin-top:14px">⬆️ Ausparken</button>`;
+  if (ctx.mode === 'garage') action = `<button id="ddUnpark" style="width:100%">⬆️ Ausparken</button>`
+    + `<button id="ddSellServer" class="secondary" style="width:100%">💰 An Server verkaufen</button>`
+    + `<button id="ddDelete" class="secondary" style="width:100%;color:#fca5a5;border-color:#7f1d1d">🗑️ Aus Garage löschen</button>`;
   else if (ctx.mode === 'market') action = ctx.mine ? `<div class="price-tag" style="margin-top:14px">Dein Angebot · ${(ctx.price || 0).toLocaleString('de-DE')} Pkt.</div>` : `<button id="ddBuy" style="width:100%;margin-top:14px">🦖 Kaufen — ${(ctx.price || 0).toLocaleString('de-DE')} Pkt.</button>`;
   box.classList.add('dd-box-wide');
   const badges = [card.isElder ? '👑 Elder' : '', card.isPrime ? '⭐ Prime' : '', card.gender || '', card.isBleeding ? '🩸 Blutet' : '']
@@ -2248,6 +2282,12 @@ function showDinoDetail(card, ctx) {
   box.querySelector('#ddClose').onclick = closeDinoDetail;
   const u = box.querySelector('#ddUnpark'); if (u) u.onclick = () => { closeDinoDetail(); unparkById(card.id); };
   const b = box.querySelector('#ddBuy'); if (b) b.onclick = () => { closeDinoDetail(); buyOfferId(card.id); };
+  const ss = box.querySelector('#ddSellServer'); if (ss) ss.onclick = () => { closeDinoDetail(); apiAction('/market/sell-server', { slotId: card.id }, '💰 An Server verkauft', loadGarage); };
+  const dd = box.querySelector('#ddDelete');
+  if (dd) { let armed = false; dd.onclick = () => {
+    if (!armed) { armed = true; dd.textContent = '⚠️ Wirklich löschen?'; setTimeout(() => { if (dd) { armed = false; dd.textContent = '🗑️ Aus Garage löschen'; } }, 3000); return; }
+    closeDinoDetail(); apiAction('/garage/delete', { slotId: card.id }, '🗑️ Dino aus Garage gelöscht', loadGarage);
+  }; }
 }
 
 // Gemeinsame POST-Aktion mit Toast-Feedback
@@ -2329,12 +2369,17 @@ async function renderSkinEditor() {
     panel.querySelector('.closeFeature').onclick = closeAllFeatures; return;
   }
   const sk = me.skin || {};
-  skinState = { skinVariation: sk.skinVariation || 0, patternIndex: sk.patternIndex || 0, themeIndex: sk.themeIndex || 0, colors: {} };
+  skinState = { skinVariation: sk.skinVariation || 0, patternIndex: sk.patternIndex || 0, themeIndex: sk.themeIndex || 0, gender: me.gender === 'Female' ? 'Female' : 'Male', colors: {} };
   for (const [k] of SKIN_GROUPS) skinState.colors[k] = (sk.colors && sk.colors[k]) ? sk.colors[k] : [0.5, 0.5, 0.5];
 
   const swatches = SKIN_GROUPS.map(([k, l]) => `<label style="display:flex;justify-content:space-between;align-items:center;gap:8px;padding:6px 8px;background:rgba(255,255,255,0.04);border-radius:8px;font-size:13px;cursor:pointer"><span style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${l}</span><input type="color" data-col="${k}" value="${linToHex(skinState.colors[k])}" style="width:40px;height:26px;border:0;background:none;cursor:pointer;flex:none"></label>`).join('');
   panel.innerHTML = `<h2>🎨 Skin Editor — ${me.dino}</h2>
     <div id="skLive" style="font-size:12px;color:#22c55e;margin:2px 0 14px">🟢 Änderungen werden live im Spiel übernommen</div>
+    <div class="sec-title">Geschlecht</div>
+    <div style="display:flex;gap:6px;margin:8px 0 14px">
+      <button data-gender="Female" style="flex:1" class="${skinState.gender === 'Female' ? '' : 'secondary'}">♀ Female</button>
+      <button data-gender="Male" style="flex:1" class="${skinState.gender === 'Male' ? '' : 'secondary'}">♂ Male</button>
+    </div>
     <div class="sec-title">Farben</div>
     <div style="display:grid;grid-template-columns:1fr 1fr;gap:6px;margin:8px 0 14px">${swatches}</div>
     <div class="sec-title">Muster & Variation</div>
@@ -2363,6 +2408,7 @@ async function renderSkinEditor() {
   panel.querySelectorAll('[data-col]').forEach((inp) => inp.oninput = () => { skinState.colors[inp.dataset.col] = hexToLin(inp.value); updateSkinPreview(); scheduleSkinApply(); });
   panel.querySelectorAll('[data-pat]').forEach((b) => b.onclick = () => { skinState.patternIndex = parseInt(b.dataset.pat); panel.querySelectorAll('[data-pat]').forEach((x) => x.className = x === b ? '' : 'secondary'); scheduleSkinApply(); });
   el('skVar').oninput = () => { skinState.skinVariation = parseInt(el('skVar').value) || 0; scheduleSkinApply(); };
+  panel.querySelectorAll('[data-gender]').forEach((b) => b.onclick = () => { skinState.gender = b.dataset.gender; panel.querySelectorAll('[data-gender]').forEach((x) => x.className = x === b ? '' : 'secondary'); scheduleSkinApply(); });
 }
 function setSkinLive(txt, color) { const h = el('skLive'); if (h) { h.textContent = txt; h.style.color = color || '#22c55e'; } }
 // Spiegelt skinState → UI (nach Import/Vorlage)
@@ -2414,7 +2460,7 @@ function updateSkinPreview() {
 async function applySkin(auto) {
   setSkinLive('… wird übernommen', '#f59e0b');
   try {
-    const body = { skinVariation: skinState.skinVariation, patternIndex: skinState.patternIndex, themeIndex: skinState.themeIndex, ...skinState.colors };
+    const body = { skinVariation: skinState.skinVariation, patternIndex: skinState.patternIndex, themeIndex: skinState.themeIndex, gender: skinState.gender, ...skinState.colors };
     const send = () => fetch(`${config.tokenBase}/skin`, { method: 'POST', headers: { Authorization: `Bearer ${sessionToken}`, 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
     let res = await send();
     if (res.status === 502) { await new Promise((r) => setTimeout(r, 1200)); res = await send(); } // ein Retry bei Server-Hänger
@@ -3084,6 +3130,7 @@ function setupEditMode() {
   el('editModeBtn').onclick = () => { setEditMode(true); toggleSettings(false); };
   el('editDoneBtn').onclick = () => { setEditMode(false); toggleSettings(true); };   // „Fertig" → zurück in die Einstellungen
   el('editResetBtn').onclick = () => resetPositions();
+  renderThemePicker();
 }
 
 init().then(() => setupEditMode());
