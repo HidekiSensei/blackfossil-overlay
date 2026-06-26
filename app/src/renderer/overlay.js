@@ -36,6 +36,16 @@ function renderThemePicker() {
 }
 applyTheme(currentTheme);   // sofort beim Laden anwenden (kein Flash)
 
+// ── Blitz-Effekte an/aus (Settings-Toggle, persistent) ──────────────────────
+let fxOff = localStorage.getItem('bf-noblitz') === '1';
+function applyFx() {
+  document.body.classList.toggle('bf-noblitz', fxOff);
+  const b = document.getElementById('fxToggleBtn');
+  if (b) { b.textContent = fxOff ? '⚡ Blitz-Effekte: Aus' : '⚡ Blitz-Effekte: An'; b.classList.toggle('secondary', fxOff); }
+}
+function toggleFx() { fxOff = !fxOff; localStorage.setItem('bf-noblitz', fxOff ? '1' : '0'); applyFx(); }
+document.addEventListener('DOMContentLoaded', applyFx);
+
 // ── Karten-/Positions-State ─────────────────────────────────────────────────
 let players = [];
 let me = null;
@@ -1754,10 +1764,10 @@ function renderProfile() {
   const questLine = qa
     ? (qa.status === 'active' ? '🟢 Läuft' : qa.status === 'rolled' ? '⏳ Bereit zum Start' : qa.status === 'failed' ? '❌ Fehlgeschlagen' : '—')
     : 'Keine aktive Quest';
-  const pfStat = (ico, label, val) => `<div class="pf-stat"><div class="pf-stat-l">${ico} ${label}</div><div class="pf-stat-v">${val}</div></div>`;
+  const pfStat = (ico, label, val, wide) => `<div class="pf-stat${wide ? ' pf-stat-wide' : ''}"><div class="pf-stat-l">${ico} ${label}</div><div class="pf-stat-v">${val}</div></div>`;
   const avatar = d.avatarUrl
-    ? `<img src="${d.avatarUrl}" alt="" style="width:46px;height:46px;border-radius:50%;border:2px solid var(--accent);object-fit:cover">`
-    : `<span style="width:46px;height:46px;border-radius:50%;border:2px solid var(--accent);display:flex;align-items:center;justify-content:center;background:#1a1230;color:var(--accent-2);font-size:22px">🦖</span>`;
+    ? `<img class="pf-av" src="${d.avatarUrl}" alt="">`
+    : `<span class="pf-av">🦖</span>`;
   panel.classList.add('pf-wide');   // breit, mit Seiten-Panels (wie Dino-Info/Settings)
   panel.innerHTML = `<h2>🦖 Profil</h2>
     <div class="pf-main">
@@ -1768,22 +1778,24 @@ function renderProfile() {
       </div>
       <!-- Mitte: Profil-Hauptinfo -->
       <div class="pf-center">
-        <div style="display:flex;align-items:center;gap:11px;margin-bottom:14px">
+        <div class="pf-hero">
           ${avatar}
-          <div>
-            <div style="font-size:17px;font-weight:600">${escapeHtml(d.name || '?')}</div>
-            <span class="tier-badge tier-${d.tier || 'Fossil'}" style="margin-top:3px;display:inline-block">${escapeHtml(d.tier || 'Fossil')}</span>
+          <div style="min-width:0">
+            <div class="pf-nm">${escapeHtml(d.name || '?')}</div>
+            <div style="display:flex;gap:6px;align-items:center;margin-top:5px;flex-wrap:wrap">
+              <span class="tier-badge tier-${d.tier || 'Fossil'}">${escapeHtml(d.tier || 'Fossil')}</span>
+              <span style="font-size:12px;color:var(--muted)">${d.online ? '🟢 Online' : '⚫ Offline'}</span>
+            </div>
           </div>
         </div>
         <div class="pf-stats">
           ${pfStat('💰', 'Punkte', (d.points || 0).toLocaleString('de-DE'))}
           ${pfStat('⏱️', 'Spielzeit', fmtPlaytime(d.playtime))}
-          ${pfStat('🏅', 'Rang', escapeHtml(d.tier || 'Fossil'))}
-          ${pfStat('🦖', 'Aktueller Dino', escapeHtml(onlineDino))}
-          ${pfStat('👥', 'Gruppe', inGroup ? 'In einer Gruppe' : 'Allein unterwegs')}
+          ${pfStat('👥', 'Gruppe', inGroup ? 'In einer Gruppe' : 'Allein')}
           ${pfStat('📜', 'RP-Quest', questLine)}
+          ${pfStat('🦖', 'Aktueller Dino', escapeHtml(onlineDino), true)}
         </div>
-        <div style="margin-top:12px;font-size:12px;color:var(--muted)">🎟️ Inventar: <span style="color:#eee">${escapeHtml(tokenList)}</span></div>
+        <div class="pf-inv">🎟️ Inventar: <b>${escapeHtml(tokenList)}</b></div>
       </div>
       <!-- Rechts: Tickets -->
       <div class="pf-side">
@@ -2413,7 +2425,7 @@ function showDinoDetail(card, ctx) {
     <div class="dd-header">
       <div class="prevwrap ddbig">${dinoPreviewSVG(card)}<img class="photo" src="${dinoImgSrc(card.dino)}" alt="" onerror="this.remove()"></div>
       <div style="flex:1;min-width:0">
-        <div style="font-size:19px;font-weight:800;overflow:hidden;text-overflow:ellipsis">${escapeHtml(card.dino || '?')}</div>
+        <div class="dd-nm" style="overflow:hidden;text-overflow:ellipsis">${escapeHtml(card.dino || '?')}</div>
         <div style="font-size:12px;color:var(--muted);margin:3px 0 9px">${Math.round((card.grow || 0) * 100)}% Wachstum</div>
         <div style="display:flex;gap:5px;flex-wrap:wrap">${badges}</div>
         ${paletteHTML(card.colors)}
@@ -2843,6 +2855,7 @@ function setDockVisible(visible) {
   const d = el('dock'); if (!d) return;
   if (visible === dockShown) return;        // kein Zustandswechsel → keine Animation
   dockShown = visible;
+  document.body.classList.toggle('dock-on', visible);   // animiertes Logo oben links ein-/ausblenden
   if (dockCloseTimer) { clearTimeout(dockCloseTimer); dockCloseTimer = null; }
   d.classList.remove('dock-opening', 'dock-closing');
   // reflow erzwingen, damit dieselbe Animation erneut starten kann
@@ -3395,6 +3408,8 @@ function setupEditMode() {
   el('editModeBtn').onclick = () => { setEditMode(true); toggleSettings(false); };
   el('editDoneBtn').onclick = () => { toggleSettings(true); setEditMode(false); };   // „Fertig" → zurück in die Einstellungen (Settings zuerst → kein Dock-Flackern)
   el('editResetBtn').onclick = () => resetPositions();
+  const fxBtn = el('fxToggleBtn'); if (fxBtn) fxBtn.onclick = toggleFx;
+  applyFx();
   renderThemePicker();
   syncLightningFrames();   // Minimap-Blitzrahmen direkt anzeigen
 }
