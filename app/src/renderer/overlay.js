@@ -294,10 +294,12 @@ async function init() {
   cv.addEventListener('mousemove', tpHoverHitTest);
   cv.addEventListener('mouseleave', () => setHoveredTp(null));
   // Dock (Overlay-Modus / Alt)
-  document.querySelectorAll('.dock-btn').forEach((b) => {
+  document.querySelectorAll('.dock-btn[data-act]').forEach((b) => {
     b.insertAdjacentHTML('afterbegin', DOCK_ICONS[b.dataset.act] || '');
     b.onclick = () => navTo(b.dataset.act);
   });
+  // Einheitlicher Schließen-Button im Dock → alles zu + zurück ins Spiel
+  { const c = el('dockClose'); if (c) { c.insertAdjacentHTML('afterbegin', DOCK_ICONS.close); c.onclick = () => closeOverlayAll(); } }
   // „^" auch schließen, wenn das Overlay den Fokus hat (dann verschluckt der globale
   // Hook den Dead-Key — der DOM-Event kommt hier aber zuverlässig an). Backquote = „^"/„`".
   window.addEventListener('keydown', (e) => {
@@ -1588,9 +1590,11 @@ function vitalBar(label, val, color) {
 function renderProfile() {
   const panel = el('profile');
   const d = lastMe;
-  const close = () => { panel.querySelector('.closeFeature').onclick = () => closeAllFeatures(); };
+  // Schließen läuft über den Dock-Button; In-Panel-Buttons existieren nicht mehr (null-sicher).
+  const close = () => { const b = panel.querySelector('.closeFeature'); if (b) b.onclick = () => closeAllFeatures(); };
   if (!d) {
-    panel.innerHTML = `<h2>🦖 Profil</h2><p style="color:var(--muted)">Lädt…</p><button class="closeFeature secondary">Schließen</button>`;
+    panel.classList.add('pf-wide');
+    panel.innerHTML = `<h2>🦖 Profil</h2><p style="color:var(--muted)">Lädt…</p>`;
     close(); pollHud(); return;
   }
   const tokenList = Object.entries(d.tokens || {}).filter(([, n]) => n > 0).map(([k, n]) => `${k.replace(/_/g, ' ')} ×${n}`).join('  ·  ') || '—';
@@ -1610,31 +1614,36 @@ function renderProfile() {
   const avatar = d.avatarUrl
     ? `<img src="${d.avatarUrl}" alt="" style="width:46px;height:46px;border-radius:50%;border:2px solid var(--accent);object-fit:cover">`
     : `<span style="width:46px;height:46px;border-radius:50%;border:2px solid var(--accent);display:flex;align-items:center;justify-content:center;background:#1a1230;color:var(--accent-2);font-size:22px">🦖</span>`;
+  panel.classList.add('pf-wide');   // breit, mit Seiten-Panels (wie Dino-Info/Settings)
   panel.innerHTML = `<h2>🦖 Profil</h2>
-    <div style="display:flex;align-items:center;gap:11px;margin-bottom:14px">
-      ${avatar}
-      <div>
-        <div style="font-size:17px;font-weight:600">${escapeHtml(d.name || '?')}</div>
-        <span class="tier-badge tier-${d.tier || 'Fossil'}" style="margin-top:3px;display:inline-block">${escapeHtml(d.tier || 'Fossil')}</span>
-      </div>
-    </div>
-    <div style="display:flex;gap:18px;margin-bottom:4px;font-size:13px">
-      <span>💰 <b>${(d.points || 0).toLocaleString('de-DE')}</b> Punkte</span>
-      <span>⏱️ <b>${fmtPlaytime(d.playtime)}</b> gespielt</span>
-    </div>
-    ${dinoBlock}
-    <div style="margin-top:10px;font-size:12px;color:var(--muted)">🎟️ Token: <span style="color:#eee">${escapeHtml(tokenList)}</span></div>
-    <div style="display:flex;gap:12px;margin-top:16px">
-      <div style="flex:1;min-width:0">
-        <div class="sec-title" style="margin-bottom:6px">📅 Events</div>
+    <div class="pf-main">
+      <!-- Links: Events -->
+      <div class="pf-side">
+        <div class="pf-col-head">📅 Events</div>
         ${profileEventsHtml()}
       </div>
-      <div style="flex:1;min-width:0">
-        <div class="sec-title" style="margin-bottom:6px">🎫 Tickets</div>
+      <!-- Mitte: Profil-Hauptinfo -->
+      <div class="pf-center">
+        <div style="display:flex;align-items:center;gap:11px;margin-bottom:14px">
+          ${avatar}
+          <div>
+            <div style="font-size:17px;font-weight:600">${escapeHtml(d.name || '?')}</div>
+            <span class="tier-badge tier-${d.tier || 'Fossil'}" style="margin-top:3px;display:inline-block">${escapeHtml(d.tier || 'Fossil')}</span>
+          </div>
+        </div>
+        <div style="display:flex;gap:18px;margin-bottom:4px;font-size:13px">
+          <span>💰 <b>${(d.points || 0).toLocaleString('de-DE')}</b> Punkte</span>
+          <span>⏱️ <b>${fmtPlaytime(d.playtime)}</b> gespielt</span>
+        </div>
+        ${dinoBlock}
+        <div style="margin-top:10px;font-size:12px;color:var(--muted)">🎟️ Token: <span style="color:#eee">${escapeHtml(tokenList)}</span></div>
+      </div>
+      <!-- Rechts: Tickets -->
+      <div class="pf-side">
+        <div class="pf-col-head">🎫 Tickets</div>
         ${profileTicketsHtml()}
       </div>
-    </div>
-    <button class="closeFeature secondary" style="margin-top:14px">Schließen</button>`;
+    </div>`;
   close();
   // Tickets anklickbar → Chat-Fenster
   panel.querySelectorAll('.profileTicketRow').forEach((row) => {
@@ -2348,8 +2357,19 @@ async function updateDinoInfo() {
 
 function updateInteractive() {
   updateDockActive(); // Dock-Highlight immer am aktuellen Stand halten
-  // Maus durchlassen nur wenn Overlay-UI geschlossen ist
-  window.bf.setInteractive(settingsOpen || mapOpen || adminOpen || overlayMode || !!featureOpen);
+  const anyPanel = settingsOpen || mapOpen || adminOpen || !!featureOpen;
+  // Dock IMMER einblenden, sobald ein Panel offen ist (auch per Hotkey geöffnet) — oder im „^"-Modus.
+  const d = el('dock'); if (d) d.style.display = (overlayMode || anyPanel) ? 'flex' : 'none';
+  // Maus durchlassen nur wenn nichts offen ist
+  window.bf.setInteractive(overlayMode || anyPanel);
+}
+
+// Einheitliches Schließen (Dock-Button): alle Panels zu, Overlay-Modus aus,
+// Fokus zurück ins Spiel (setInteractive(false) im Main-Prozess).
+function closeOverlayAll() {
+  closeAllPanels();
+  overlayMode = false;
+  updateInteractive();
 }
 
 // ── Overlay-/Nav-Modus („^"): Dock einblenden + Overlay klickbar machen ───────
@@ -2364,9 +2384,8 @@ function toggleOverlayMode(force) {
     lastOverlayToggleAt = now;
   }
   overlayMode = force !== undefined ? force : !overlayMode;
-  const d = el('dock'); if (d) d.style.display = overlayMode ? 'flex' : 'none';
   if (!overlayMode) closeAllPanels(); // „^" aus → alle Fenster zu
-  updateInteractive();
+  updateInteractive();                // steuert Dock-Sichtbarkeit + Interactive
 }
 
 // Schließt jedes offene Dock-Panel (Feature/Karte/Settings/Admin) — Grundlage
@@ -2391,6 +2410,7 @@ const DOCK_ICONS = {
   skin:     dockSvg('<circle cx="13.5" cy="6.5" r=".8" fill="currentColor" stroke="none"/><circle cx="17.5" cy="10.5" r=".8" fill="currentColor" stroke="none"/><circle cx="6.5" cy="12.5" r=".8" fill="currentColor" stroke="none"/><circle cx="8.5" cy="7.5" r=".8" fill="currentColor" stroke="none"/><path d="M12 2C6.5 2 2 6.5 2 12s4.5 10 10 10c.9 0 1.6-.7 1.6-1.7 0-.4-.2-.8-.4-1.1-.3-.3-.4-.7-.4-1.1a1.6 1.6 0 0 1 1.6-1.6H16c3 0 5.5-2.5 5.5-5.5C22 6 17.5 2 12 2z"/>'),
   settings: dockSvg('<circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.6 1.6 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.6 1.6 0 0 0-1.8-.3 1.6 1.6 0 0 0-1 1.5V21a2 2 0 0 1-4 0v-.1a1.6 1.6 0 0 0-1-1.5 1.6 1.6 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.6 1.6 0 0 0 .3-1.8 1.6 1.6 0 0 0-1.5-1H3a2 2 0 0 1 0-4h.1a1.6 1.6 0 0 0 1.5-1 1.6 1.6 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.6 1.6 0 0 0 1.8.3H9a1.6 1.6 0 0 0 1-1.5V3a2 2 0 0 1 4 0v.1a1.6 1.6 0 0 0 1 1.5 1.6 1.6 0 0 0 1.8-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.6 1.6 0 0 0-.3 1.8V9a1.6 1.6 0 0 0 1.5 1H21a2 2 0 0 1 0 4h-.1a1.6 1.6 0 0 0-1.5 1z"/>'),
   admin:    dockSvg('<path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10"/>'),
+  close:    dockSvg('<line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/>'),
 };
 
 // Welches Dock-Ziel ist gerade offen? (für das Highlight im Dock)

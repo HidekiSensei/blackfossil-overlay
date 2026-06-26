@@ -59,7 +59,16 @@
 
     /* Große Map */
     #bigMap { position: absolute; inset: 0; background: rgba(8,5,18,0.82); display: none; align-items: center; justify-content: center; flex-direction: column; }
-    #bigMapCanvas { max-width: 88vh; max-height: 88vh; width: 88vh; height: 88vh; border-radius: 12px; border: 1px solid var(--border); background: rgba(15,10,30,0.6); }
+    #mapRow { display: flex; align-items: center; justify-content: center; gap: 16px; width: 100%; }
+    #bigMapCanvas { max-width: 80vh; max-height: 80vh; width: 80vh; height: 80vh; border-radius: 12px; border: 1px solid var(--border); background: rgba(15,10,30,0.6); flex: none; }
+    #mapRight { display: flex; flex-direction: column; gap: 12px; width: 224px; flex: none; max-height: 84vh; }
+    /* Map-Seitenpanels (liegen NEBEN der Karte, nicht darüber) */
+    .map-panel { background: rgba(15,10,30,0.92); border: 1px solid var(--border); border-radius: 12px; padding: 12px; font-size: 12px; backdrop-filter: var(--blur); -webkit-backdrop-filter: var(--blur); }
+    #tpList { width: 224px; flex: none; max-height: 84vh; overflow: auto; }
+    #mapGroup { overflow: auto; }
+    .map-viewbtn { display: block; width: 100%; text-align: left; padding: 8px 12px; margin: 0; background: var(--panel); border: 1px solid var(--border); color: #eee; border-radius: 8px; font-size: 13px; font-weight: 600; cursor: pointer; }
+    .map-viewbtn:hover { background: rgba(139,92,246,0.18); }
+    .map-viewbtn + .map-viewbtn { margin-top: 6px; }
     .hint { margin-top: 12px; color: var(--muted); font-size: 13px; }
 
     /* Settings-Panel */
@@ -122,6 +131,11 @@
     .dock-btn:hover { background: rgba(139,92,246,0.18); color: #eee; }
     .dock-btn:active { transform: scale(0.94); }
     .dock-btn.active { background: rgba(139,92,246,0.32); color: #fff; box-shadow: inset 0 0 0 1px rgba(139,92,246,0.6); }
+    .dock-sep { width: 1px; align-self: stretch; margin: 4px 4px; background: var(--border); }
+    .dock-close { color: #fca5a5; }
+    .dock-close:hover { background: rgba(239,68,68,0.18); color: #fff; }
+    /* Einheitliches Schließen läuft jetzt über den Dock-Button — In-Panel-Schließen-Buttons ausgeblendet */
+    .closeFeature, #closeBtn, #adminCloseBtn { display: none !important; }
     @keyframes bfDock { from { opacity: 0; transform: translateX(-50%) translateY(10px); } to { opacity: 1; transform: translateX(-50%) translateY(0); } }
     @keyframes bfPop { from { opacity: 0; transform: translate(-50%,-50%) scale(0.97); } to { opacity: 1; transform: translate(-50%,-50%) scale(1); } }
     .feature-panel, #settings, #adminPanel { animation: bfPop .14s ease-out; }
@@ -135,6 +149,12 @@
     /* F5 Dino-Info: breit, Elder links + Vitals (mit Token rechts neben Balken) */
     /* ID-Selektor, damit er die ältere #dinoInfo-Breite überschreibt */
     #dinoInfo.di-wide { width: clamp(720px, 92vw, 1180px); max-width: 96vw; }
+    /* F1 Profil: breit, Events links + Profil mittig + Tickets rechts (wie Dino-Info/Settings) */
+    #profile.pf-wide { width: clamp(760px, 88vw, 1120px); max-width: 96vw; }
+    .pf-main { display: flex; gap: 22px; margin-top: 14px; align-items: flex-start; }
+    .pf-side { width: 290px; flex: none; min-width: 0; }
+    .pf-center { flex: 1; min-width: 0; }
+    .pf-col-head { font-size: 13px; font-weight: 700; color: var(--accent); letter-spacing: .3px; padding-bottom: 8px; margin-bottom: 12px; border-bottom: 1px solid var(--border); }
     .di-main { display: flex; gap: 24px; margin-top: 14px; align-items: flex-start; }
     .di-elder-col { width: 280px; flex: none; }
     .di-vitals-col { flex: 1; min-width: 0; }
@@ -225,29 +245,24 @@
     <div id="zoneBox" style="margin-top:8px">Zone: —</div>
   </div>
 
-  <!-- Große Map -->
+  <!-- Große Map: Teleport-Panel links | Karte mittig | rechts Ansichten + Gruppe -->
   <div id="bigMap">
-    <div style="position:relative">
+    <div id="mapRow">
+
+      <!-- Panel 1: Teleport-Punkte (links neben der Karte) -->
+      <div id="tpList" class="map-panel">
+        <div style="font-weight:700;margin-bottom:6px">📍 Teleport-Punkte</div>
+        <div id="tpListItems"><div style="color:var(--muted)">Keine Punkte.</div></div>
+      </div>
+
+      <div style="position:relative">
       <canvas id="bigMapCanvas" width="1000" height="1000"></canvas>
-      <button id="heatBtn" style="position:absolute;top:12px;right:12px;width:auto;padding:8px 14px;
-        background:var(--panel);border:1px solid var(--border);color:#eee;border-radius:8px;
-        font-size:13px;font-weight:600;cursor:pointer">🔥 Heatmap</button>
       <button id="calibBtn" style="display:none;position:absolute;top:12px;left:12px;width:auto;padding:8px 14px;
         background:var(--panel);border:1px solid var(--border);color:#eee;border-radius:8px;
         font-size:13px;font-weight:600;cursor:pointer">🔧 Kalibrieren</button>
       <button id="zoneBtn" style="display:none;position:absolute;top:12px;left:158px;width:auto;padding:8px 14px;
         background:var(--panel);border:1px solid var(--border);color:#eee;border-radius:8px;
         font-size:13px;font-weight:600;cursor:pointer">📐 Zonen</button>
-
-      <!-- Zonen-Layer-Toggles (nur große Karte, sichtbar wenn Heatmap aus) -->
-      <div id="zoneLayers" style="position:absolute;top:56px;right:12px;display:flex;flex-direction:column;gap:6px;z-index:5">
-        <button id="zlSanctuary" data-layer="sanctuary" style="width:auto;padding:7px 12px;background:var(--panel);border:1px solid var(--border);color:#eee;border-radius:8px;font-size:12px;font-weight:600;cursor:pointer;text-align:left">🛡️ Sanctuary</button>
-        <button id="zlPatrol" data-layer="patrol" style="width:auto;padding:7px 12px;background:var(--panel);border:1px solid var(--border);color:#eee;border-radius:8px;font-size:12px;font-weight:600;cursor:pointer;text-align:left">🐾 Patrol</button>
-        <button id="zlMigration" data-layer="migration" style="width:auto;padding:7px 12px;background:var(--panel);border:1px solid var(--border);color:#eee;border-radius:8px;font-size:12px;font-weight:600;cursor:pointer;text-align:left">🧭 Migration</button>
-      </div>
-
-      <!-- Gruppe (unten rechts neben der Karte) -->
-      <div id="mapGroup" style="display:none;position:absolute;bottom:12px;right:12px;width:200px;max-height:42%;overflow:auto;background:rgba(15,10,30,0.92);border:1px solid var(--border);border-radius:10px;padding:10px;font-size:12px;z-index:5"></div>
 
       <!-- Zonen-Aufnahme-Panel -->
       <div id="zonePanel" style="display:none;position:absolute;top:56px;right:12px;width:270px;
@@ -285,18 +300,6 @@
           <button id="calibReset" style="flex:1;padding:8px;font-size:12px;border-radius:6px;border:1px solid var(--border);background:transparent;color:var(--muted);cursor:pointer">Reset</button>
         </div>
       </div>
-      <!-- Zoom/Pan-Steuerung -->
-      <div style="position:absolute;bottom:12px;left:50%;transform:translateX(-50%);display:flex;gap:6px">
-        <button id="centerBtn" style="width:auto;padding:8px 12px;background:var(--panel);border:1px solid var(--border);color:#eee;border-radius:8px;font-size:13px;cursor:pointer">⌖ Auf mich zentrieren</button>
-        <button id="resetViewBtn" style="width:auto;padding:8px 12px;background:var(--panel);border:1px solid var(--border);color:var(--muted);border-radius:8px;font-size:13px;cursor:pointer">Reset</button>
-      </div>
-
-      <!-- Teleport-Liste (links, für alle Spieler) -->
-      <div id="tpList" style="position:absolute;top:12px;left:12px;width:212px;max-height:84%;overflow:auto;background:rgba(15,10,30,0.92);border:1px solid var(--border);border-radius:10px;padding:10px;font-size:12px">
-        <div style="font-weight:700;margin-bottom:6px">📍 Teleport-Punkte</div>
-        <div id="tpListItems"><div style="color:var(--muted)">Keine Punkte.</div></div>
-      </div>
-
       <!-- Admin-Panel ist jetzt ein eigenständiges Modal (siehe #adminPanel unten) -->
 
       <!-- TP-Bestätigung -->
@@ -307,7 +310,27 @@
           <button id="tpConfirmNo" class="secondary" style="flex:1">Abbrechen</button>
         </div>
       </div>
-    </div>
+      </div><!-- /Karten-Wrapper -->
+
+      <!-- Rechte Spalte: Panel 2 (Ansichten & Steuerung) + Panel 3 (Gruppe) -->
+      <div id="mapRight">
+        <div id="mapViews" class="map-panel">
+          <div style="font-weight:700;margin-bottom:8px">🗺️ Ansichten</div>
+          <button id="heatBtn" class="map-viewbtn">🔥 Heatmap</button>
+          <div id="zoneLayers" style="display:flex;flex-direction:column;gap:6px;margin-top:6px">
+            <button id="zlSanctuary" data-layer="sanctuary" class="map-viewbtn">🛡️ Sanctuary</button>
+            <button id="zlPatrol" data-layer="patrol" class="map-viewbtn">🐾 Patrol</button>
+            <button id="zlMigration" data-layer="migration" class="map-viewbtn">🧭 Migration</button>
+          </div>
+          <div style="height:1px;background:var(--border);margin:10px 0"></div>
+          <div style="font-weight:700;margin-bottom:8px">🎯 Steuerung</div>
+          <button id="centerBtn" class="map-viewbtn">⌖ Auf mich zentrieren</button>
+          <button id="resetViewBtn" class="map-viewbtn" style="color:var(--muted)">↺ Ansicht zurücksetzen</button>
+        </div>
+        <div id="mapGroup" class="map-panel"></div>
+      </div>
+
+    </div><!-- /#mapRow -->
     <div class="hint">M schließen · Mausrad = Zoom · Ziehen = verschieben · Klick = Wegpunkt</div>
   </div>
 
@@ -526,6 +549,8 @@
     <button class="dock-btn" data-act="skin" aria-label="Skin"><span>Skin</span></button>
     <button class="dock-btn" data-act="settings" aria-label="Einstellungen"><span>Settings</span></button>
     <button class="dock-btn" id="dockAdmin" data-act="admin" aria-label="Admin" style="display:none"><span>Admin</span></button>
+    <div class="dock-sep"></div>
+    <button class="dock-btn dock-close" id="dockClose" aria-label="Schließen & weiterspielen"><span>Schließen</span></button>
   </div>
   <div id="skinEditor" class="feature-panel"><h2>🎨 Skin Editor</h2><p>Wird in Kürze verfügbar sein.</p><button class="closeFeature secondary">Schließen</button></div>
   <div id="garage" class="feature-panel"><h2>🚗 Garage</h2><p>Ein- und Ausparken deiner Dinos — kommt in Phase 4.</p><button class="closeFeature secondary">Schließen</button></div>

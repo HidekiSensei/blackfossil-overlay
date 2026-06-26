@@ -97,6 +97,49 @@ function startForegroundWatch() {
   } catch { fgChild = null; }
 }
 function stopForegroundWatch() { try { fgChild && fgChild.kill(); } catch {} fgChild = null; }
+
+// Holt das Overlay-Fenster HART in den Windows-Vordergrund. app.focus({steal}) wird von
+// UE5-Fullscreen-Spielen blockiert (Foreground-Lock); deshalb nativer Win32-Weg:
+// ALT-Tap (gaukelt User-Input vor → hebt den Lock) + AttachThreadInput (hängt den Input
+// des aktuellen Vordergrund-Threads an unseren Fenster-Thread) + SetForegroundWindow.
+// Damit bekommt das Spiel danach KEINE Tastatur-/Maus-Inputs mehr (kein Lenken/Beißen).
+let FRONT_PS1 = null;
+function bringOverlayToFront() {
+  if (process.platform !== 'win32' || !overlayWindow) return;
+  let hwnd;
+  try { hwnd = overlayWindow.getNativeWindowHandle().readBigUInt64LE(0).toString(); }
+  catch { try { hwnd = String(overlayWindow.getNativeWindowHandle().readUInt32LE(0)); } catch { return; } }
+  try {
+    if (!FRONT_PS1) {
+      FRONT_PS1 = path.join(app.getPath('temp'), 'bf-front.ps1');
+      const script =
+        'param([string]$h)\n' +
+        'Add-Type @"\n' +
+        'using System;using System.Runtime.InteropServices;\n' +
+        'public class BFFront{\n' +
+        ' [DllImport("user32.dll")] public static extern bool SetForegroundWindow(IntPtr h);\n' +
+        ' [DllImport("user32.dll")] public static extern bool BringWindowToTop(IntPtr h);\n' +
+        ' [DllImport("user32.dll")] public static extern IntPtr SetActiveWindow(IntPtr h);\n' +
+        ' [DllImport("user32.dll")] public static extern bool ShowWindow(IntPtr h,int n);\n' +
+        ' [DllImport("user32.dll")] public static extern IntPtr GetForegroundWindow();\n' +
+        ' [DllImport("user32.dll")] public static extern int GetWindowThreadProcessId(IntPtr h,out int p);\n' +
+        ' [DllImport("user32.dll")] public static extern bool AttachThreadInput(int a,int b,bool c);\n' +
+        ' [DllImport("user32.dll")] public static extern void keybd_event(byte k,byte s,int f,int e);\n' +
+        ' public static void Front(IntPtr h){\n' +
+        '  IntPtr fg=GetForegroundWindow(); int fp; int ft=GetWindowThreadProcessId(fg,out fp);\n' +
+        '  int wp; int wt=GetWindowThreadProcessId(h,out wp);\n' +
+        '  keybd_event(0x12,0,0,0); keybd_event(0x12,0,2,0);\n' +   // ALT down/up → User-Input vortäuschen
+        '  AttachThreadInput(ft,wt,true);\n' +
+        '  ShowWindow(h,9); BringWindowToTop(h); SetForegroundWindow(h); SetActiveWindow(h);\n' +
+        '  AttachThreadInput(ft,wt,false);\n' +
+        ' }}\n' +
+        '"@\n' +
+        '[BFFront]::Front([IntPtr]([int64]$h))';
+      fs.writeFileSync(FRONT_PS1, script);
+    }
+    spawn('powershell', ['-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', FRONT_PS1, hwnd], { windowsHide: true });
+  } catch (e) { /* Foreground-Steal fehlgeschlagen → Electron-Fallback greift weiter */ }
+}
 function isGameForeground() {
   if (process.platform !== 'win32') return true;   // Dev: immer aktiv
   if (overlayInteractive) return true;             // Map/Settings offen → Overlay hat Fokus
@@ -442,9 +485,10 @@ ipcMain.on('set-interactive', (_e, interactive) => {
     try { overlayWindow.moveTop(); } catch {}
     try { overlayWindow.focus(); } catch {}
     try { app.focus({ steal: true }); } catch {}  // App-Ebene: Foreground hart stehlen
+    bringOverlayToFront();                          // nativer Win32-Foreground-Steal (UE5-Lock umgehen)
     // Zweiter Versuch nach einem Tick — manche Fullscreen-Spiele geben den Fokus
     // erst leicht verzögert frei.
-    setTimeout(() => { try { if (overlayInteractive && overlayWindow) { overlayWindow.focus(); app.focus({ steal: true }); } } catch {} }, 60);
+    setTimeout(() => { try { if (overlayInteractive && overlayWindow) { overlayWindow.focus(); app.focus({ steal: true }); bringOverlayToFront(); } } catch {} }, 60);
   } else {
     try { overlayWindow.setFocusable(true); } catch {}
     overlayWindow.blur();            // gibt den Fokus zurück ans Spiel
