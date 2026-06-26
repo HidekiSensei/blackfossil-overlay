@@ -13,6 +13,16 @@
     }
     * { box-sizing: border-box; margin: 0; padding: 0; }
     html, body { width: 100%; height: 100%; background: transparent; overflow: hidden; font-family: system-ui, sans-serif; color: #eee; user-select: none; }
+    /* Scrollbar im Overlay-Look (schlank, lila, abgerundet) — gilt für alle scrollbaren Bereiche */
+    ::-webkit-scrollbar { width: 10px; height: 10px; }
+    ::-webkit-scrollbar-track { background: transparent; }
+    ::-webkit-scrollbar-thumb {
+      background: linear-gradient(180deg, rgba(139,92,246,0.65), rgba(124,58,237,0.55));
+      border: 2px solid transparent; background-clip: padding-box; border-radius: 999px;
+    }
+    ::-webkit-scrollbar-thumb:hover { background: linear-gradient(180deg, var(--accent), var(--accent-2)); background-clip: padding-box; }
+    ::-webkit-scrollbar-corner { background: transparent; }
+    * { scrollbar-width: thin; scrollbar-color: rgba(139,92,246,0.65) transparent; }
     /* Glas-Optik für alle Panels mit var(--panel) */
     #hud, .toast, #micIndicator, #zoneBox, #rangeBox, #settings, #adminPanel, .feature-panel,
     #zonePanel, #calibPanel, #dinoDetail .box {

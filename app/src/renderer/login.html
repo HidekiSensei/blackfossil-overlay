@@ -5,7 +5,11 @@
   <title>BlackFossil Login</title>
   <style>
     :root { --bg:#0f0a1e; --card:#1a1330; --border:#3a2d5c; --accent:#8b5cf6; --text:#eee; --muted:#b3a9cc; }
-    * { box-sizing: border-box; }
+    * { box-sizing: border-box; scrollbar-width: thin; scrollbar-color: rgba(139,92,246,0.65) transparent; }
+    ::-webkit-scrollbar { width: 10px; height: 10px; }
+    ::-webkit-scrollbar-track { background: transparent; }
+    ::-webkit-scrollbar-thumb { background: rgba(139,92,246,0.65); border: 2px solid transparent; background-clip: padding-box; border-radius: 999px; }
+    ::-webkit-scrollbar-thumb:hover { background: var(--accent); background-clip: padding-box; }
     body { font-family: system-ui, sans-serif; background: var(--bg); color: var(--text); margin: 0; padding: 24px; }
     h1 { font-size: 18px; margin: 0 0 4px; }
     .sub { color: var(--muted); font-size: 12px; margin-bottom: 20px; }
