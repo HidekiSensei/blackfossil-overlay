@@ -2081,12 +2081,18 @@ function renderDinoInfo() {
     </div>`).join('');
   el('dinoInfo').classList.add('di-wide');
   el('dinoInfo').innerHTML = `
-    <div class="di-head"><span class="di-dino" id="di-dino">Dino</span><span class="di-sub" id="di-grow"></span></div>
-    <div class="di-sub" id="di-name"></div>
-    <div class="di-badges" id="di-badges"></div>
-    <div style="margin:10px 0 2px">
-      <div class="stat-top"><span>🌱 Wachstum</span><span class="val" id="di-grow-v">—</span></div>
-      <div class="stat-track" style="height:11px"><div class="stat-fill" id="di-grow-f" style="background:#84cc16"></div></div>
+    <div class="di-topbar">
+      <div class="di-imgwrap"><img id="di-img" alt="" onerror="this.style.visibility='hidden'"></div>
+      <div style="flex:1;min-width:0">
+        <div class="di-head"><span class="di-dino" id="di-dino">Dino</span><span class="di-sub" id="di-grow"></span></div>
+        <div class="di-sub" id="di-name"></div>
+        <div class="di-badges" id="di-badges"></div>
+        <div class="di-meta" id="di-meta"></div>
+        <div style="margin-top:10px">
+          <div class="stat-top"><span>🌱 Wachstum</span><span class="val" id="di-grow-v">—</span></div>
+          <div class="stat-track" style="height:11px"><div class="stat-fill" id="di-grow-f" style="background:#84cc16"></div></div>
+        </div>
+      </div>
     </div>
     <div class="di-main">
       <div class="di-elder-col">
@@ -2097,9 +2103,7 @@ function renderDinoInfo() {
         <div class="sec-title">📊 Vitals &amp; Token <span style="color:var(--muted);font-weight:400;font-size:11px">— Token rechts neben dem Balken einlösen</span></div>
         ${rows}
       </div>
-    </div>
-    <button class="closeFeature secondary" style="margin-top:14px">Schließen (F5)</button>`;
-  el('dinoInfo').querySelector('.closeFeature').onclick = () => closeAllFeatures();
+    </div>`;
   tokenConfirmOpen = false; // frisch öffnen → keine hängende Bestätigungs-Sperre
   updateDinoInfo();
   if (dinoTimer) clearInterval(dinoTimer);
@@ -2412,7 +2416,18 @@ function renderSkinTemplates() {
 
 // ── Dino-Markt (Karten-Grid + Angebot erstellen) ───────────────────────────
 let marketView = 'offers'; // 'offers' | 'create'
+// Diät pro Spezies (für Markt-Filter/Gruppierung). Omnivoren als eigene Kategorie.
+const DINO_DIET = {
+  Tyrannosaurus: 'carni', Rex: 'carni', Allosaurus: 'carni', Carnotaurus: 'carni', Ceratosaurus: 'carni', Deinosuchus: 'carni', Dilophosaurus: 'carni', Herrerasaurus: 'carni', Omniraptor: 'carni', Pteranodon: 'carni', Troodon: 'carni',
+  Triceratops: 'herbi', Stegosaurus: 'herbi', Diabloceratops: 'herbi', Tenontosaurus: 'herbi', Maiasaura: 'herbi', Maiasaurus: 'herbi', Pachycephalosaurus: 'herbi', Dryosaurus: 'herbi', Hypsilophodon: 'herbi',
+  Gallimimus: 'omni', Beipiaosaurus: 'omni',
+};
+const dietOfDino = (c) => DINO_DIET[(c || '').split('_')[0]] || 'other';
+// [key, Chip-Label, Gruppen-Label, Farbe]
+const MK_DIETS = [['carni', '🥩 Karni', 'Karnivoren', '#ef4444'], ['herbi', '🌿 Herbi', 'Herbivoren', '#22c55e'], ['omni', '🍃 Omni', 'Omnivoren', '#eab308']];
+let marketSearch = '', marketDiet = 'all', marketSort = 'price-asc', marketOffers = [];
 async function renderMarket() {
+  el('market').classList.add('m-wide');
   el('market').innerHTML = `
     <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px">
       <h2 style="margin:0">🦖 Dino-Markt</h2>
@@ -2422,11 +2437,25 @@ async function renderMarket() {
       <button id="mkTabOffers" style="flex:1">Angebote</button>
       <button id="mkTabCreate" class="secondary" style="flex:1">➕ Angebot erstellen</button>
     </div>
-    <div id="mkBody"></div>
-    <button class="closeFeature secondary" style="margin-top:14px">Schließen (F9)</button>`;
-  el('market').querySelector('.closeFeature').onclick = () => closeAllFeatures();
+    <div id="mkControls" style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-bottom:12px">
+      <input id="mkSearch" placeholder="🔍 Spezies suchen…" style="flex:1;min-width:150px;padding:8px;border-radius:8px;border:1px solid var(--border);background:rgba(0,0,0,0.25);color:#eee;font-size:13px">
+      <div id="mkDiet" style="display:flex;gap:4px"></div>
+      <select id="mkSort" class="bf-select" style="width:auto;flex:none">
+        <option value="price-asc">Preis ↑</option>
+        <option value="price-desc">Preis ↓</option>
+        <option value="name">Name A–Z</option>
+        <option value="grow-desc">Wachstum ↓</option>
+      </select>
+    </div>
+    <div id="mkBody"></div>`;
   el('mkTabOffers').onclick = () => { marketView = 'offers'; loadMarket(); };
   el('mkTabCreate').onclick = () => { marketView = 'create'; loadMarket(); };
+  const dietBox = el('mkDiet');
+  const chips = [['all', 'Alle', '', '#8b5cf6'], ...MK_DIETS];
+  dietBox.innerHTML = chips.map(([k, l, , c]) => `<button class="mk-chip${marketDiet === k ? ' on' : ''}" data-diet="${k}" style="--c:${c}">${l}</button>`).join('');
+  dietBox.querySelectorAll('.mk-chip').forEach((b) => { b.onclick = () => { marketDiet = b.dataset.diet; dietBox.querySelectorAll('.mk-chip').forEach((x) => x.classList.toggle('on', x.dataset.diet === marketDiet)); renderMarketOffers(); }; });
+  const se = el('mkSearch'); se.value = marketSearch; se.oninput = (e) => { marketSearch = e.target.value; renderMarketOffers(); };
+  const so = el('mkSort'); so.value = marketSort; so.onchange = (e) => { marketSort = e.target.value; renderMarketOffers(); };
   marketView = 'offers';
   await loadMarket();
 }
@@ -2434,6 +2463,7 @@ async function loadMarket() {
   const tabO = el('mkTabOffers'), tabC = el('mkTabCreate'); if (!tabO) return;
   tabO.className = marketView === 'offers' ? '' : 'secondary';
   tabC.className = marketView === 'create' ? '' : 'secondary';
+  const ctrl = el('mkControls'); if (ctrl) ctrl.style.display = marketView === 'offers' ? 'flex' : 'none';
   const body = el('mkBody'); body.innerHTML = '<div style="color:var(--muted);font-size:13px">Lade…</div>';
   try {
     const [m, g] = await Promise.all([
@@ -2442,15 +2472,8 @@ async function loadMarket() {
     ]);
     el('mkPoints').textContent = `${(m.points || 0).toLocaleString('de-DE')} Pkt.`;
     if (marketView === 'offers') {
-      const offers = m.offers || [];
-      if (!offers.length) { body.innerHTML = '<div style="color:var(--muted);font-size:13px">Keine Angebote.</div>'; return; }
-      const grid = document.createElement('div'); grid.className = 'dino-grid'; body.innerHTML = ''; body.appendChild(grid);
-      for (const o of offers) {
-        const card = dinoCardEl(o, () => showDinoDetail(o, { mode: 'market', price: o.price, mine: o.mine }));
-        const tag = document.createElement('div'); tag.className = 'price-tag'; tag.style.borderRadius = '0';
-        tag.textContent = `${o.price.toLocaleString('de-DE')} Pkt.${o.mine ? ' (deins)' : ''}`;
-        card.appendChild(tag); grid.appendChild(card);
-      }
+      marketOffers = m.offers || [];
+      renderMarketOffers();
     } else {
       const slots = g.slots || [];
       if (!slots.length) { body.innerHTML = '<div style="color:var(--muted);font-size:13px">Garage leer — nichts zu verkaufen.</div>'; return; }
@@ -2459,6 +2482,38 @@ async function loadMarket() {
       for (const s of slots) grid.appendChild(dinoCardEl(s, () => showSellDialog(s)));
     }
   } catch { body.innerHTML = '<div style="color:#ef4444;font-size:13px">Markt konnte nicht geladen werden.</div>'; }
+}
+// Angebote filtern (Suche + Diät) + sortieren + nach Diät gruppiert anzeigen
+function renderMarketOffers() {
+  const body = el('mkBody'); if (!body) return;
+  let offers = marketOffers.slice();
+  const q = marketSearch.trim().toLowerCase();
+  if (q) offers = offers.filter((o) => (o.dino || '').toLowerCase().includes(q));
+  if (marketDiet !== 'all') offers = offers.filter((o) => dietOfDino(o.dino) === marketDiet);
+  const sorters = {
+    'price-asc': (a, b) => (a.price || 0) - (b.price || 0),
+    'price-desc': (a, b) => (b.price || 0) - (a.price || 0),
+    'name': (a, b) => (a.dino || '').localeCompare(b.dino || ''),
+    'grow-desc': (a, b) => (b.grow || 0) - (a.grow || 0),
+  };
+  offers.sort(sorters[marketSort] || sorters['price-asc']);
+  if (!offers.length) { body.innerHTML = `<div style="color:var(--muted);font-size:13px">${marketOffers.length ? 'Keine passenden Angebote.' : 'Keine Angebote.'}</div>`; return; }
+  body.innerHTML = '';
+  const addCard = (grid, o) => {
+    const card = dinoCardEl(o, () => showDinoDetail(o, { mode: 'market', price: o.price, mine: o.mine }));
+    const tag = document.createElement('div'); tag.className = 'price-tag'; tag.style.borderRadius = '0';
+    tag.textContent = `${(o.price || 0).toLocaleString('de-DE')} Pkt.${o.mine ? ' (deins)' : ''}`;
+    card.appendChild(tag); grid.appendChild(card);
+  };
+  for (const [key, , label, color] of [...MK_DIETS, ['other', '', 'Sonstige', '#888']]) {
+    const list = offers.filter((o) => dietOfDino(o.dino) === key);
+    if (!list.length) continue;
+    const head = document.createElement('div'); head.className = 'mk-group-head'; head.style.color = color;
+    head.innerHTML = `● ${label} <span style="color:var(--muted);font-weight:400">(${list.length})</span>`;
+    body.appendChild(head);
+    const grid = document.createElement('div'); grid.className = 'dino-grid'; body.appendChild(grid);
+    for (const o of list) addCard(grid, o);
+  }
 }
 function showSellDialog(card) {
   const box = el('dinoDetail').querySelector('.box');
@@ -2486,6 +2541,7 @@ async function updateDinoInfo() {
     el('di-grow').textContent = '';
     el('di-name').textContent = 'Verbinde dich mit dem Server, um deine Stats zu sehen.';
     el('di-badges').innerHTML = '';
+    { const im = el('di-img'); if (im) im.style.visibility = 'hidden'; const mt = el('di-meta'); if (mt) mt.innerHTML = ''; }
     el('di-elder').innerHTML = '<span style="color:var(--muted);font-size:12px">—</span>';
     Object.keys(VITAL_TOKEN).forEach((k) => { const c = el(`di-tok-${k}`); if (c) c.innerHTML = ''; });
     DI_STATS.forEach((s) => { el(`di-${s.key}-f`).style.width = '0%'; el(`di-${s.key}-v`).textContent = '—'; });
@@ -2498,6 +2554,11 @@ async function updateDinoInfo() {
   renderDinoTokens(d.tokens);
   el('di-dino').textContent = d.dino || 'Dino';
   el('di-name').textContent = `${d.gender || ''} · ${d.name || ''}`;
+  { const im = el('di-img'); if (im) { const src = dinoImgSrc(d.dino); if (im.dataset.src !== src) { im.dataset.src = src; im.src = src; } im.style.visibility = 'visible'; } }
+  { const mt = el('di-meta'); if (mt) mt.innerHTML =
+      `<span class="di-mchip">⏱️ ${fmtPlaytime(d.playtime)}</span>`
+      + `<span class="di-mchip">💰 ${(d.points || 0).toLocaleString('de-DE')} Pkt.</span>`
+      + (d.tier ? `<span class="di-mchip tier-${d.tier}">${escapeHtml(d.tier)}</span>` : ''); }
   const gp = Math.round((d.grow || 0) * 100);
   el('di-grow').textContent = `Wachstum ${gp}%`;
   { const gf = el('di-grow-f'); if (gf) gf.style.width = gp + '%'; const gv = el('di-grow-v'); if (gv) gv.textContent = gp + '%'; }
