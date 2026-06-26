@@ -58,7 +58,7 @@
     #micIndicator, #zoneBox, #rangeBox { box-shadow: var(--glow); }
 
     /* Große Map */
-    #bigMap { position: absolute; inset: 0; background: rgba(8,5,18,0.82); display: none; align-items: center; justify-content: center; flex-direction: column; }
+    #bigMap { position: fixed; inset: 0; width: 100vw; height: 100vh; background: rgba(8,5,18,0.82); display: none; align-items: center; justify-content: center; flex-direction: column; overflow: hidden; }
     #mapRow { display: flex; align-items: center; justify-content: center; gap: 16px; width: 100%; }
     #bigMapCanvas { max-width: 80vh; max-height: 80vh; width: 80vh; height: 80vh; border-radius: 12px; border: 1px solid var(--border); background: rgba(15,10,30,0.6); flex: none; }
     #mapRight { display: flex; flex-direction: column; gap: 12px; width: 224px; flex: none; max-height: 84vh; }
@@ -214,6 +214,8 @@
     body.bf-edit .bf-movable { outline: 2px dashed var(--accent); outline-offset: 4px; cursor: grab; }
     body.bf-edit .bf-movable:hover { outline-color: var(--accent-2); }
     body.bf-edit .bf-movable.dragging { cursor: grabbing; opacity: .85; outline-style: solid; box-shadow: 0 0 24px rgba(139,92,246,.6); }
+    body.bf-edit .bf-movable .bf-resize { position: absolute; right: 0; bottom: 0; width: 20px; height: 20px; cursor: nwse-resize; z-index: 10001;
+      background: linear-gradient(135deg, transparent 45%, var(--accent) 45%, var(--accent) 70%, transparent 70%, transparent 78%, var(--accent) 78%); border-radius: 0 0 14px 0; }
     body.bf-edit .bf-movable::before { content: attr(data-edit-label); position: absolute; top: -22px; left: 50%; transform: translateX(-50%); background: var(--accent); color: #fff; font-size: 11px; font-weight: 700; padding: 2px 9px; border-radius: 6px; pointer-events: none; white-space: nowrap; z-index: 10000; }
     /* Edit-Banner */
     #editBanner { display: none; position: fixed; top: 8px; left: 50%; transform: translateX(-50%); z-index: 100000; background: var(--accent); color: #fff; padding: 8px 16px; border-radius: 999px; font-size: 13px; font-weight: 700; box-shadow: var(--glow); }

@@ -773,18 +773,22 @@ app.get('/me/ticket-messages', async (req, res) => {
   if (m.openerId !== s.discordId && m.claimedBy !== s.discordId) return res.status(403).json({ error: 'Kein Zugriff' });
   if (!DISCORD_BOT_TOKEN) return res.status(503).json({ error: 'Discord nicht konfiguriert' });
   try {
-    const raw = await discordApi(`/channels/${channelId}/messages?limit=25`);
+    const raw = await discordApi(`/channels/${channelId}/messages?limit=50`);
     const messages = (Array.isArray(raw) ? raw : [])
-      .filter((x) => x && x.author && !x.author.bot)               // keine Bot-Embeds/Systemmeldungen
+      .filter((x) => x && x.author && (x.content || (Array.isArray(x.attachments) && x.attachments.length) || (Array.isArray(x.embeds) && x.embeds.length)))
       .reverse()                                                   // Discord liefert neueste zuerst → chronologisch
-      .map((x) => ({
-        id: x.id,
-        author: (x.member && x.member.nick) || (x.author.global_name) || x.author.username || '?',
-        fromMe: x.author.id === s.discordId,
-        content: (x.content || '').slice(0, 600),
-        hasAttachment: Array.isArray(x.attachments) && x.attachments.length > 0,
-        at: x.timestamp ? Date.parse(x.timestamp) : 0,
-      }));
+      .map((x) => {
+        const embedTxt = (Array.isArray(x.embeds) ? x.embeds : []).map((e) => [e.title, e.description].filter(Boolean).join(' — ')).filter(Boolean).join(' · ');
+        return {
+          id: x.id,
+          author: x.author.bot ? (x.author.global_name || x.author.username || 'Bot') : ((x.member && x.member.nick) || x.author.global_name || x.author.username || '?'),
+          fromMe: x.author.id === s.discordId,
+          fromBot: !!x.author.bot,
+          content: ((x.content || embedTxt) || '').slice(0, 600),
+          hasAttachment: Array.isArray(x.attachments) && x.attachments.length > 0,
+          at: x.timestamp ? Date.parse(x.timestamp) : 0,
+        };
+      });
     res.json({ ticketId: m.ticketId, category: m.category, messages });
   } catch (e) { res.status(502).json({ error: e.message }); }
 });

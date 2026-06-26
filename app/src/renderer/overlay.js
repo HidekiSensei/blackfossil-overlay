@@ -1258,22 +1258,20 @@ function shareCalibration() {
 }
 
 // ── Hotkeys ─────────────────────────────────────────────────────────────────
+// Panel-Hotkeys → Dock-Navigation: navTo schließt zuerst alle anderen Panels,
+// damit IMMER nur ein Panel offen ist (Hotkey = Navigation, kein Stapeln).
+const HK_PANEL_NAV = {
+  'map-toggle': 'map', 'settings-toggle': 'settings', 'dino-info': 'dino', 'skin-editor': 'skin',
+  'garage': 'garage', 'market': 'market', 'group': 'group', 'profile': 'profile', 'lexikon': 'lexikon',
+};
 function handleHotkey(action) {
   if (action === 'overlay-mode' || action === 'dock-toggle') return toggleOverlayMode(); // „^"/F5: Dock-Modus, auch off-server
   if (!me) return; // Off-Server: alle anderen Hotkeys blockiert (nur Hinweis sichtbar)
   if (action === 'admin-menu') return openAdminMenu();
+  if (HK_PANEL_NAV[action]) return navTo(HK_PANEL_NAV[action]);
   if (action === 'voice-connect') toggleConnect();
   else if (action === 'mic-toggle') toggleMic();
-  else if (action === 'settings-toggle') toggleSettings();
-  else if (action === 'map-toggle') toggleMap();
   else if (action === 'zone-capture') captureZonePoint();
-  else if (action === 'dino-info') toggleFeature('dinoInfo');
-  else if (action === 'skin-editor') toggleFeature('skinEditor');
-  else if (action === 'garage') toggleFeature('garage');
-  else if (action === 'market') toggleFeature('market');
-  else if (action === 'group') toggleFeature('group');
-  else if (action === 'profile') toggleFeature('profile');
-  else if (action === 'lexikon') toggleFeature('lexikon');
   else if (action === 'range-cycle') cycleRange();
 }
 
@@ -1775,16 +1773,20 @@ function renderTicketChat(modal, channelId, ticketId, category, messages) {
   const t = myTickets.find((x) => x.channelId === channelId);
   if (t) { const seen = ticketSeen(); seen[channelId] = t.lastMessageAt || Date.now(); setTicketSeen(seen); }
 
-  // Letzte eigene Nachricht finden; alles ab da zeigen (= eigene + neue Antworten danach).
+  // Ganzen Verlauf anzeigen (inkl. Bot-Nachrichten). Vor der ersten neuen Antwort
+  // (= alles nach deiner letzten eigenen Nachricht) eine Trennlinie einziehen.
   let ownIdx = -1;
   for (let i = messages.length - 1; i >= 0; i--) { if (messages[i].fromMe) { ownIdx = i; break; } }
-  const shown = ownIdx >= 0 ? messages.slice(ownIdx) : messages.slice(-1);
-  const hasNew = ownIdx >= 0 && shown.length > 1;
+  const newFrom = (ownIdx >= 0 && ownIdx < messages.length - 1) ? ownIdx + 1 : -1;
 
-  const bubbles = shown.map((m) => {
-    const mine = m.fromMe;
+  const bubbles = messages.map((m, i) => {
+    const divider = (i === newFrom) ? '<div style="text-align:center;margin:6px 0 10px;font-size:10px;color:#86efac"><span style="background:rgba(34,197,94,0.14);border-radius:999px;padding:2px 10px">💬 Neue Antworten</span></div>' : '';
     const body = escapeHtml(m.content || '') || `<i style="opacity:.6">${m.hasAttachment ? '[Anhang]' : '[leer]'}</i>`;
-    return `<div style="display:flex;flex-direction:column;align-items:${mine ? 'flex-end' : 'flex-start'};margin-bottom:9px">
+    if (m.fromBot) {
+      return divider + `<div style="margin:8px 0;text-align:center"><div style="display:inline-block;max-width:92%;padding:7px 11px;border-radius:10px;background:rgba(139,92,246,0.10);border:1px solid var(--border);color:var(--muted);font-size:12px;line-height:1.35">🤖 <b style="color:var(--accent-2)">${escapeHtml(m.author)}</b> · ${body}</div></div>`;
+    }
+    const mine = m.fromMe;
+    return divider + `<div style="display:flex;flex-direction:column;align-items:${mine ? 'flex-end' : 'flex-start'};margin-bottom:9px">
       <div style="font-size:10px;color:var(--muted);margin-bottom:2px">${mine ? 'Du' : escapeHtml(m.author)} · ${fmtEventTime(m.at ? new Date(m.at).toISOString() : '')}</div>
       <div style="max-width:85%;padding:8px 11px;border-radius:12px;font-size:13px;line-height:1.35;${mine
         ? 'background:linear-gradient(135deg,var(--accent),#7c3aed);color:#fff;border-bottom-right-radius:4px'
@@ -1797,10 +1799,10 @@ function renderTicketChat(modal, channelId, ticketId, category, messages) {
       <div style="font-weight:700">🎫 Ticket #${ticketId} <span style="color:var(--muted);font-weight:400;font-size:12px">· ${escapeHtml(category || '')}</span></div>
       <button id="ticketChatClose" class="secondary" style="flex:none;padding:4px 11px;min-width:0">✕</button>
     </div>
-    ${hasNew ? '<div style="font-size:11px;color:#86efac;margin-bottom:8px">💬 Neue Antwort seit deiner letzten Nachricht</div>' : ''}
-    <div style="flex:1;overflow:auto;padding-right:4px">${bubbles}</div>
+    <div id="ticketChatScroll" style="flex:1;overflow:auto;padding-right:4px">${bubbles}</div>
     <div style="margin-top:10px;font-size:11px;color:var(--muted)">Zum Antworten ins Discord-Ticket schreiben.</div>`;
   el('ticketChatClose').onclick = closeTicketChat;
+  const sc = el('ticketChatScroll'); if (sc) sc.scrollTop = sc.scrollHeight;   // ans Ende scrollen (neueste sichtbar)
 }
 
 // ── Quests (RP-Challenge: Dino + Handicap + Kleinigkeit + RP-Rolle) ───────────
@@ -2941,15 +2943,18 @@ const MOVABLE = [
   { id: 'lexikon',     label: 'Dino-Lexikon' },
 ];
 let editMode = false;
+// Diese großen, mittig gestapelten Panels werden im Edit-Mode versetzt (cascade),
+// damit sie sich nicht überlappen und einzeln greifbar sind.
+const CASCADE_PANELS = ['settings', 'dinoInfo', 'skinEditor', 'garage', 'market', 'group', 'profile', 'lexikon'];
 function loadPositions() { try { return JSON.parse(localStorage.getItem('bf-layout')) || {}; } catch { return {}; } }
 function savePositions(p) { localStorage.setItem('bf-layout', JSON.stringify(p)); }
 function applySavedPositions() {
   const p = loadPositions();
   for (const m of MOVABLE) {
     const e = el(m.id), pos = p[m.id]; if (!e || !pos) continue;
-    e.style.left = pos.left; e.style.top = pos.top;
-    e.style.right = 'auto'; e.style.bottom = 'auto';
-    e.style.transform = 'none'; // Center-Transforms überschreiben
+    if (pos.left) { e.style.left = pos.left; e.style.top = pos.top; e.style.right = 'auto'; e.style.bottom = 'auto'; e.style.transform = 'none'; }
+    if (pos.width) e.style.width = pos.width;
+    if (pos.height) { e.style.height = pos.height; e.style.maxHeight = 'none'; }
   }
 }
 function resetPositions() {
@@ -2957,18 +2962,35 @@ function resetPositions() {
   for (const m of MOVABLE) {
     const e = el(m.id); if (!e) continue;
     e.style.left = ''; e.style.top = ''; e.style.right = ''; e.style.bottom = ''; e.style.transform = '';
+    e.style.width = ''; e.style.height = ''; e.style.maxHeight = '';
   }
   showToast('Layout zurückgesetzt', 'success');
 }
 function setEditMode(on) {
   editMode = on;
   document.body.classList.toggle('bf-edit', on);
-  // Edit-Mode setzt alle verschiebbaren Panels sichtbar, damit man sie ziehen kann
+  const saved = loadPositions();
+  let cascade = 0;
   for (const m of MOVABLE) {
     const e = el(m.id); if (!e) continue;
     e.classList.toggle('bf-movable', on);
-    if (on) { e.dataset.editLabel = m.label; if (e.style.display === 'none') e.dataset.bfHidden = '1', e.style.display = m.id === 'hud' ? 'flex' : 'block'; }
-    else if (e.dataset.bfHidden) { e.style.display = 'none'; delete e.dataset.bfHidden; }
+    if (on) {
+      e.dataset.editLabel = m.label;
+      if (getComputedStyle(e).display === 'none') { e.dataset.bfHidden = '1'; e.style.display = m.id === 'hud' ? 'flex' : 'block'; }
+      // Große gestapelte Panels ohne gespeicherte Position versetzt anordnen → einzeln greifbar
+      if (CASCADE_PANELS.includes(m.id) && !(saved[m.id] && saved[m.id].left)) {
+        e.style.left = (40 + cascade * 46) + 'px';
+        e.style.top = (54 + cascade * 40) + 'px';
+        e.style.right = 'auto'; e.style.bottom = 'auto'; e.style.transform = 'none';
+        cascade++;
+      }
+      if (m.id !== 'hud') addResizeHandle(e, m.id);   // HUD nicht resizebar (Pille)
+    } else {
+      removeResizeHandle(e);
+      if (e.dataset.bfHidden) { e.style.display = 'none'; delete e.dataset.bfHidden; }
+      // temporäre Cascade-Position wieder lösen, wenn nicht gespeichert → zurück zur Mitte
+      if (CASCADE_PANELS.includes(m.id) && !(saved[m.id] && saved[m.id].left)) { e.style.left = ''; e.style.top = ''; e.style.right = ''; e.style.bottom = ''; e.style.transform = ''; }
+    }
   }
   window.bf.setInteractive(on || settingsOpen || mapOpen || !!featureOpen);
 }
@@ -2976,7 +2998,7 @@ function makeDraggable(elm, id) {
   let dragging = false, ox = 0, oy = 0;
   elm.addEventListener('mousedown', (e) => {
     if (!editMode) return;
-    // Buttons/Inputs nicht abfangen (man soll im Edit-Mode trotzdem nicht klicken können — alles als Drag werten)
+    if (e.target.classList && e.target.classList.contains('bf-resize')) return; // Resize-Griff separat
     e.preventDefault(); e.stopPropagation();
     dragging = true; elm.classList.add('dragging');
     const r = elm.getBoundingClientRect();
@@ -2993,15 +3015,31 @@ function makeDraggable(elm, id) {
     if (!dragging) return;
     dragging = false; elm.classList.remove('dragging');
     const p = loadPositions();
-    p[id] = { left: elm.style.left, top: elm.style.top };
+    p[id] = { ...(p[id] || {}), left: elm.style.left, top: elm.style.top };
     savePositions(p);
   });
 }
+// Resize-Griff unten rechts (nur im Edit-Mode)
+function addResizeHandle(elm, id) {
+  if (elm.querySelector('.bf-resize')) return;
+  const h = document.createElement('div'); h.className = 'bf-resize';
+  let rz = false, sx = 0, sy = 0, sw = 0, sh = 0;
+  const mv = (ev) => { if (!rz) return; elm.style.width = Math.max(220, sw + (ev.clientX - sx)) + 'px'; elm.style.height = Math.max(140, sh + (ev.clientY - sy)) + 'px'; elm.style.maxHeight = 'none'; };
+  const up = () => { if (!rz) return; rz = false; window.removeEventListener('mousemove', mv); window.removeEventListener('mouseup', up); const p = loadPositions(); p[id] = { ...(p[id] || {}), width: elm.style.width, height: elm.style.height }; savePositions(p); };
+  h.addEventListener('mousedown', (e) => {
+    if (!editMode) return;
+    e.preventDefault(); e.stopPropagation();
+    rz = true; const r = elm.getBoundingClientRect(); sx = e.clientX; sy = e.clientY; sw = r.width; sh = r.height;
+    window.addEventListener('mousemove', mv); window.addEventListener('mouseup', up);
+  });
+  elm.appendChild(h);
+}
+function removeResizeHandle(elm) { const h = elm.querySelector('.bf-resize'); if (h) h.remove(); }
 function setupEditMode() {
   for (const m of MOVABLE) { const e = el(m.id); if (e) makeDraggable(e, m.id); }
   applySavedPositions();
   el('editModeBtn').onclick = () => { setEditMode(true); toggleSettings(false); };
-  el('editDoneBtn').onclick = () => setEditMode(false);
+  el('editDoneBtn').onclick = () => { setEditMode(false); toggleSettings(true); };   // „Fertig" → zurück in die Einstellungen
   el('editResetBtn').onclick = () => resetPositions();
 }
 
