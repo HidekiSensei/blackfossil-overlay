@@ -376,9 +376,10 @@ function headingMapAngle(p) {
   const dx = a1.nx - a0.nx, dy = a1.ny - a0.ny;
   return (dx === 0 && dy === 0) ? -Math.PI / 2 : Math.atan2(dy, dx);
 }
+function arrowAngle(p) { return (typeof p.dirAngle === 'number') ? p.dirAngle : headingMapAngle(p); }
 function drawGroupMember(ctx, px, py, p, scale) {
   const col = groupColorFor(p.steamId);
-  drawArrow(ctx, px, py, headingMapAngle(p), 6.5 * scale, col);
+  drawArrow(ctx, px, py, arrowAngle(p), 6.5 * scale, col);
   if (p.name) {
     ctx.font = `bold ${11 * scale}px system-ui`; ctx.textAlign = 'center'; ctx.textBaseline = 'bottom';
     ctx.strokeStyle = 'rgba(0,0,0,0.75)'; ctx.lineWidth = 3 * scale; ctx.strokeText(p.name, px, py - 9 * scale);
@@ -387,7 +388,7 @@ function drawGroupMember(ctx, px, py, p, scale) {
 }
 function drawPlayer(ctx, px, py, p, scale) {
   ctx.save(); ctx.shadowColor = SELF_COLOR; ctx.shadowBlur = 8 * scale;   // Glow → klar erkennbar
-  drawArrow(ctx, px, py, headingMapAngle(p), 8.5 * scale, SELF_COLOR);
+  drawArrow(ctx, px, py, arrowAngle(p), 8.5 * scale, SELF_COLOR);
   ctx.restore();
 }
 

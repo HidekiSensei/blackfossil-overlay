@@ -36,6 +36,22 @@ applyTheme(currentTheme);   // sofort beim Laden anwenden (kein Flash)
 let players = [];
 let me = null;
 let waypoints = [];
+// Pfeil-Richtung aus der tatsächlichen Bewegung auf der Karte (konventions-frei,
+// unabhängig von Heading/Kalibrierung). prevPos = letzte Welt-Position je Spieler.
+const _prevPos = {};
+const _moveAngle = {};
+function computeMoveAngles() {
+  for (const p of players) {
+    const prev = _prevPos[p.steamId];
+    if (prev) {
+      const a0 = worldToNorm(prev.x, prev.y), a1 = worldToNorm(p.x, p.y);
+      const dnx = a1.nx - a0.nx, dny = a1.ny - a0.ny;
+      if (Math.hypot(p.x - prev.x, p.y - prev.y) > 40) _moveAngle[p.steamId] = Math.atan2(dny, dnx); // genug Bewegung
+    }
+    _prevPos[p.steamId] = { x: p.x, y: p.y };
+    if (_moveAngle[p.steamId] != null) p.dirAngle = _moveAngle[p.steamId];
+  }
+}
 let calibMode = false;
 let heatmapMode = false;
 // Auto-Kalibrierung über ZONEN-Ecken: rohe Welt-Koordinaten der hinterlegten Zonen
@@ -456,6 +472,7 @@ function startPositionPolling() {
         const data = await res.json();
         players = data.players || [];
         me = players.find((p) => p.isYou) || null;
+        computeMoveAngles();   // Pfeil-Richtung aus tatsächlicher Karten-Bewegung
         if (Array.isArray(data.toasts)) for (const t of data.toasts) showToast(t, 'success');
         applyServerState();
         updateZoneBox();
@@ -2293,7 +2310,7 @@ function showDinoDetail(card, ctx) {
     const sellBtn = canSell
       ? `<button id="ddSellServer" class="secondary" style="width:100%">💰 An Server verkaufen (+${price.toLocaleString('de-DE')})</button>`
       : `<button id="ddSellServer" class="secondary" style="width:100%;opacity:.55;cursor:not-allowed" disabled title="Verkauf erst ab ${minPct}% Wachstum — aktuell ${growPct}% (es fehlen ${minPct - growPct}%).">💰 An Server verkaufen (ab ${minPct}%)</button>`;
-    const myDino = ((lastMe && lastMe.dino) || '').split('_')[0];
+    const myDino = ((me && me.dino) || '').split('_')[0];
     const slotDino = (card.dino || '').split('_')[0];
     const diffSpecies = myDino && slotDino && myDino !== slotDino;
     const mainBtn = diffSpecies
@@ -2325,7 +2342,7 @@ function showDinoDetail(card, ctx) {
   el('dinoDetail').style.display = 'flex';
   box.querySelector('#ddClose').onclick = closeDinoDetail;
   const u = box.querySelector('#ddUnpark'); if (u) u.onclick = () => {
-    const myD = ((lastMe && lastMe.dino) || '').split('_')[0];
+    const myD = ((me && me.dino) || '').split('_')[0];
     const slotD = (card.dino || '').split('_')[0];
     closeDinoDetail();
     // Andere Spezies → Swap (parkt aktuellen Dino + spielt Ziel auf); gleiche → Ausparken

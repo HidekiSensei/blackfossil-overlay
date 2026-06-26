@@ -1327,12 +1327,10 @@ app.post('/garage/swap', express.json(), async (req, res) => {
     const current = players.find((p) => p.steamId === s.steamId);
     if (!current) return res.status(409).json({ error: 'Du musst im Spiel sein (auf einem Dino).' });
 
-    // Sicherheits-Checks (identisch zum Discord-Swap)
+    // Garage-Wechsel: nur Kampf-Schutz (kein Swap während es blutet) + Cooldown.
+    // Health/Stamina/Abstand-Gates entfernt — sonst war der normale Dino-Wechsel
+    // praktisch immer blockiert (100% Health nötig).
     if (current.isBleeding) return res.status(409).json({ error: 'Swap nicht möglich: Dein Dino blutet (im Kampf).' });
-    if ((current.health ?? 0) < SWAP_MIN_HEALTH) return res.status(409).json({ error: `Swap nicht möglich: Health muss 100% sein (aktuell ${Math.round((current.health ?? 0) * 100)}%).` });
-    if ((current.stamina ?? 0) < SWAP_MIN_STAMINA) return res.status(409).json({ error: `Swap nicht möglich: Stamina muss ≥ ${Math.round(SWAP_MIN_STAMINA * 100)}% sein (aktuell ${Math.round((current.stamina ?? 0) * 100)}%).` });
-    const dist = nearestOtherPlayerM(current, players);
-    if (dist < SWAP_MIN_DISTANCE_M) return res.status(409).json({ error: `Swap nicht möglich: Spieler zu nah (${Math.round(dist)} m, nötig ≥ ${SWAP_MIN_DISTANCE_M} m).` });
 
     // 1) Aktuellen Dino IMMER zuerst sichern, damit er nicht verloren geht
     const parkedId = genId();
