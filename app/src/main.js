@@ -327,6 +327,7 @@ try { const m = require('uiohook-napi'); uiohook = m.uIOhook; UiohookKey = m.Uio
 catch (err) { console.error('uiohook nicht verfügbar:', err.message); }
 
 let pttCode = null, ptmCode = null, pttDown = false, ptmDown = false;
+let pttReleaseTimer = null, ptmReleaseTimer = null; // verzögertes Stummschalten (Auto-Repeat-Schutz)
 let pttMouse = null, ptmMouse = null; // Maustasten-Codes (uiohook e.button)
 
 function accelToUiohookCode(accel) {
@@ -350,15 +351,34 @@ function refreshVoiceKeys() {
 
 function startVoiceHook() {
   if (!uiohook) return;
+  // PTT/PTM-Release mit kurzer Karenz: manche Tastaturen/OS senden beim Halten
+  // Auto-Repeat (keydown→keyup→keydown…). Würde der keyup sofort stummschalten,
+  // „cuttet" die Stimme mitten im Reden raus. Daher beim keyup erst nach RELEASE_GRACE
+  // stummschalten; kommt vorher ein keydown, wird die Stummschaltung abgebrochen.
+  const RELEASE_GRACE_MS = 250;
   uiohook.on('keydown', (e) => {
     if (!hotkeysActive) return; // The Isle nicht im Vordergrund → PTT/PTM blockiert
-    if (pttCode && e.keycode === pttCode && !pttDown) { pttDown = true; sendVoiceKey('ptt', true); }
-    if (ptmCode && e.keycode === ptmCode && !ptmDown) { ptmDown = true; sendVoiceKey('ptm', true); }
+    if (pttCode && e.keycode === pttCode) {
+      if (pttReleaseTimer) { clearTimeout(pttReleaseTimer); pttReleaseTimer = null; } // Auto-Repeat → halten
+      if (!pttDown) { pttDown = true; sendVoiceKey('ptt', true); }
+    }
+    if (ptmCode && e.keycode === ptmCode) {
+      if (ptmReleaseTimer) { clearTimeout(ptmReleaseTimer); ptmReleaseTimer = null; }
+      if (!ptmDown) { ptmDown = true; sendVoiceKey('ptm', true); }
+    }
   });
   uiohook.on('keyup', (e) => {
-    if (!hotkeysActive) { pttDown = false; ptmDown = false; return; }
-    if (pttCode && e.keycode === pttCode && pttDown) { pttDown = false; sendVoiceKey('ptt', false); }
-    if (ptmCode && e.keycode === ptmCode && ptmDown) { ptmDown = false; sendVoiceKey('ptm', false); }
+    if (!hotkeysActive) {
+      if (pttReleaseTimer) { clearTimeout(pttReleaseTimer); pttReleaseTimer = null; }
+      if (ptmReleaseTimer) { clearTimeout(ptmReleaseTimer); ptmReleaseTimer = null; }
+      pttDown = false; ptmDown = false; return;
+    }
+    if (pttCode && e.keycode === pttCode && pttDown && !pttReleaseTimer) {
+      pttReleaseTimer = setTimeout(() => { pttDown = false; pttReleaseTimer = null; sendVoiceKey('ptt', false); }, RELEASE_GRACE_MS);
+    }
+    if (ptmCode && e.keycode === ptmCode && ptmDown && !ptmReleaseTimer) {
+      ptmReleaseTimer = setTimeout(() => { ptmDown = false; ptmReleaseTimer = null; sendVoiceKey('ptm', false); }, RELEASE_GRACE_MS);
+    }
   });
   // Maustasten (z.B. Seitentasten) für PTT/PTM
   uiohook.on('mousedown', (e) => {
