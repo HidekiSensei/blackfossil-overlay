@@ -234,7 +234,9 @@ app.get('/positions', async (req, res) => {
     });
     if (!r.ok) throw new Error(`Game-Server HTTP ${r.status}`);
     const data = await r.json();
-    const ovMembers = new Set(ovMembersOf(readOv(), payload.steamId));
+    const ov = readOv();
+    if (enforceGroupDiet(ov, data.Players ?? [])) writeOv(ov);   // Diät-Wechsel → Auto-Kick
+    const ovMembers = new Set(ovMembersOf(ov, payload.steamId));
     const players = (data.Players ?? []).map((p) => ({
       steamId: p.steamId,
       name: p.playerName,
@@ -993,12 +995,43 @@ const OVGROUPS_FILE = `${BOT_DATA_DIR}/ovgroups.json`;
 const DIET = {
   Tyrannosaurus: 'carni', Rex: 'carni', Allosaurus: 'carni', Carnotaurus: 'carni', Ceratosaurus: 'carni', Deinosuchus: 'carni', Dilophosaurus: 'carni', Herrerasaurus: 'carni', Omniraptor: 'carni', Pteranodon: 'carni', Troodon: 'carni',
   Triceratops: 'herbi', Stegosaurus: 'herbi', Diabloceratops: 'herbi', Tenontosaurus: 'herbi', Maiasaura: 'herbi', Maiasaurus: 'herbi', Pachycephalosaurus: 'herbi', Dryosaurus: 'herbi', Hypsilophodon: 'herbi',
-  Gallimimus: 'both', Beipiaosaurus: 'both',
+  // Omnivoren zählen zur Kategorie Herbivoren (können mit Herbis in eine Gruppe)
+  Gallimimus: 'herbi', Beipiaosaurus: 'herbi',
 };
 const dietOf = (dino) => DIET[dino] || 'both';
 const sameDiet = (a, b) => { const x = dietOf(a), y = dietOf(b); return x === y || x === 'both' || y === 'both'; };
 function readOv() { return readJson(OVGROUPS_FILE, { groups: {}, invites: [] }); }
 function writeOv(d) { writeJsonFile(OVGROUPS_FILE, d); }
+// Overlay-Toast für einen Spieler einreihen (wird beim nächsten /positions abgeholt)
+function queueOverlayToast(steamId, msg) {
+  try { const tf = `${BOT_DATA_DIR}/toasts.json`; const store = readJson(tf, {}); (store[steamId] = store[steamId] || []).push(msg); writeJsonFile(tf, store); } catch {}
+}
+// Diät-Konsistenz der Gruppen erzwingen: wer den Dino auf eine andere Diät wechselt,
+// fliegt automatisch raus. Gruppen-Diät wird beim ersten bekannten Mitglied festgelegt.
+// (Omnivoren = Herbivoren, siehe DIET.) Läuft im /positions-Dauer-Poll → quasi sofort.
+function enforceGroupDiet(ov, players) {
+  let changed = false;
+  const dinoOf = (sid) => { const p = players.find((x) => x.steamId === sid && !x.isDead); return p ? p.dinoClass : null; };
+  for (const [gid, g] of Object.entries(ov.groups || {})) {
+    const members = g.members || [];
+    if (!members.length) { delete ov.groups[gid]; changed = true; continue; }
+    if (!g.diet) {  // Gruppen-Diät initialisieren (erstes online-Mitglied mit klarer Diät)
+      for (const sid of members) { const dc = dinoOf(sid); const d = dc ? dietOf(dc) : null; if (d && d !== 'both') { g.diet = d; changed = true; break; } }
+    }
+    if (!g.diet) continue;
+    const keep = [];
+    for (const sid of members) {
+      const dc = dinoOf(sid);
+      if (!dc) { keep.push(sid); continue; }            // offline/unbekannt → nicht kicken
+      const d = dietOf(dc);
+      if (d === 'both' || d === g.diet) keep.push(sid);
+      else { changed = true; queueOverlayToast(sid, '⚠️ Du wurdest aus der Gruppe entfernt (Dino-/Diät-Wechsel).'); }
+    }
+    if (keep.length !== members.length) g.members = keep;
+    if (!g.members.length) { delete ov.groups[gid]; changed = true; }
+  }
+  return changed;
+}
 function myOvGroupId(ov, steamId) { for (const [gid, g] of Object.entries(ov.groups || {})) if ((g.members || []).includes(steamId)) return gid; return null; }
 function ovMembersOf(ov, steamId) { const gid = myOvGroupId(ov, steamId); return gid ? (ov.groups[gid].members || []) : []; }
 
@@ -1036,7 +1069,7 @@ app.post('/ovgroup/invite', express.json(), async (req, res) => {
   if (!sameDiet(me.dinoClass, tp.dinoClass)) return res.status(400).json({ error: 'Andere Diät — Einladung nicht möglich.' });
   const ov = readOv();
   let gid = myOvGroupId(ov, s.steamId);
-  if (!gid) { gid = genId(); ov.groups[gid] = { members: [s.steamId] }; }
+  if (!gid) { gid = genId(); ov.groups[gid] = { members: [s.steamId], diet: dietOf(me.dinoClass) }; }
   ov.invites = (ov.invites || []).filter((i) => !(i.to === to && i.gid === gid));
   ov.invites.push({ to, from: s.steamId, fromName: me.playerName, gid, at: Date.now() });
   writeOv(ov);

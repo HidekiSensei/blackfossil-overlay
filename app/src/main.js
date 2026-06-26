@@ -223,6 +223,7 @@ const HOTKEYS_FILE = path.join(app.getPath('userData'), 'hotkeys.json');
 // uiohook) + Voice. Alle Menü-/Feature-Funktionen sind über das Dock klickbar,
 // daher per Default UNBELEGT (''). In den Einstellungen jederzeit rebindbar.
 const DEFAULT_HOTKEYS = {
+  'dock-toggle':     'F5',   // Overlay-/Dock-Modus (zusätzlich zur „^"-Taste)
   'map-toggle':      '',
   'dino-info':       '',
   'zone-capture':    '',

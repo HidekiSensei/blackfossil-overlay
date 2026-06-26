@@ -1259,7 +1259,7 @@ function shareCalibration() {
 
 // ── Hotkeys ─────────────────────────────────────────────────────────────────
 function handleHotkey(action) {
-  if (action === 'overlay-mode') return toggleOverlayMode(); // Alt: Klick-Modus, auch off-server
+  if (action === 'overlay-mode' || action === 'dock-toggle') return toggleOverlayMode(); // „^"/F5: Dock-Modus, auch off-server
   if (!me) return; // Off-Server: alle anderen Hotkeys blockiert (nur Hinweis sichtbar)
   if (action === 'admin-menu') return openAdminMenu();
   if (action === 'voice-connect') toggleConnect();
@@ -1298,6 +1298,7 @@ const HOLD_ACTIONS = ['voice-ptt', 'voice-ptm'];
 
 // ── Tastenbelegung (rebindbar) ───────────────────────────────────────────────
 const HK_LABELS = {
+  'dock-toggle': 'Overlay/Dock öffnen',
   'map-toggle': 'Große Karte',
   'dino-info': 'Dino-Info',
   'skin-editor': 'Skin Editor',
@@ -1340,13 +1341,16 @@ function buildAccel({ ctrl, alt, shift, key }) {
   return parts.join('+');
 }
 
+// Primäre, dauerhaft sichtbare Hotkeys. Der Rest (Panel-Schnellzugriffe) liegt
+// standardmäßig leer in einem ausklappbaren Bereich darunter.
+const HK_PRIMARY = ['dock-toggle', 'voice-connect', 'mic-toggle', 'range-cycle', 'voice-ptt', 'voice-ptm', 'admin-menu'];
+let hkExtrasOpen = false;
 async function renderHotkeys() {
   const hk = await window.bf.getHotkeys();
   config.hotkeys = hk;   // lokalen Tasten-Fallback aktuell halten
   const list = el('hotkeyList');
   list.innerHTML = '';
-  for (const [action, label] of Object.entries(HK_LABELS)) {
-    if (action === 'zone-capture') continue; // Admin-Tool ausgeblendet
+  const buildRow = (action, label) => {
     const cur = parseAccel(hk[action] || '');
     const row = document.createElement('div');
     row.className = 'hk-row';
@@ -1377,8 +1381,23 @@ async function renderHotkeys() {
     btn.style.cssText = 'min-width:64px';
     btn.onclick = () => startRebind(action, btn);
     row.appendChild(btn);
-    list.appendChild(row);
-  }
+    return row;
+  };
+  // 1) Primäre Hotkeys (immer sichtbar)
+  for (const action of HK_PRIMARY) { if (HK_LABELS[action]) list.appendChild(buildRow(action, HK_LABELS[action])); }
+  // 2) Panel-Schnellzugriffe (optional, ausklappbar, standardmäßig leer)
+  const extras = Object.keys(HK_LABELS).filter((a) => !HK_PRIMARY.includes(a) && a !== 'zone-capture');
+  const toggle = document.createElement('button');
+  toggle.className = 'secondary';
+  toggle.style.cssText = 'width:100%;margin-top:10px;font-size:12px;text-align:left';
+  const wrap = document.createElement('div');
+  wrap.style.cssText = 'margin-top:6px;' + (hkExtrasOpen ? '' : 'display:none');
+  const labelFor = () => `${hkExtrasOpen ? '▾' : '▸'} Panel-Schnellzugriffe (optional — standardmäßig leer)`;
+  toggle.textContent = labelFor();
+  toggle.onclick = () => { hkExtrasOpen = !hkExtrasOpen; wrap.style.display = hkExtrasOpen ? 'block' : 'none'; toggle.textContent = labelFor(); };
+  for (const action of extras) wrap.appendChild(buildRow(action, HK_LABELS[action]));
+  list.appendChild(toggle);
+  list.appendChild(wrap);
 }
 
 function startRebind(action, btn) {
@@ -1799,11 +1818,15 @@ async function loadQuest() {
     const r = await fetch(`${config.tokenBase}/me/quest`, { headers: { Authorization: `Bearer ${sessionToken}` } });
     if (!r.ok) return;
     const d = await r.json();
-    const wasActive = !!questState.active;
+    const prevId = questState.active && questState.active.id;
     questState = d;
-    if (d.justCompleted) showToast('🏆 RP-Quest erfüllt! Prime mit 80% erreicht!', 'success');
-    if (featureOpen === 'quests' && !questRolling) renderQuests();
-    if (wasActive && d.justCompleted) { /* schon getoastet */ }
+    if (featureOpen !== 'quests' || questRolling) return;
+    if (d.justCompleted) { showToast('🏆 RP-Quest erfüllt! Prime mit 80% erreicht!', 'success'); renderQuests(); return; }
+    // Gleiche aktive Quest → NUR die Fortschritts-Chips updaten (kein Voll-Rerender →
+    // kein Flackern, Abbrechen-Button behält seinen Zustand). Sonst neu aufbauen.
+    const sameActive = d.active && d.active.id === prevId;
+    if (sameActive && el('qProgress')) { const p = el('qProgress'); p.outerHTML = questProgressHtml(); }
+    else renderQuests();
   } catch {}
 }
 
@@ -1829,7 +1852,7 @@ function questProgressHtml() {
       + `<span class="q-chip ${growOk ? 'ok' : 'no'}">📈 ${Math.round((p.grow || 0) * 100)}% / ${target}%</span>`
       + `<span class="q-chip ${p.isPrime ? 'ok' : 'no'}">${p.isPrime ? '⭐' : '☆'} Prime</span>`;
   }
-  return `<div class="q-progress">${chips}</div>`;
+  return `<div class="q-progress" id="qProgress">${chips}</div>`;
 }
 function questStageHtml() {
   const a = questState.active;
@@ -1940,49 +1963,57 @@ const DIET_LABEL = { carni: '🥩 Fleischfresser', herbi: '🌿 Pflanzenfresser'
 const DIET_DOT = { carni: '#ef4444', herbi: '#22c55e', both: '#f59e0b' };
 let lexSel = null;
 
+// Lexikon-Reihenfolge (für „Durchblättern"): nach Diät, dann alphabetisch
+const LEX_ORDER = ['carni', 'herbi', 'both'];
+function lexOrderedNames() {
+  return LEX_ORDER.flatMap((diet) => Object.keys(DINO_LEXIKON).filter((n) => DINO_LEXIKON[n].diet === diet).sort());
+}
 function renderLexikon() {
   const panel = el('lexikon');
-  const wire = () => { panel.querySelector('.closeFeature').onclick = () => closeAllFeatures(); };
+  panel.classList.add('lex-wide');
 
   if (lexSel && DINO_LEXIKON[lexSel]) {
     const d = DINO_LEXIKON[lexSel];
     const li = (arr, col) => arr.map((s) => `<li style="color:${col}">${escapeHtml(s)}</li>`).join('');
-    panel.innerHTML = `<h2>📖 ${escapeHtml(lexSel)}</h2>
-      <img src="assets/dinos/${encodeURIComponent(lexSel)}.png" alt="" onerror="this.style.display='none'" style="display:block;width:100%;max-height:180px;object-fit:contain;border-radius:10px;background:rgba(0,0,0,0.25);margin-bottom:10px">
+    const ord = lexOrderedNames();
+    const idx = ord.indexOf(lexSel);
+    const prev = ord[(idx - 1 + ord.length) % ord.length];
+    const next = ord[(idx + 1) % ord.length];
+    panel.innerHTML = `<h2>📖 ${escapeHtml(lexSel)} <span style="font-size:12px;color:var(--muted);font-weight:400">· ${idx + 1}/${ord.length}</span></h2>
+      <img src="assets/dinos/${encodeURIComponent(lexSel)}.png" alt="" onerror="this.style.display='none'" style="display:block;width:100%;max-height:200px;object-fit:contain;border-radius:10px;background:rgba(0,0,0,0.25);margin-bottom:10px">
       <div style="font-size:13px;margin-bottom:10px"><span style="color:${DIET_DOT[d.diet]}">●</span> ${DIET_LABEL[d.diet]} · <b>${escapeHtml(d.role)}</b> · Wachstum: ${escapeHtml(d.growth)}</div>
       <div style="display:flex;gap:18px;flex-wrap:wrap">
-        <div style="flex:1;min-width:150px"><div style="font-weight:600;color:#22c55e;margin-bottom:4px">Stärken</div><ul style="margin:0 0 0 16px;font-size:13px;line-height:1.6">${li(d.strengths, '#cbd5b0')}</ul></div>
-        <div style="flex:1;min-width:150px"><div style="font-weight:600;color:#ef4444;margin-bottom:4px">Schwächen</div><ul style="margin:0 0 0 16px;font-size:13px;line-height:1.6">${li(d.weaknesses, '#e4b8b8')}</ul></div>
+        <div style="flex:1;min-width:180px"><div style="font-weight:600;color:#22c55e;margin-bottom:4px">Stärken</div><ul style="margin:0 0 0 16px;font-size:13px;line-height:1.6">${li(d.strengths, '#cbd5b0')}</ul></div>
+        <div style="flex:1;min-width:180px"><div style="font-weight:600;color:#ef4444;margin-bottom:4px">Schwächen</div><ul style="margin:0 0 0 16px;font-size:13px;line-height:1.6">${li(d.weaknesses, '#e4b8b8')}</ul></div>
       </div>
       <div style="margin-top:12px;padding:9px 11px;background:rgba(139,92,246,0.12);border:1px solid var(--border);border-radius:8px;font-size:13px">💡 ${escapeHtml(d.tip)}</div>
       ${d.fact ? `<div style="margin-top:10px;padding:9px 11px;background:rgba(255,255,255,0.04);border:1px solid var(--border);border-radius:8px;font-size:13px;line-height:1.55"><b style="color:var(--accent-2)">📚 Wissenswert</b><br>${escapeHtml(d.fact)}</div>` : ''}
-      <div style="display:flex;gap:8px;margin-top:14px">
-        <button id="lexBack" style="flex:1">← Zurück</button>
-        <button class="closeFeature secondary" style="flex:1">Schließen</button>
+      <div style="display:flex;gap:8px;margin-top:14px;align-items:center">
+        <button id="lexPrev" class="secondary" style="flex:1">← ${escapeHtml(prev)}</button>
+        <button id="lexBack" class="secondary" style="flex:none;width:auto;padding:9px 16px">☰ Übersicht</button>
+        <button id="lexNext" style="flex:1">${escapeHtml(next)} →</button>
       </div>`;
     panel.querySelector('#lexBack').onclick = () => { lexSel = null; renderLexikon(); };
-    wire();
+    panel.querySelector('#lexPrev').onclick = () => { lexSel = prev; renderLexikon(); };
+    panel.querySelector('#lexNext').onclick = () => { lexSel = next; renderLexikon(); };
     return;
   }
 
-  const order = ['carni', 'herbi', 'both'];
-  const names = Object.keys(DINO_LEXIKON).sort();
-  let html = '';
-  for (const diet of order) {
-    const group = names.filter((n) => DINO_LEXIKON[n].diet === diet);
-    if (!group.length) continue;
-    html += `<div style="font-weight:600;color:var(--accent);margin:10px 0 6px">${DIET_LABEL[diet]}</div>`;
-    html += group.map((n) => `<button class="lexItem secondary" data-dino="${n}" style="display:flex;justify-content:space-between;align-items:center;gap:8px;width:100%;margin-bottom:5px;text-align:left">
-      <span style="display:flex;align-items:center;gap:8px;min-width:0">
-        <img src="assets/dinos/${encodeURIComponent(n)}.png" alt="" onerror="this.style.visibility='hidden'" style="width:32px;height:32px;border-radius:6px;object-fit:cover;background:rgba(0,0,0,0.25);flex:none">
-        <span style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap"><span style="color:${DIET_DOT[diet]}">●</span> ${escapeHtml(n)}</span></span>
-      <span style="color:var(--muted);font-size:12px;font-weight:400;flex:none">${escapeHtml(DINO_LEXIKON[n].role)}</span></button>`).join('');
-  }
-  panel.innerHTML = `<h2>📖 Dino-Lexikon <span style="font-size:13px;color:var(--muted);font-weight:400">· ${names.length} Spezies</span></h2>
-    <div style="max-height:55vh;overflow:auto;padding-right:4px">${html}</div>
-    <button class="closeFeature secondary" style="margin-top:10px">Schließen</button>`;
+  // Übersicht: 3 Spalten nach Diät getrennt (Karni / Herbi / Omni)
+  const colHtml = (diet) => {
+    const group = Object.keys(DINO_LEXIKON).filter((n) => DINO_LEXIKON[n].diet === diet).sort();
+    const items = group.map((n) => `<button class="lexItem secondary" data-dino="${n}" style="display:flex;align-items:center;gap:8px;width:100%;margin-bottom:5px;text-align:left;padding:6px 8px">
+        <img src="assets/dinos/${encodeURIComponent(n)}.png" alt="" onerror="this.style.visibility='hidden'" style="width:30px;height:30px;border-radius:6px;object-fit:cover;background:rgba(0,0,0,0.25);flex:none">
+        <span style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:13px">${escapeHtml(n)}</span></button>`).join('') || '<div style="color:var(--muted);font-size:12px">—</div>';
+    return `<div class="lex-col">
+      <div class="lex-col-head" style="color:${DIET_DOT[diet]}">● ${DIET_LABEL[diet]} <span style="color:var(--muted);font-weight:400">(${group.length})</span></div>
+      <div class="lex-col-list">${items}</div>
+    </div>`;
+  };
+  const total = Object.keys(DINO_LEXIKON).length;
+  panel.innerHTML = `<h2>📖 Dino-Lexikon <span style="font-size:13px;color:var(--muted);font-weight:400">· ${total} Spezies</span></h2>
+    <div class="lex-cols">${LEX_ORDER.map(colHtml).join('')}</div>`;
   panel.querySelectorAll('.lexItem').forEach((b) => { b.onclick = () => { lexSel = b.dataset.dino; renderLexikon(); }; });
-  wire();
 }
 
 // ── Elder / Prime-Bedingungen ────────────────────────────────────────────────
