@@ -298,6 +298,77 @@
     .theme-sw { width: 32px; height: 32px; border-radius: 50%; border: 2px solid transparent; cursor: pointer; padding: 0; flex: none; box-shadow: 0 0 0 1px rgba(0,0,0,0.4); transition: transform .1s; }
     .theme-sw:hover { transform: scale(1.12); }
     .theme-sw.on { border-color: #fff; box-shadow: 0 0 0 2px var(--accent), 0 0 10px var(--accent); }
+
+    /* ════════════════════════════════════════════════════════════════
+       ⚡ BlackFossil FX — elektrische Energie passend zum Lightning-Logo.
+       Nur GPU-schonende Props (transform/opacity/filter/box-shadow).
+       Komplett abschaltbar via body.bf-noanim oder prefers-reduced-motion.
+       ════════════════════════════════════════════════════════════════ */
+    @property --bf-ang { syntax: '<angle>'; initial-value: 0deg; inherits: false; }
+
+    /* Panels laden sich beim Öffnen „elektrisch auf" + atmen sanft violett */
+    @keyframes bfCharge {
+      0%   { opacity: 0; transform: translate(-50%,-50%) scale(0.955); filter: brightness(1.55); }
+      55%  { filter: brightness(1.12); }
+      100% { opacity: 1; transform: translate(-50%,-50%) scale(1); filter: brightness(1); }
+    }
+    @keyframes bfAura {
+      0%,100% { box-shadow: var(--glow-strong), 0 0 26px rgba(139,92,246,0.16); }
+      50%     { box-shadow: var(--glow-strong), 0 0 48px rgba(139,92,246,0.34); }
+    }
+    .feature-panel, #settings, #adminPanel {
+      animation: bfCharge .28s cubic-bezier(.22,1,.36,1), bfAura 4.5s ease-in-out .3s infinite;
+    }
+
+    /* Panel-Überschriften: wandernder Licht-Schimmer durch den Verlauf */
+    @keyframes bfSheen { to { background-position: -200% center; } }
+    .feature-panel h2, #settings h2, #adminPanel h2 {
+      background: linear-gradient(100deg, #fff 0%, var(--accent-2) 28%, #fff 50%, var(--accent-2) 72%, #fff 100%);
+      background-size: 200% auto; -webkit-background-clip: text; background-clip: text;
+      -webkit-text-fill-color: transparent; animation: bfSheen 6s linear infinite;
+    }
+
+    /* Sektions-Titel: dezentes elektrisches Glimmen */
+    @keyframes bfTitleGlow { 0%,100% { text-shadow: 0 0 0 rgba(139,92,246,0); } 50% { text-shadow: 0 0 9px rgba(139,92,246,0.45); } }
+    .sec-title { animation: bfTitleGlow 3.6s ease-in-out infinite; }
+
+    /* Primär-Buttons: Energie-Streif zieht beim Hover durch */
+    @keyframes bfSweep { from { left: -130%; } to { left: 150%; } }
+    button:not(.secondary):not(.dock-btn):not(.theme-sw) { position: relative; overflow: hidden; }
+    button:not(.secondary):not(.dock-btn):not(.theme-sw)::before {
+      content: ''; position: absolute; top: 0; left: -130%; width: 55%; height: 100%; pointer-events: none;
+      background: linear-gradient(100deg, transparent, rgba(255,255,255,0.5), transparent); transform: skewX(-18deg);
+    }
+    button:not(.secondary):not(.dock-btn):not(.theme-sw):hover::before { animation: bfSweep .6s ease-out; }
+
+    /* Aktiver Dock-Button: pulsierende elektrische Umrandung */
+    @keyframes bfDockPulse {
+      0%,100% { box-shadow: inset 0 0 0 1px rgba(139,92,246,0.55), 0 0 0 rgba(139,92,246,0); }
+      50%     { box-shadow: inset 0 0 0 1px rgba(167,139,250,0.95), 0 0 16px rgba(139,92,246,0.55); }
+    }
+    .dock-btn.active { animation: bfDockPulse 2.4s ease-in-out infinite; }
+
+    /* Minimap = Kreis-Emblem des Logos: atmendes Glühen + rotierender Energie-Bogen */
+    @keyframes bfMiniGlow {
+      0%,100% { box-shadow: var(--glow), inset 0 0 30px rgba(0,0,0,0.4), 0 0 13px rgba(139,92,246,0.22); }
+      50%     { box-shadow: var(--glow), inset 0 0 30px rgba(0,0,0,0.4), 0 0 26px rgba(139,92,246,0.5); }
+    }
+    #minimap { animation: bfMiniGlow 4s ease-in-out infinite; }
+    @keyframes bfSpinAng { to { --bf-ang: 360deg; } }
+    #minimapRing {
+      position: absolute; top: 0; left: 0; width: clamp(200px, 15vw, 320px); height: clamp(200px, 15vw, 320px);
+      border-radius: 50%; pointer-events: none; z-index: 1;
+      background: conic-gradient(from var(--bf-ang), transparent 0deg, transparent 210deg, rgba(167,139,250,0.6) 305deg, transparent 360deg);
+      -webkit-mask: radial-gradient(farthest-side, transparent calc(100% - 4px), #000 calc(100% - 3px));
+              mask: radial-gradient(farthest-side, transparent calc(100% - 4px), #000 calc(100% - 3px));
+      animation: bfSpinAng 5.5s linear infinite; filter: drop-shadow(0 0 4px rgba(139,92,246,0.6));
+    }
+
+    /* Komfort/Performance: Bewegung global abschaltbar */
+    @media (prefers-reduced-motion: reduce) {
+      *, *::before, *::after { animation-duration: .01ms !important; animation-iteration-count: 1 !important; }
+    }
+    body.bf-noanim *, body.bf-noanim *::before, body.bf-noanim *::after { animation: none !important; }
   </style>
 </head>
 <body>
@@ -320,6 +391,7 @@
   <!-- Minimap + Mikro -->
   <div id="minimapWrap">
     <canvas id="minimap" width="200" height="200"></canvas>
+    <div id="minimapRing"></div>
     <div id="micIndicator"><span id="micIcon" class="mic-connecting"></span><span id="micText">Verbinde…</span></div>
     <div id="connInd" title="Voice-Verbindung. Gelb/Rot oder ⚠️ Relay = schlechte Verbindung → LAN statt WLAN, VPN aus." style="display:none;margin-top:6px;align-items:center;gap:7px;justify-content:center;background:var(--panel);border:1px solid var(--border);border-radius:10px;padding:6px 10px;font-size:12px;box-shadow:var(--glow)"><span id="connDot" style="width:9px;height:9px;border-radius:50%;background:#666;flex:none"></span><span id="connText" style="color:var(--muted)">—</span></div>
     <div id="rangeBox" style="margin-top:8px;text-align:center;background:var(--panel);border:1px solid var(--border);border-radius:10px;padding:6px 10px;font-size:12px">🔊 Reichweite: 10 m</div>
