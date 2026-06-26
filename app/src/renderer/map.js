@@ -365,10 +365,20 @@ function drawArrow(ctx, px, py, angle, size, color) {
   ctx.lineWidth = 1.4; ctx.strokeStyle = 'rgba(0,0,0,0.8)'; ctx.stroke();
   ctx.restore();
 }
-function headingAngle(p) { return (typeof p.heading === 'number') ? (p.heading - 90) * Math.PI / 180 : -Math.PI / 2; }
+// Heading → Karten-Winkel: den Blick-Vektor durch DIESELBE Welt→Karte-Projektion
+// schicken wie die Position (worldToNorm). So stimmt die Pfeilrichtung auch bei
+// gedrehter/gespiegelter Kalibrierung (sonst zeigt der Pfeil verkehrt).
+function headingMapAngle(p) {
+  if (typeof p.heading !== 'number' || typeof p.x !== 'number') return -Math.PI / 2;
+  const hr = (p.heading - 90) * Math.PI / 180, L = 1000;
+  const a0 = worldToNorm(p.x, p.y);
+  const a1 = worldToNorm(p.x + Math.cos(hr) * L, p.y + Math.sin(hr) * L);
+  const dx = a1.nx - a0.nx, dy = a1.ny - a0.ny;
+  return (dx === 0 && dy === 0) ? -Math.PI / 2 : Math.atan2(dy, dx);
+}
 function drawGroupMember(ctx, px, py, p, scale) {
   const col = groupColorFor(p.steamId);
-  drawArrow(ctx, px, py, headingAngle(p), 6.5 * scale, col);
+  drawArrow(ctx, px, py, headingMapAngle(p), 6.5 * scale, col);
   if (p.name) {
     ctx.font = `bold ${11 * scale}px system-ui`; ctx.textAlign = 'center'; ctx.textBaseline = 'bottom';
     ctx.strokeStyle = 'rgba(0,0,0,0.75)'; ctx.lineWidth = 3 * scale; ctx.strokeText(p.name, px, py - 9 * scale);
@@ -377,7 +387,7 @@ function drawGroupMember(ctx, px, py, p, scale) {
 }
 function drawPlayer(ctx, px, py, p, scale) {
   ctx.save(); ctx.shadowColor = SELF_COLOR; ctx.shadowBlur = 8 * scale;   // Glow → klar erkennbar
-  drawArrow(ctx, px, py, headingAngle(p), 8.5 * scale, SELF_COLOR);
+  drawArrow(ctx, px, py, headingMapAngle(p), 8.5 * scale, SELF_COLOR);
   ctx.restore();
 }
 

@@ -982,9 +982,15 @@ app.post('/me/quest/start', express.json(), async (req, res) => {
   const gender = Math.random() < 0.5 ? 'Male' : 'Female';
   const sid = encodeURIComponent(s.steamId);
   try {
+    // Vollständigen Snapshot (sonst „health missing"): aktuellen Spieler spreaden,
+    // dann Klasse/Geschlecht/Wachstum überschreiben + Vitals auf voll (frischer Juvi).
+    const swapBody = {
+      ...current, class: q.active.dino, dinoClass: q.active.dino, gender,
+      grow: 0.25, growth: 0.25, health: 1, stamina: 1, hunger: 1, thirst: 1, blood: 1, keepLocation: true,
+    };
     const sr = await fetch(`${PANEL_BASE_URL}/players/${sid}/swap`, {
       method: 'POST', headers: { Authorization: `Bearer ${PANEL_ADMIN_TOKEN}`, 'Content-Type': 'application/json' },
-      body: JSON.stringify({ class: q.active.dino, dinoClass: q.active.dino, gender, grow: 0.25, growth: 0.25, keepLocation: true }),
+      body: JSON.stringify(swapBody),
       signal: AbortSignal.timeout(15000),
     });
     if (!sr.ok) { let d = `HTTP ${sr.status}`; try { const e = await sr.json(); d = e.message ?? e.error ?? e.Msg ?? d; } catch {} throw new Error(d); }
@@ -1002,6 +1008,29 @@ app.post('/me/quest/abandon', (req, res) => {
   if (q.active) { q.active.status = 'void'; q.active = null; }
   all[s.steamId] = q; writeJsonFile(QUESTS_FILE, all);
   res.json({ ok: true, rollsToday: q.rollsToday, dailyLimit: QUEST_DAILY_LIMIT });
+});
+
+// Geschlecht ändern (Skin-Editor): The Isle kann das Geschlecht nur per Respawn
+// wechseln → selber Dino, selbes Wachstum, neues Geschlecht via /swap.
+app.post('/me/gender', express.json(), async (req, res) => {
+  const s = sessionFrom(req);
+  if (!s) return res.status(401).json({ error: 'Keine Session' });
+  const gender = req.body?.gender;
+  if (gender !== 'Male' && gender !== 'Female') return res.status(400).json({ error: 'Ungültiges Geschlecht' });
+  let players; try { players = await fetchPlayers(); } catch (e) { return res.status(502).json({ error: e.message }); }
+  const current = players.find((p) => p.steamId === s.steamId);
+  if (!current || current.isDead) return res.status(409).json({ error: 'Du musst lebend im Spiel auf einem Dino sein.' });
+  if (current.gender === gender) return res.json({ ok: true, gender, unchanged: true });
+  const sid = encodeURIComponent(s.steamId);
+  try {
+    const sr = await fetch(`${PANEL_BASE_URL}/players/${sid}/swap`, {
+      method: 'POST', headers: { Authorization: `Bearer ${PANEL_ADMIN_TOKEN}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ ...current, gender, class: baseClass(current.dinoClass), dinoClass: current.dinoClass, grow: current.grow, growth: current.grow, keepLocation: true }),
+      signal: AbortSignal.timeout(15000),
+    });
+    if (!sr.ok) { let d = `HTTP ${sr.status}`; try { const e = await sr.json(); d = e.message ?? e.error ?? e.Msg ?? d; } catch {} throw new Error(d); }
+  } catch (err) { return res.status(502).json({ error: `Geschlechtswechsel fehlgeschlagen: ${err.message}` }); }
+  res.json({ ok: true, gender });
 });
 
 // Discord-Scheduled-Events, an denen der User „interessiert" ist (mit 60s-Cache)
@@ -1165,6 +1194,8 @@ function slotCard(slot) {
     grow: sn.grow ?? 0,
     isElder: !!sn.isElder,
     isPrime: !!sn.isPrime,
+    serverPrice: serverSellPrice(sn.dinoClass),     // Punkte beim Verkauf an den Server
+    sellMinGrow: SELL_MIN_GROW,                      // nötiges Mindest-Wachstum dafür
     health: sn.health ?? 0, hunger: sn.hunger ?? 0, thirst: sn.thirst ?? 0, stamina: sn.stamina ?? 0, blood: sn.blood ?? 0,
     patternIndex: sn.patternIndex ?? 0,
     colors: {

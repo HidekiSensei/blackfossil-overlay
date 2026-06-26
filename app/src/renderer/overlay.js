@@ -2182,7 +2182,6 @@ function renderDinoInfo() {
       <div style="flex:1;min-width:0">
         <div class="di-head"><span class="di-dino" id="di-dino">Dino</span><span class="di-sub" id="di-grow"></span></div>
         <div class="di-sub" id="di-name"></div>
-        <div class="di-meta" id="di-meta"></div>
         <div style="margin-top:10px">
           <div class="stat-top"><span>🌱 Wachstum</span><span class="val" id="di-grow-v">—</span></div>
           <div class="stat-track" style="height:11px"><div class="stat-fill" id="di-grow-f" style="background:#84cc16"></div></div>
@@ -2287,9 +2286,17 @@ function closeDinoDetail() { el('dinoDetail').style.display = 'none'; }
 function showDinoDetail(card, ctx) {
   const box = el('dinoDetail').querySelector('.box');
   let action = '';
-  if (ctx.mode === 'garage') action = `<button id="ddUnpark" style="width:100%">⬆️ Ausparken</button>`
-    + `<button id="ddSellServer" class="secondary" style="width:100%">💰 An Server verkaufen</button>`
-    + `<button id="ddDelete" class="secondary" style="width:100%;color:#fca5a5;border-color:#7f1d1d">🗑️ Aus Garage löschen</button>`;
+  if (ctx.mode === 'garage') {
+    const minG = card.sellMinGrow ?? 0.75, growPct = Math.round((card.grow ?? 0) * 100), minPct = Math.round(minG * 100);
+    const price = card.serverPrice ?? 0;
+    const canSell = (card.grow ?? 0) >= minG;
+    const sellBtn = canSell
+      ? `<button id="ddSellServer" class="secondary" style="width:100%">💰 An Server verkaufen (+${price.toLocaleString('de-DE')})</button>`
+      : `<button id="ddSellServer" class="secondary" style="width:100%;opacity:.55;cursor:not-allowed" disabled title="Verkauf erst ab ${minPct}% Wachstum — aktuell ${growPct}% (es fehlen ${minPct - growPct}%).">💰 An Server verkaufen (ab ${minPct}%)</button>`;
+    action = `<button id="ddUnpark" style="width:100%">⬆️ Ausparken</button>`
+      + sellBtn
+      + `<button id="ddDelete" class="secondary" style="width:100%;color:#fca5a5;border-color:#7f1d1d">🗑️ Aus Garage löschen</button>`;
+  }
   else if (ctx.mode === 'market') action = ctx.mine ? `<div class="price-tag" style="margin-top:14px">Dein Angebot · ${(ctx.price || 0).toLocaleString('de-DE')} Pkt.</div>` : `<button id="ddBuy" style="width:100%;margin-top:14px">🦖 Kaufen — ${(ctx.price || 0).toLocaleString('de-DE')} Pkt.</button>`;
   box.classList.add('dd-box-wide');
   const badges = [card.isElder ? '👑 Elder' : '', card.isPrime ? '⭐ Prime' : '', card.gender || '', card.isBleeding ? '🩸 Blutet' : '']
@@ -2308,12 +2315,20 @@ function showDinoDetail(card, ctx) {
       <div style="flex:1;min-width:0"><div class="sec-title">📊 Vitals</div>${vitalsHTML(card)}</div>
       <div style="flex:1;min-width:0"><div class="sec-title">🧬 Mutationen</div><div style="margin-top:6px">${mutHTML(card.mutations)}</div></div>
     </div>
-    <div style="margin-top:16px;display:flex;flex-direction:column;gap:8px">${action}<button class="secondary" id="ddClose">Schließen</button></div>`;
+    <div id="ddActions" style="margin-top:16px;display:flex;flex-direction:column;gap:8px">${action}<button class="secondary" id="ddClose">Schließen</button></div>`;
   el('dinoDetail').style.display = 'flex';
   box.querySelector('#ddClose').onclick = closeDinoDetail;
   const u = box.querySelector('#ddUnpark'); if (u) u.onclick = () => { closeDinoDetail(); unparkById(card.id); };
   const b = box.querySelector('#ddBuy'); if (b) b.onclick = () => { closeDinoDetail(); buyOfferId(card.id); };
-  const ss = box.querySelector('#ddSellServer'); if (ss) ss.onclick = () => { closeDinoDetail(); apiAction('/market/sell-server', { slotId: card.id }, '💰 An Server verkauft', loadGarage); };
+  const ss = box.querySelector('#ddSellServer');
+  if (ss && !ss.disabled) ss.onclick = () => {
+    const price = card.serverPrice ?? 0;
+    const acts = box.querySelector('#ddActions');
+    acts.innerHTML = `<div style="text-align:center;font-size:13px;margin-bottom:6px">${escapeHtml(card.dino || 'Dino')} an den Server verkaufen für <b style="color:#fbbf24">+${price.toLocaleString('de-DE')} Punkte</b>?</div>
+      <div style="display:flex;gap:8px"><button id="ddSellYes" style="flex:1">✅ Verkaufen</button><button id="ddSellNo" class="secondary" style="flex:1">Abbrechen</button></div>`;
+    acts.querySelector('#ddSellYes').onclick = () => { closeDinoDetail(); apiAction('/market/sell-server', { slotId: card.id }, `💰 An Server verkauft (+${price})`, loadGarage); };
+    acts.querySelector('#ddSellNo').onclick = () => showDinoDetail(card, ctx);
+  };
   const dd = box.querySelector('#ddDelete');
   if (dd) { let armed = false; dd.onclick = () => {
     if (!armed) { armed = true; dd.textContent = '⚠️ Wirklich löschen?'; setTimeout(() => { if (dd) { armed = false; dd.textContent = '🗑️ Aus Garage löschen'; } }, 3000); return; }
@@ -2439,7 +2454,22 @@ async function renderSkinEditor() {
   panel.querySelectorAll('[data-col]').forEach((inp) => inp.oninput = () => { skinState.colors[inp.dataset.col] = hexToLin(inp.value); updateSkinPreview(); scheduleSkinApply(); });
   panel.querySelectorAll('[data-pat]').forEach((b) => b.onclick = () => { skinState.patternIndex = parseInt(b.dataset.pat); panel.querySelectorAll('[data-pat]').forEach((x) => x.className = x === b ? '' : 'secondary'); scheduleSkinApply(); });
   el('skVar').oninput = () => { skinState.skinVariation = parseInt(el('skVar').value) || 0; scheduleSkinApply(); };
-  panel.querySelectorAll('[data-gender]').forEach((b) => b.onclick = () => { skinState.gender = b.dataset.gender; panel.querySelectorAll('[data-gender]').forEach((x) => x.className = x === b ? '' : 'secondary'); scheduleSkinApply(); });
+  panel.querySelectorAll('[data-gender]').forEach((b) => b.onclick = () => changeGender(b.dataset.gender, panel));
+}
+// Geschlecht wechseln: The Isle kann das nur per Respawn → /me/gender (selber Dino,
+// selbes Wachstum, neues Geschlecht), danach Skin erneut anwenden (Farben behalten).
+async function changeGender(gender, panel) {
+  if (!skinState || skinState.gender === gender) return;
+  setSkinLive('… Geschlecht wird gewechselt (Respawn)', '#f59e0b');
+  try {
+    const r = await fetch(`${config.tokenBase}/me/gender`, { method: 'POST', headers: { Authorization: `Bearer ${sessionToken}`, 'Content-Type': 'application/json' }, body: JSON.stringify({ gender }) });
+    const d = await r.json(); if (!r.ok) throw new Error(d.error || 'Fehler');
+    skinState.gender = gender;
+    panel.querySelectorAll('[data-gender]').forEach((x) => x.className = x.dataset.gender === gender ? '' : 'secondary');
+    setSkinLive('🟢 Geschlecht gewechselt', '#22c55e');
+    showToast(`Geschlecht: ${gender === 'Female' ? '♀ Female' : '♂ Male'}`, 'success');
+    setTimeout(() => applySkin(true), 1600);   // nach Respawn Farben erneut aufspielen
+  } catch (e) { setSkinLive('⚠️ ' + e.message, '#ef4444'); showToast(e.message, 'error'); }
 }
 function setSkinLive(txt, color) { const h = el('skLive'); if (h) { h.textContent = txt; h.style.color = color || '#22c55e'; } }
 // Spiegelt skinState → UI (nach Import/Vorlage)
@@ -2671,7 +2701,7 @@ async function updateDinoInfo() {
     el('di-dino').textContent = 'Nicht im Spiel';
     el('di-grow').textContent = '';
     el('di-name').textContent = 'Verbinde dich mit dem Server, um deine Stats zu sehen.';
-    { const im = el('di-img'); if (im) im.style.visibility = 'hidden'; const mt = el('di-meta'); if (mt) mt.innerHTML = ''; }
+    { const im = el('di-img'); if (im) im.style.visibility = 'hidden'; }
     el('di-elder').innerHTML = '<span style="color:var(--muted);font-size:12px">—</span>';
     Object.keys(VITAL_TOKEN).forEach((k) => { const c = el(`di-tok-${k}`); if (c) c.innerHTML = ''; });
     DI_STATS.forEach((s) => { el(`di-${s.key}-f`).style.width = '0%'; el(`di-${s.key}-v`).textContent = '—'; });
@@ -2685,10 +2715,6 @@ async function updateDinoInfo() {
   el('di-dino').textContent = d.dino || 'Dino';
   el('di-name').textContent = `${d.gender || ''} · ${d.name || ''}`;
   { const im = el('di-img'); if (im) { const src = dinoImgSrc(d.dino); if (im.dataset.src !== src) { im.dataset.src = src; im.src = src; } im.style.visibility = 'visible'; } }
-  { const mt = el('di-meta'); if (mt) mt.innerHTML =
-      `<span class="di-mchip tier-${d.tier || 'Fossil'}">🏅 Rang: ${escapeHtml(d.tier || 'Fossil')}</span>`
-      + `<span class="di-mchip">⏱️ ${fmtPlaytime(d.playtime)} gespielt</span>`
-      + `<span class="di-mchip">💰 ${(d.points || 0).toLocaleString('de-DE')} Punkte</span>`; }
   const gp = Math.round((d.grow || 0) * 100);
   el('di-grow').textContent = `Wachstum ${gp}%`;
   { const gf = el('di-grow-f'); if (gf) gf.style.width = gp + '%'; const gv = el('di-grow-v'); if (gv) gv.textContent = gp + '%'; }
