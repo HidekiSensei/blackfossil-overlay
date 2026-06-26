@@ -1463,12 +1463,14 @@ function toggleFeature(id) {
   else if (id === 'profile') { renderProfile(); loadMyTickets(); loadMyEvents(); }
   else if (id === 'lexikon') renderLexikon();
   else if (id === 'skinEditor') renderSkinEditor();
+  else if (id === 'quests') { loadQuest(); startQuestPoll(); }
   el(id).style.display = 'block';
   updateInteractive();
 }
 function closeAllFeatures(skipInteractive) {
-  ['dinoInfo', 'skinEditor', 'garage', 'market', 'group', 'profile', 'lexikon'].forEach((id) => { el(id).style.display = 'none'; });
+  ['dinoInfo', 'skinEditor', 'garage', 'market', 'group', 'profile', 'lexikon', 'quests'].forEach((id) => { el(id).style.display = 'none'; });
   const tc = el('ticketChat'); if (tc) tc.style.display = 'none';   // Ticket-Chat mit schließen
+  stopQuestPoll();
   if (featureOpen === 'dinoInfo') stopDinoInfo();
   featureOpen = null;
   if (!skipInteractive) updateInteractive();
@@ -1780,6 +1782,135 @@ function renderTicketChat(modal, channelId, ticketId, category, messages) {
     <div style="flex:1;overflow:auto;padding-right:4px">${bubbles}</div>
     <div style="margin-top:10px;font-size:11px;color:var(--muted)">Zum Antworten ins Discord-Ticket schreiben.</div>`;
   el('ticketChatClose').onclick = closeTicketChat;
+}
+
+// ── Quests (RP-Challenge: Dino + Handicap + Kleinigkeit + RP-Rolle) ───────────
+let questState = { rollsToday: 0, dailyLimit: 2, growTarget: 0.8, active: null, doneCount: 0, progress: null };
+let questRolling = false;
+let questPollTimer = null;
+const QUEST_DINO_NAMES = ['Tyrannosaurus', 'Allosaurus', 'Carnotaurus', 'Ceratosaurus', 'Dilophosaurus', 'Herrerasaurus', 'Omniraptor', 'Troodon', 'Pteranodon', 'Deinosuchus', 'Triceratops', 'Diabloceratops', 'Stegosaurus', 'Tenontosaurus', 'Dryosaurus', 'Hypsilophodon', 'Pachycephalosaurus', 'Maiasaura', 'Gallimimus'];
+
+function startQuestPoll() { stopQuestPoll(); questPollTimer = setInterval(() => { if (featureOpen === 'quests' && !questRolling) loadQuest(); }, 5000); }
+function stopQuestPoll() { if (questPollTimer) clearInterval(questPollTimer); questPollTimer = null; }
+
+async function loadQuest() {
+  if (!sessionToken) return;
+  try {
+    const r = await fetch(`${config.tokenBase}/me/quest`, { headers: { Authorization: `Bearer ${sessionToken}` } });
+    if (!r.ok) return;
+    const d = await r.json();
+    const wasActive = !!questState.active;
+    questState = d;
+    if (d.justCompleted) showToast('🏆 RP-Quest erfüllt! Prime mit 80% erreicht!', 'success');
+    if (featureOpen === 'quests' && !questRolling) renderQuests();
+    if (wasActive && d.justCompleted) { /* schon getoastet */ }
+  } catch {}
+}
+
+function questLinesHtml(a) {
+  const L = (ico, k, v) => `<div class="q-line"><div class="q-l-ico">${ico}</div><div><div class="q-l-k">${k}</div><div class="q-l-v">${escapeHtml(v)}</div></div></div>`;
+  return L('🦖', 'Dino', a.dinoName || a.dino)
+    + L('⛓️', 'Handicap', a.handicap)
+    + L('🎭', 'RP-Rolle', a.rpRole)
+    + L('✨', 'Kleinigkeit', a.kleinigkeit);
+}
+function questProgressHtml() {
+  const p = questState.progress, a = questState.active; if (!a) return '';
+  const target = Math.round((questState.growTarget || 0.8) * 100);
+  let chips;
+  if (a.instaUsed) {
+    chips = `<span class="q-chip no">⚡ Insta-Grow benutzt — zählt nicht mehr</span>`;
+  } else if (!p || !p.online) {
+    chips = `<span class="q-chip no">Nicht im Spiel</span>`;
+  } else {
+    const dinoOk = p.rightDino;
+    const growOk = (p.grow || 0) >= (questState.growTarget || 0.8);
+    chips = `<span class="q-chip ${dinoOk ? 'ok' : 'no'}">${dinoOk ? '✅' : '🦖'} ${dinoOk ? 'Richtiger Dino' : 'Spiele ' + escapeHtml(a.dinoName || a.dino)}</span>`
+      + `<span class="q-chip ${growOk ? 'ok' : 'no'}">📈 ${Math.round((p.grow || 0) * 100)}% / ${target}%</span>`
+      + `<span class="q-chip ${p.isPrime ? 'ok' : 'no'}">${p.isPrime ? '⭐' : '☆'} Prime</span>`;
+  }
+  return `<div class="q-progress">${chips}</div>`;
+}
+function questStageHtml() {
+  const a = questState.active;
+  if (a) {
+    return `<div style="font-size:12px;color:var(--accent-2);font-weight:700;margin-bottom:6px">DEINE AKTIVE QUEST</div>`
+      + questLinesHtml(a).replace(/class="q-line"/g, 'class="q-line show"')
+      + questProgressHtml()
+      + `<div style="font-size:11px;color:var(--muted);margin-top:12px">Ziel: Mit diesem Dino <b>Prime</b> erreichen und <b>${Math.round((questState.growTarget || 0.8) * 100)}%</b> wachsen — Insta-Grow zählt nicht.</div>`
+      + `<button id="qAbandon" class="secondary" style="margin-top:12px">Quest aufgeben</button>`;
+  }
+  const left = (questState.dailyLimit || 2) - (questState.rollsToday || 0);
+  if (left <= 0) {
+    return `<div style="text-align:center;color:var(--muted);padding:20px 0">
+      <div style="font-size:32px">🌙</div>
+      <div style="margin-top:8px;font-weight:600">Tageslimit erreicht</div>
+      <div style="font-size:12px;margin-top:4px">Du hast deine ${questState.dailyLimit} Quests für heute verbraucht. Komm morgen wieder!</div></div>`;
+  }
+  return `<div style="text-align:center">
+    <div class="q-slot" style="font-size:40px">🎲</div>
+    <div style="color:var(--muted);font-size:13px;margin:8px 0 14px">Würfle eine RP-Challenge: ein Dino, ein Handicap, eine RP-Rolle und eine Kleinigkeit.</div>
+    <button id="qRoll" style="max-width:280px;margin:0 auto">🎲 Quest würfeln (${left}/${questState.dailyLimit} heute)</button>
+  </div>`;
+}
+function renderQuests() {
+  const panel = el('quests'); if (!panel) return;
+  panel.classList.add('q-wide');
+  panel.innerHTML = `<h2>📜 Quests</h2>
+    <div class="q-types">
+      <div class="q-type q-soon"><div class="q-ico">⚔️</div><div class="q-name">PVP</div><div class="q-sub">Kampf-Aufgaben</div><div class="q-soon-badge">coming soon</div></div>
+      <div class="q-type q-soon"><div class="q-ico">🧭</div><div class="q-name">Erkundung</div><div class="q-sub">Orte entdecken</div><div class="q-soon-badge">coming soon</div></div>
+      <div class="q-type q-active" id="qTypeRp"><div class="q-ico">🎭</div><div class="q-name">RP-Quests</div><div class="q-sub">${questState.doneCount || 0} erfüllt</div></div>
+    </div>
+    <div class="q-stage" id="qStage">${questStageHtml()}</div>`;
+  const roll = el('qRoll'); if (roll) roll.onclick = () => rollRpQuest();
+  const ab = el('qAbandon');
+  if (ab) {
+    let armed = false;
+    ab.onclick = () => {
+      if (!armed) { armed = true; ab.textContent = '⚠️ Wirklich aufgeben? (Roll verbraucht)'; setTimeout(() => { if (ab) { armed = false; ab.textContent = 'Quest aufgeben'; } }, 3000); return; }
+      abandonQuest();
+    };
+  }
+}
+async function rollRpQuest() {
+  if (questRolling) return;
+  if ((questState.rollsToday || 0) >= (questState.dailyLimit || 2)) { showToast('Tageslimit erreicht', 'error'); return; }
+  questRolling = true;
+  const stage = el('qStage');
+  if (stage) stage.innerHTML = `<div class="q-slot spin" id="qSlot">🎲</div><div style="text-align:center;color:var(--muted);margin-top:12px;font-size:12px">Würfle deine Challenge…</div>`;
+  const slot = el('qSlot');
+  const spin = setInterval(() => { if (slot) slot.textContent = QUEST_DINO_NAMES[Math.floor(Math.random() * QUEST_DINO_NAMES.length)]; }, 85);
+  const started = Date.now();
+  let result = null, err = null;
+  try {
+    const r = await fetch(`${config.tokenBase}/me/quest/roll`, { method: 'POST', headers: { Authorization: `Bearer ${sessionToken}`, 'Content-Type': 'application/json' }, body: JSON.stringify({ type: 'rp' }) });
+    const d = await r.json();
+    if (!r.ok) err = d.error || 'Fehler'; else result = d;
+  } catch { err = 'Verbindungsfehler'; }
+  const wait = Math.max(0, 1700 - (Date.now() - started));
+  setTimeout(() => {
+    clearInterval(spin);
+    questRolling = false;
+    if (err) { showToast(err, 'error'); loadQuest(); return; }
+    questState.active = result.active; questState.rollsToday = result.rollsToday; questState.dailyLimit = result.dailyLimit;
+    revealQuest(result.active);
+  }, wait);
+}
+function revealQuest(a) {
+  const stage = el('qStage'); if (!stage) { renderQuests(); return; }
+  stage.innerHTML = `<div style="font-size:12px;color:var(--accent-2);font-weight:700;margin-bottom:6px">DEINE NEUE QUEST</div>` + questLinesHtml(a);
+  const lines = stage.querySelectorAll('.q-line');
+  lines.forEach((ln, i) => setTimeout(() => ln.classList.add('show'), 140 * i));
+  showToast('🎉 Neue RP-Quest gewürfelt!', 'success');
+  setTimeout(() => { if (featureOpen === 'quests') renderQuests(); }, 140 * lines.length + 500);
+}
+async function abandonQuest() {
+  try {
+    const r = await fetch(`${config.tokenBase}/me/quest/abandon`, { method: 'POST', headers: { Authorization: `Bearer ${sessionToken}` } });
+    const d = await r.json();
+    if (r.ok) { questState.active = null; questState.rollsToday = d.rollsToday; showToast('Quest aufgegeben', ''); renderQuests(); }
+  } catch {}
 }
 
 // ── Dino-Lexikon (statischer Content, von Hideki/Team pflegbar) ───────────────
@@ -2410,6 +2541,7 @@ const DOCK_ICONS = {
   skin:     dockSvg('<circle cx="13.5" cy="6.5" r=".8" fill="currentColor" stroke="none"/><circle cx="17.5" cy="10.5" r=".8" fill="currentColor" stroke="none"/><circle cx="6.5" cy="12.5" r=".8" fill="currentColor" stroke="none"/><circle cx="8.5" cy="7.5" r=".8" fill="currentColor" stroke="none"/><path d="M12 2C6.5 2 2 6.5 2 12s4.5 10 10 10c.9 0 1.6-.7 1.6-1.7 0-.4-.2-.8-.4-1.1-.3-.3-.4-.7-.4-1.1a1.6 1.6 0 0 1 1.6-1.6H16c3 0 5.5-2.5 5.5-5.5C22 6 17.5 2 12 2z"/>'),
   settings: dockSvg('<circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.6 1.6 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.6 1.6 0 0 0-1.8-.3 1.6 1.6 0 0 0-1 1.5V21a2 2 0 0 1-4 0v-.1a1.6 1.6 0 0 0-1-1.5 1.6 1.6 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.6 1.6 0 0 0 .3-1.8 1.6 1.6 0 0 0-1.5-1H3a2 2 0 0 1 0-4h.1a1.6 1.6 0 0 0 1.5-1 1.6 1.6 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.6 1.6 0 0 0 1.8.3H9a1.6 1.6 0 0 0 1-1.5V3a2 2 0 0 1 4 0v.1a1.6 1.6 0 0 0 1 1.5 1.6 1.6 0 0 0 1.8-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.6 1.6 0 0 0-.3 1.8V9a1.6 1.6 0 0 0 1.5 1H21a2 2 0 0 1 0 4h-.1a1.6 1.6 0 0 0-1.5 1z"/>'),
   admin:    dockSvg('<path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10"/>'),
+  quests:   dockSvg('<path d="M4 22V4a1 1 0 0 1 1-1h12l-2 4 2 4H6"/><line x1="4" y1="22" x2="4" y2="15"/>'),
   close:    dockSvg('<line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/>'),
 };
 

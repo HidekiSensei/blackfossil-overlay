@@ -155,6 +155,34 @@
     .pf-side { width: 290px; flex: none; min-width: 0; }
     .pf-center { flex: 1; min-width: 0; }
     .pf-col-head { font-size: 13px; font-weight: 700; color: var(--accent); letter-spacing: .3px; padding-bottom: 8px; margin-bottom: 12px; border-bottom: 1px solid var(--border); }
+    /* Quests (F? / Dock) */
+    #quests.q-wide { width: clamp(620px, 60vw, 860px); max-width: 96vw; }
+    .q-types { display: flex; gap: 12px; margin: 6px 0 4px; }
+    .q-type { flex: 1; min-width: 0; text-align: center; padding: 14px 10px; border-radius: 12px; border: 1px solid var(--border);
+      background: rgba(255,255,255,0.03); cursor: pointer; transition: background .12s, border-color .12s, transform .1s; }
+    .q-type:hover:not(.q-soon) { background: rgba(139,92,246,0.16); border-color: var(--accent); }
+    .q-type.q-active { background: rgba(139,92,246,0.22); border-color: var(--accent); box-shadow: inset 0 0 0 1px var(--accent); }
+    .q-type.q-soon { opacity: 0.5; cursor: not-allowed; }
+    .q-type .q-ico { font-size: 26px; }
+    .q-type .q-name { font-weight: 700; margin-top: 4px; font-size: 14px; }
+    .q-type .q-sub { font-size: 11px; color: var(--muted); margin-top: 2px; }
+    .q-soon-badge { display: inline-block; margin-top: 6px; font-size: 10px; padding: 1px 7px; border-radius: 5px; background: rgba(245,158,11,0.18); color: #fcd34d; }
+    .q-stage { margin-top: 16px; border: 1px solid var(--border); border-radius: 14px; padding: 18px; background: rgba(15,10,30,0.55);
+      min-height: 188px; display: flex; flex-direction: column; justify-content: center; }
+    .q-slot { text-align: center; font-size: 22px; font-weight: 800; min-height: 30px; }
+    .q-slot.spin { animation: qFlick .09s steps(1) infinite; color: var(--accent-2); }
+    @keyframes qFlick { 50% { opacity: 0.35; transform: translateY(-2px); } }
+    .q-line { display: flex; gap: 10px; align-items: flex-start; padding: 8px 0; border-bottom: 1px solid rgba(255,255,255,0.06); opacity: 0; transform: translateY(8px); }
+    .q-line.show { animation: qReveal .42s cubic-bezier(.22,1,.36,1) forwards; }
+    @keyframes qReveal { to { opacity: 1; transform: none; } }
+    .q-line .q-l-ico { font-size: 18px; flex: none; width: 24px; text-align: center; }
+    .q-line .q-l-k { font-size: 11px; color: var(--accent-2); font-weight: 700; text-transform: uppercase; letter-spacing: .4px; }
+    .q-line .q-l-v { font-size: 14px; line-height: 1.35; }
+    .q-progress { margin-top: 12px; font-size: 12px; }
+    .q-chip { display: inline-flex; align-items: center; gap: 5px; padding: 3px 9px; border-radius: 999px; font-size: 11px; font-weight: 600; margin-right: 6px; }
+    .q-chip.ok { background: rgba(34,197,94,0.18); color: #86efac; }
+    .q-chip.no { background: rgba(255,255,255,0.06); color: var(--muted); }
+    .q-done-banner { text-align: center; padding: 10px; border-radius: 10px; background: linear-gradient(135deg, rgba(34,197,94,0.22), rgba(139,92,246,0.18)); color: #d9f99d; font-weight: 700; animation: qReveal .5s ease-out forwards; }
     .di-main { display: flex; gap: 24px; margin-top: 14px; align-items: flex-start; }
     .di-elder-col { width: 280px; flex: none; }
     .di-vitals-col { flex: 1; min-width: 0; }
@@ -535,6 +563,7 @@
   <div id="dinoInfo" class="feature-panel"></div>
   <div id="group" class="feature-panel"></div>
   <div id="profile" class="feature-panel"></div>
+  <div id="quests" class="feature-panel"></div>
   <div id="lexikon" class="feature-panel"></div>
 
   <!-- Dock (Overlay-Modus / Alt): klickbare Schnellzugriffe. Icons werden per JS injiziert. -->
@@ -545,6 +574,7 @@
     <button class="dock-btn" data-act="lexikon" aria-label="Lexikon"><span>Lexikon</span></button>
     <button class="dock-btn" data-act="garage" aria-label="Garage"><span>Garage</span></button>
     <button class="dock-btn" data-act="market" aria-label="Markt"><span>Markt</span></button>
+    <button class="dock-btn" data-act="quests" aria-label="Quests"><span>Quests</span></button>
     <button class="dock-btn" data-act="map" aria-label="Karte"><span>Karte</span></button>
     <button class="dock-btn" data-act="skin" aria-label="Skin"><span>Skin</span></button>
     <button class="dock-btn" data-act="settings" aria-label="Einstellungen"><span>Settings</span></button>

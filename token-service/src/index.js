@@ -359,6 +359,10 @@ app.post('/tokens/redeem', express.json(), async (req, res) => {
     if (!gr.ok) throw new Error(`Anwenden fehlgeschlagen (HTTP ${gr.status})`);
 
     if (!removeOneToken(payload.steamId, type)) return res.status(400).json({ error: 'Token nicht mehr vorhanden.' });
+    // Insta-Grow benutzt → laufende RP-Quest zählt nicht mehr (Wachstum muss „echt" sein)
+    if (def.effect === 'grow_set') {
+      try { const all = readJson(QUESTS_FILE, {}); const q = all[payload.steamId]; if (q && q.active && q.active.status === 'active') { q.active.instaUsed = true; writeJsonFile(QUESTS_FILE, all); } } catch {}
+    }
     res.json({ ok: true, label: def.label, emoji: def.emoji, tokens: getInventory(payload.steamId) });
   } catch (err) {
     res.status(502).json({ error: err.message });
@@ -781,6 +785,173 @@ app.get('/me/ticket-messages', async (req, res) => {
       }));
     res.json({ ticketId: m.ticketId, category: m.category, messages });
   } catch (e) { res.status(502).json({ error: e.message }); }
+});
+
+// ── RP-Quests (BF-Challenge): Dino + Handicap + Kleinigkeit + RP-Rolle ───────
+// Erfüllt, wenn man mit dem gerollten Dino Prime erreicht UND ≥80% Wachstum hat.
+// Insta-Grow zählt NICHT (setzt grow auf 80% → würde sonst sofort erfüllen) → voidet die Quest.
+// Limit: 2 Rolls/Tag, 1 aktive Quest gleichzeitig (kein Reroll der laufenden Quest).
+const QUESTS_FILE = process.env.QUESTS_FILE ?? '/opt/token-service/quests.json';
+const QUEST_DAILY_LIMIT = 2;
+const QUEST_GROW_TARGET = 0.8;
+// Dino-Roster (key = Spielklasse via baseClass). Bei Bedarf an den Server anpassen.
+const QUEST_DINOS = [
+  { key: 'Tyrannosaurus', name: 'Tyrannosaurus', diet: 'carni' },
+  { key: 'Allosaurus', name: 'Allosaurus', diet: 'carni' },
+  { key: 'Carnotaurus', name: 'Carnotaurus', diet: 'carni' },
+  { key: 'Ceratosaurus', name: 'Ceratosaurus', diet: 'carni' },
+  { key: 'Dilophosaurus', name: 'Dilophosaurus', diet: 'carni' },
+  { key: 'Herrerasaurus', name: 'Herrerasaurus', diet: 'carni' },
+  { key: 'Omniraptor', name: 'Omniraptor', diet: 'carni' },
+  { key: 'Troodon', name: 'Troodon', diet: 'carni' },
+  { key: 'Pteranodon', name: 'Pteranodon', diet: 'carni' },
+  { key: 'Deinosuchus', name: 'Deinosuchus', diet: 'carni' },
+  { key: 'Beipiaosaurus', name: 'Beipiaosaurus', diet: 'omni' },
+  { key: 'Triceratops', name: 'Triceratops', diet: 'herbi' },
+  { key: 'Diabloceratops', name: 'Diabloceratops', diet: 'herbi' },
+  { key: 'Stegosaurus', name: 'Stegosaurus', diet: 'herbi' },
+  { key: 'Tenontosaurus', name: 'Tenontosaurus', diet: 'herbi' },
+  { key: 'Dryosaurus', name: 'Dryosaurus', diet: 'herbi' },
+  { key: 'Hypsilophodon', name: 'Hypsilophodon', diet: 'herbi' },
+  { key: 'Pachycephalosaurus', name: 'Pachycephalosaurus', diet: 'herbi' },
+  { key: 'Maiasaura', name: 'Maiasaura', diet: 'herbi' },
+  { key: 'Gallimimus', name: 'Gallimimus', diet: 'herbi' },
+];
+const QUEST_HANDICAPS = [
+  'Durstlimit: Du darfst erst trinken, wenn dein Durst unter 35% fällt.',
+  'Hungerlimit: Du darfst erst fressen, wenn dein Hunger unter 30% fällt.',
+  'Einzelgänger: Du darfst keiner Gruppe beitreten.',
+  'Nachtaktiv: Bewege dich nur bei Nacht — tagsüber wird gerastet.',
+  'Wasserscheu: Meide tiefes Wasser, wo immer es geht.',
+  'Pazifist: Greife nie zuerst an — nur Selbstverteidigung.',
+  'Kein Sprint: Du darfst nicht sprinten (außer in echter Lebensgefahr).',
+  'Standorttreu: Verlasse deine Startregion nicht.',
+  'Stummer Jäger: Keine Calls/Brüllen.',
+  'Dauerläufer: Bleib stets in Bewegung — kein langes Rasten.',
+  'Angsthase: Flieh vor jedem größeren Dino.',
+  'Revierfürst: Verteidige dein Leben lang genau einen Ort.',
+  'Minimalist: Nutze keine Token.',
+  'Schmerzempfindlich: Unter 50% HP sofort zurückziehen.',
+  'Sparflamme: Halte deine Stamina immer über 50%.',
+  'Wanderer: Erreiche jeden Tag eine neue Region.',
+  'Kein Nesten: Du darfst in diesem Leben nicht nesten.',
+  'Höhlenmensch: Raste nur in Deckung (Höhlen/Büsche).',
+  'Vorsichtig: Offene Flächen nur langsam/geduckt überqueren.',
+  'Hungerkünstler: Iss pro Tag nur einmal richtig satt.',
+  'Schattenläufer: Meide offenes Gelände bei Tag.',
+  'Aas-Eid (Carni): Nur Aas fressen, keine lebende Beute reißen.',
+  'Treuer Schatten: Bleib in Sichtweite eines Begleiters (wenn erlaubt).',
+  'Salzwasser-Fan: Trinke nur an Küsten/Seen, nicht an Flüssen.',
+  'Frühaufsteher: Schlafe nie länger als nötig.',
+  'Markierer: Hinterlasse an jedem Rastplatz eine Spur (RP).',
+  'Tagträumer: Raste sichtbar mindestens 1× pro Stunde.',
+  'Eigenbrötler: Im Voice nur in deiner RP-Rolle sprechen.',
+  'Grenzgänger: Bleib immer in der Nähe einer Zonengrenze.',
+  'Sammler: Besuche pro Tag mindestens 3 markante Orte.',
+];
+const QUEST_RP_ROLES = [
+  'Der Stammesälteste — ruhig, langsam, als hättest du die Insel ewig überlebt.',
+  'Der nervöse Späher — redet schnell und sieht überall Gefahr.',
+  'Der großspurige Angeber — übertreibt jede Heldentat.',
+  'Der weise Eremit — spricht in Rätseln und Sprichwörtern.',
+  'Der ewige Optimist — immer gut gelaunt, alles wird gut.',
+  'Der grummelige Veteran — meckert über die „Jugend von heute".',
+  'Der adelige Snob — hält sich für etwas Besseres.',
+  'Der schüchterne Neuling — traut sich kaum etwas zu.',
+  'Der Verschwörungstheoretiker — die Admins beobachten uns alle.',
+  'Der Poet — beschreibt die Insel in Versen.',
+  'Der Marktschreier — preist alles an wie auf dem Basar.',
+  'Der Ritter — Ehre, Eid und edle Worte.',
+  'Der Pirat — „Arrr!", Seemannsgarn, gierig nach Beute.',
+  'Der Hippie — Frieden, Liebe, alle sind Freunde.',
+  'Der Detektiv — analysiert jede Spur laut.',
+  'Die Tratschtante — verbreitet Gerüchte über andere Dinos.',
+  'Der Stoiker — nichts bringt dich aus der Ruhe.',
+  'Die Drama-Queen — alles ist eine Katastrophe.',
+  'Der Coach — feuert ständig alle motivierend an.',
+  'Der Geizhals — zählt jeden Bissen, teilt nie.',
+  'Der Fremdenführer — erklärt ungefragt die Sehenswürdigkeiten.',
+  'Der Wahrsager — sagt düstere Zukunft voraus.',
+  'Der Gentleman — höflich, zuvorkommend, altmodisch.',
+  'Der Punk — gegen jede Regel, rebellisch.',
+  'Der Wissenschaftler — kommentiert alles sachlich-nüchtern.',
+  'Der Barde — besingt jede seiner Taten.',
+  'Der Feigling, der den Helden spielt — prahlt, flieht aber zuerst.',
+  'Der überfürsorgliche Elternteil — sorgt sich um alle.',
+  'Der einsame Wolf mit Herz — wirkt hart, ist aber gutmütig.',
+  'Der Kriegsveteran — erzählt von „der großen Migration".',
+];
+const QUEST_KLEINIGKEITEN = [
+  'Benenne dich nach einem Käse.',
+  'Erfinde einen Schlachtruf und nutze ihn vor jedem Kampf.',
+  'Gib jedem Gruppenmitglied einen Spitznamen.',
+  'Begrüße jeden fremden Dino mit einem kleinen „Tanz".',
+  'Hab eine irrationale Angst vor einer bestimmten Spezies.',
+  'Du hasst Regen und beschwerst dich lautstark darüber.',
+  'Behaupte, du seist eigentlich ein ganz anderer Dino.',
+  'Sprich nur im Flüsterton (leiser Voice).',
+  'Kommentiere jeden Sonnenaufgang.',
+  'Erkläre jede Wasserstelle zu deinem „Königreich".',
+  'Verbeuge dich vor jedem größeren Dino.',
+  'Führe ein imaginäres Haustier mit dir (RP).',
+  'Zähle bei langen Wegen laut deine Schritte.',
+  'Jeder Kill braucht eine dramatische „letzte Worte"-Rede.',
+  'Sammle „Schätze" — raste an besonders markanten Felsen.',
+];
+const questPick = (arr) => arr[Math.floor(Math.random() * arr.length)];
+function questDayKey() { const d = new Date(); return `${d.getUTCFullYear()}-${d.getUTCMonth() + 1}-${d.getUTCDate()}`; }
+function questFor(steamId) {
+  const all = readJson(QUESTS_FILE, {});
+  let q = all[steamId] || { dayKey: questDayKey(), rollsToday: 0, active: null, done: [] };
+  if (q.dayKey !== questDayKey()) { q.dayKey = questDayKey(); q.rollsToday = 0; }   // täglicher Reset
+  return { all, q };
+}
+app.get('/me/quest', async (req, res) => {
+  const s = sessionFrom(req);
+  if (!s) return res.status(401).json({ error: 'Keine Session' });
+  const { all, q } = questFor(s.steamId);
+  let justCompleted = false, progress = null;
+  if (q.active && q.active.status === 'active') {
+    try {
+      const p = (await fetchPlayers()).find((x) => x.steamId === s.steamId);
+      if (p && !p.isDead) {
+        progress = { online: true, dino: baseClass(p.dinoClass), grow: p.grow ?? 0, isPrime: !!p.isPrime, rightDino: baseClass(p.dinoClass) === q.active.dino };
+        if (!q.active.instaUsed && progress.rightDino && (p.grow ?? 0) >= QUEST_GROW_TARGET && p.isPrime) {
+          q.active.status = 'done'; q.active.completedAt = Date.now();
+          q.done = q.done || []; q.done.push(q.active); q.active = null; justCompleted = true;
+        }
+      } else progress = { online: false };
+    } catch {}
+  }
+  all[s.steamId] = q; writeJsonFile(QUESTS_FILE, all);
+  res.json({ dayKey: q.dayKey, rollsToday: q.rollsToday, dailyLimit: QUEST_DAILY_LIMIT, growTarget: QUEST_GROW_TARGET, active: q.active, doneCount: (q.done || []).length, justCompleted, progress });
+});
+app.post('/me/quest/roll', express.json(), (req, res) => {
+  const s = sessionFrom(req);
+  if (!s) return res.status(401).json({ error: 'Keine Session' });
+  const type = String(req.body?.type ?? 'rp');
+  if (type !== 'rp') return res.status(400).json({ error: 'Diese Quest-Art kommt bald.' });
+  const { all, q } = questFor(s.steamId);
+  if (q.active && q.active.status === 'active') return res.status(409).json({ error: 'Du hast bereits eine aktive Quest — erst abschließen oder aufgeben.' });
+  if (q.rollsToday >= QUEST_DAILY_LIMIT) return res.status(429).json({ error: `Tageslimit erreicht (${QUEST_DAILY_LIMIT} pro Tag).` });
+  const dino = questPick(QUEST_DINOS);
+  q.active = {
+    id: `${Date.now()}-${Math.floor(Math.random() * 1e4)}`, type: 'rp',
+    dino: dino.key, dinoName: dino.name, diet: dino.diet,
+    handicap: questPick(QUEST_HANDICAPS), kleinigkeit: questPick(QUEST_KLEINIGKEITEN), rpRole: questPick(QUEST_RP_ROLES),
+    rolledAt: Date.now(), status: 'active', instaUsed: false,
+  };
+  q.rollsToday += 1;
+  all[s.steamId] = q; writeJsonFile(QUESTS_FILE, all);
+  res.json({ active: q.active, rollsToday: q.rollsToday, dailyLimit: QUEST_DAILY_LIMIT });
+});
+app.post('/me/quest/abandon', (req, res) => {
+  const s = sessionFrom(req);
+  if (!s) return res.status(401).json({ error: 'Keine Session' });
+  const { all, q } = questFor(s.steamId);
+  if (q.active) { q.active.status = 'void'; q.active = null; }
+  all[s.steamId] = q; writeJsonFile(QUESTS_FILE, all);
+  res.json({ ok: true, rollsToday: q.rollsToday, dailyLimit: QUEST_DAILY_LIMIT });
 });
 
 // Discord-Scheduled-Events, an denen der User „interessiert" ist (mit 60s-Cache)
