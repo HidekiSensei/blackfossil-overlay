@@ -345,12 +345,6 @@ async function init() {
   });
   // Einheitlicher Schließen-Button im Dock → alles zu + zurück ins Spiel
   { const c = el('dockClose'); if (c) { c.insertAdjacentHTML('afterbegin', DOCK_ICONS.close); c.onclick = () => closeOverlayAll(); } }
-  // „^" auch schließen, wenn das Overlay den Fokus hat (dann verschluckt der globale
-  // Hook den Dead-Key — der DOM-Event kommt hier aber zuverlässig an). Backquote = „^"/„`".
-  window.addEventListener('keydown', (e) => {
-    const tag = (e.target && e.target.tagName) || '';
-    if (e.code === 'Backquote' && !/^(INPUT|TEXTAREA|SELECT)$/.test(tag)) { e.preventDefault(); toggleOverlayMode(); }
-  });
 
   // Admin-Panel (eigenständiges Modal, nur Admins)
   el('openAdminBtn').onclick = () => openAdminPanel();
@@ -1669,14 +1663,16 @@ function renderProfile() {
   if (d.isElder) tags.push(`🪦 Elder${d.elderStacks ? ` ×${d.elderStacks}` : ''}`);
   if (d.isPrime) tags.push('⭐ Prime');
   if (d.isBleeding) tags.push('🩸 blutet');
-  const dinoBlock = d.online
-    ? `<div style="margin:12px 0 8px"><b>${escapeHtml(d.dino || '?')}</b> · ${d.gender === 'Female' ? '♀' : '♂'} · ${Math.round((d.grow || 0) * 100)}% ${tags.length ? `<span style="color:var(--muted);font-size:12px">· ${tags.join(' · ')}</span>` : ''}</div>
-       ${vitalBar('❤️ Gesundheit', d.health, '#ef4444')}
-       ${vitalBar('🍖 Hunger', d.hunger, '#f59e0b')}
-       ${vitalBar('💧 Durst', d.thirst, '#38bdf8')}
-       ${vitalBar('⚡ Ausdauer', d.stamina, '#22c55e')}
-       ${vitalBar('🩸 Blut', d.blood, '#e11d48')}`
-    : `<p style="color:var(--muted);margin:12px 0">Aktuell nicht im Spiel — Vitals erscheinen, sobald du auf dem Server bist.</p>`;
+  // Profil zeigt KEINE Dino-Vitals (die stehen im Dino-Tab) — stattdessen Account-/Status-Infos.
+  const onlineDino = d.online
+    ? `${escapeHtml(d.dino || '?')} · ${d.gender === 'Female' ? '♀' : '♂'} · ${Math.round((d.grow || 0) * 100)}%${tags.length ? ' · ' + tags.join(' · ') : ''}`
+    : 'Aktuell nicht im Spiel';
+  const inGroup = !!(me && (me.groupId || players.some((p) => p.ovgroup)));
+  const qa = questState && questState.active;
+  const questLine = qa
+    ? (qa.status === 'active' ? '🟢 Läuft' : qa.status === 'rolled' ? '⏳ Bereit zum Start' : qa.status === 'failed' ? '❌ Fehlgeschlagen' : '—')
+    : 'Keine aktive Quest';
+  const pfStat = (ico, label, val) => `<div class="pf-stat"><div class="pf-stat-l">${ico} ${label}</div><div class="pf-stat-v">${val}</div></div>`;
   const avatar = d.avatarUrl
     ? `<img src="${d.avatarUrl}" alt="" style="width:46px;height:46px;border-radius:50%;border:2px solid var(--accent);object-fit:cover">`
     : `<span style="width:46px;height:46px;border-radius:50%;border:2px solid var(--accent);display:flex;align-items:center;justify-content:center;background:#1a1230;color:var(--accent-2);font-size:22px">🦖</span>`;
@@ -1697,12 +1693,15 @@ function renderProfile() {
             <span class="tier-badge tier-${d.tier || 'Fossil'}" style="margin-top:3px;display:inline-block">${escapeHtml(d.tier || 'Fossil')}</span>
           </div>
         </div>
-        <div style="display:flex;gap:18px;margin-bottom:4px;font-size:13px">
-          <span>💰 <b>${(d.points || 0).toLocaleString('de-DE')}</b> Punkte</span>
-          <span>⏱️ <b>${fmtPlaytime(d.playtime)}</b> gespielt</span>
+        <div class="pf-stats">
+          ${pfStat('💰', 'Punkte', (d.points || 0).toLocaleString('de-DE'))}
+          ${pfStat('⏱️', 'Spielzeit', fmtPlaytime(d.playtime))}
+          ${pfStat('🏅', 'Rang', escapeHtml(d.tier || 'Fossil'))}
+          ${pfStat('🦖', 'Aktueller Dino', escapeHtml(onlineDino))}
+          ${pfStat('👥', 'Gruppe', inGroup ? 'In einer Gruppe' : 'Allein unterwegs')}
+          ${pfStat('📜', 'RP-Quest', questLine)}
         </div>
-        ${dinoBlock}
-        <div style="margin-top:10px;font-size:12px;color:var(--muted)">🎟️ Token: <span style="color:#eee">${escapeHtml(tokenList)}</span></div>
+        <div style="margin-top:12px;font-size:12px;color:var(--muted)">🎟️ Inventar: <span style="color:#eee">${escapeHtml(tokenList)}</span></div>
       </div>
       <!-- Rechts: Tickets -->
       <div class="pf-side">

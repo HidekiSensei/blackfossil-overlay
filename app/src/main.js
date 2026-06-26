@@ -378,8 +378,6 @@ catch (err) { console.error('uiohook nicht verfügbar:', err.message); }
 
 let pttCode = null, ptmCode = null, pttDown = false, ptmDown = false;
 let pttMouse = null, ptmMouse = null; // Maustasten-Codes (uiohook e.button)
-let lastCaretAt = 0; // Overlay-/Nav-Modus läuft über „^" (Zirkumflex), nicht mehr Alt
-const CARET_KEYCODE = 43; // „^"-Taste (DE-Layout) — uiohook meldet dafür 43 (NICHT Backquote/41)
 
 function accelToUiohookCode(accel) {
   if (!accel || !UiohookKey) return null;
@@ -404,15 +402,7 @@ function startVoiceHook() {
   if (!uiohook) return;
   uiohook.on('keydown', (e) => {
     if (!hotkeysActive) return; // The Isle nicht im Vordergrund → PTT/PTM blockiert
-    // Overlay-/Nav-Modus: „^" antippen togglet das Dock. Zeit-Entprellung statt keyup-Flag,
-    // weil „^" als Dead-Key kein zuverlässiges keyup liefert (sonst bliebe es „gedrückt").
-    if (e.keycode === CARET_KEYCODE) {
-      const now = Date.now();
-      if (now - lastCaretAt > 250) {
-        lastCaretAt = now;
-        if (overlayWindow) overlayWindow.webContents.send('hotkey', 'overlay-mode');
-      }
-    }
+    // (Dock-Modus läuft jetzt über den konfigurierbaren Hotkey „dock-toggle" = F5, nicht mehr „^".)
     if (pttCode && e.keycode === pttCode && !pttDown) { pttDown = true; sendVoiceKey('ptt', true); }
     if (ptmCode && e.keycode === ptmCode && !ptmDown) { ptmDown = true; sendVoiceKey('ptm', true); }
   });
