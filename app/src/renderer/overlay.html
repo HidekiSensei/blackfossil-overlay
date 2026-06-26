@@ -5,7 +5,7 @@
   <title>BlackFossil Overlay</title>
   <style>
     :root {
-      --accent:#8b5cf6; --accent-2:#a78bfa; --accent-d:#7c3aed; --on:#22c55e; --off:#ef4444; --warn:#f59e0b;
+      --accent:#8b5cf6; --accent-2:#a78bfa; --accent-d:#7c3aed; --accent-rgb:139,92,246; --on:#22c55e; --off:#ef4444; --warn:#f59e0b;
       --panel:rgba(20,13,38,0.82); --border:rgba(139,92,246,0.32); --muted:#b3a9cc;
       --glow: 0 8px 32px rgba(0,0,0,0.45), 0 0 0 1px rgba(139,92,246,0.10), 0 0 24px rgba(139,92,246,0.12);
       --glow-strong: 0 10px 40px rgba(0,0,0,0.5), 0 0 0 1px rgba(139,92,246,0.18), 0 0 36px rgba(139,92,246,0.22);
@@ -68,13 +68,18 @@
     #micIndicator, #zoneBox, #rangeBox { box-shadow: var(--glow); }
 
     /* Große Map */
-    #bigMap { position: fixed; inset: 0; width: 100vw; height: 100vh; background: rgba(8,5,18,0.82); display: none; align-items: center; justify-content: center; flex-direction: column; overflow: hidden; }
+    /* Große Karte = normales Panel (mittig, Glas-Look, Gameplay drumherum sichtbar) */
+    #bigMap { position: fixed; top: 50%; left: 50%; transform: translate(-50%,-50%);
+      max-width: 94vw; max-height: 92vh; background: var(--panel); border: 1px solid var(--border);
+      border-radius: 16px; padding: 18px; box-shadow: var(--glow-strong);
+      backdrop-filter: var(--blur); -webkit-backdrop-filter: var(--blur);
+      display: none; align-items: center; justify-content: center; flex-direction: column; overflow: hidden; }
     #mapRow { display: flex; align-items: center; justify-content: center; gap: 16px; width: 100%; }
-    #bigMapCanvas { max-width: 80vh; max-height: 80vh; width: 80vh; height: 80vh; border-radius: 12px; border: 1px solid var(--border); background: rgba(15,10,30,0.6); flex: none; }
-    #mapRight { display: flex; flex-direction: column; gap: 12px; width: 224px; flex: none; max-height: 84vh; }
+    #bigMapCanvas { max-width: 76vh; max-height: 76vh; width: 76vh; height: 76vh; border-radius: 12px; border: 1px solid var(--border); background: rgba(15,10,30,0.6); flex: none; }
+    #mapRight { display: flex; flex-direction: column; gap: 12px; width: 224px; flex: none; max-height: 76vh; }
     /* Map-Seitenpanels (liegen NEBEN der Karte, nicht darüber) */
     .map-panel { background: rgba(15,10,30,0.92); border: 1px solid var(--border); border-radius: 12px; padding: 12px; font-size: 12px; backdrop-filter: var(--blur); -webkit-backdrop-filter: var(--blur); }
-    #tpList { width: 224px; flex: none; max-height: 84vh; overflow: auto; }
+    #tpList { width: 224px; flex: none; max-height: 76vh; overflow: auto; }
     #mapGroup { overflow: auto; }
     .map-viewbtn { display: block; width: 100%; text-align: left; padding: 8px 12px; margin: 0; background: var(--panel); border: 1px solid var(--border); color: #eee; border-radius: 8px; font-size: 13px; font-weight: 600; cursor: pointer; }
     .map-viewbtn:hover { background: rgba(139,92,246,0.18); }
@@ -301,67 +306,104 @@
 
     /* ════════════════════════════════════════════════════════════════
        ⚡ BlackFossil FX — elektrische Energie passend zum Lightning-Logo.
-       Nur GPU-schonende Props (transform/opacity/filter/box-shadow).
-       Komplett abschaltbar via body.bf-noanim oder prefers-reduced-motion.
+       Alle Leucht-/Blitz-Farben über var(--accent-rgb) → folgen dem HUD-Theme.
+       Nur GPU-schonende Props. Abschaltbar via body.bf-noanim / reduced-motion.
        ════════════════════════════════════════════════════════════════ */
     @property --bf-ang { syntax: '<angle>'; initial-value: 0deg; inherits: false; }
 
-    /* Panels laden sich beim Öffnen „elektrisch auf" + atmen sanft violett */
+    /* Panels: „Einschlag" beim Öffnen (heller Blitz-Pop) + kräftig atmendes Theme-Glühen */
     @keyframes bfCharge {
-      0%   { opacity: 0; transform: translate(-50%,-50%) scale(0.955); filter: brightness(1.55); }
-      55%  { filter: brightness(1.12); }
+      0%   { opacity: 0; transform: translate(-50%,-50%) scale(0.93); filter: brightness(2.2); }
+      18%  { opacity: 1; filter: brightness(1.5); }
+      40%  { filter: brightness(1.05); }
       100% { opacity: 1; transform: translate(-50%,-50%) scale(1); filter: brightness(1); }
     }
     @keyframes bfAura {
-      0%,100% { box-shadow: var(--glow-strong), 0 0 26px rgba(139,92,246,0.16); }
-      50%     { box-shadow: var(--glow-strong), 0 0 48px rgba(139,92,246,0.34); }
+      0%,100% { box-shadow: var(--glow-strong), 0 0 30px rgba(var(--accent-rgb),0.30); border-color: var(--border); }
+      50%     { box-shadow: var(--glow-strong), 0 0 70px rgba(var(--accent-rgb),0.60); border-color: rgba(var(--accent-rgb),0.75); }
     }
-    .feature-panel, #settings, #adminPanel {
-      animation: bfCharge .28s cubic-bezier(.22,1,.36,1), bfAura 4.5s ease-in-out .3s infinite;
+    .feature-panel, #settings, #adminPanel, #bigMap {
+      animation: bfCharge .3s cubic-bezier(.22,1,.36,1), bfAura 3s ease-in-out .3s infinite;
     }
 
-    /* Panel-Überschriften: wandernder Licht-Schimmer durch den Verlauf */
+    /* Panel-Überschriften: schnellerer, hellerer Licht-Schimmer durch den Verlauf */
     @keyframes bfSheen { to { background-position: -200% center; } }
     .feature-panel h2, #settings h2, #adminPanel h2 {
       background: linear-gradient(100deg, #fff 0%, var(--accent-2) 28%, #fff 50%, var(--accent-2) 72%, #fff 100%);
       background-size: 200% auto; -webkit-background-clip: text; background-clip: text;
-      -webkit-text-fill-color: transparent; animation: bfSheen 6s linear infinite;
+      -webkit-text-fill-color: transparent; animation: bfSheen 3.5s linear infinite;
+      filter: drop-shadow(0 0 8px rgba(var(--accent-rgb),0.5));
     }
 
-    /* Sektions-Titel: dezentes elektrisches Glimmen */
-    @keyframes bfTitleGlow { 0%,100% { text-shadow: 0 0 0 rgba(139,92,246,0); } 50% { text-shadow: 0 0 9px rgba(139,92,246,0.45); } }
-    .sec-title { animation: bfTitleGlow 3.6s ease-in-out infinite; }
+    /* Sektions-Titel: deutliches elektrisches Glimmen */
+    @keyframes bfTitleGlow { 0%,100% { text-shadow: 0 0 4px rgba(var(--accent-rgb),0.25); } 50% { text-shadow: 0 0 14px rgba(var(--accent-rgb),0.85); } }
+    .sec-title { animation: bfTitleGlow 2.4s ease-in-out infinite; }
 
-    /* Primär-Buttons: Energie-Streif zieht beim Hover durch */
+    /* Primär-Buttons: Energie-Streif beim Hover + dauerhaftes Theme-Glühen */
     @keyframes bfSweep { from { left: -130%; } to { left: 150%; } }
     button:not(.secondary):not(.dock-btn):not(.theme-sw) { position: relative; overflow: hidden; }
     button:not(.secondary):not(.dock-btn):not(.theme-sw)::before {
       content: ''; position: absolute; top: 0; left: -130%; width: 55%; height: 100%; pointer-events: none;
-      background: linear-gradient(100deg, transparent, rgba(255,255,255,0.5), transparent); transform: skewX(-18deg);
+      background: linear-gradient(100deg, transparent, rgba(255,255,255,0.65), transparent); transform: skewX(-18deg);
     }
-    button:not(.secondary):not(.dock-btn):not(.theme-sw):hover::before { animation: bfSweep .6s ease-out; }
+    button:not(.secondary):not(.dock-btn):not(.theme-sw):hover { box-shadow: 0 4px 18px rgba(var(--accent-rgb),0.6), 0 0 22px rgba(var(--accent-rgb),0.45); }
+    button:not(.secondary):not(.dock-btn):not(.theme-sw):hover::before { animation: bfSweep .55s ease-out; }
 
-    /* Aktiver Dock-Button: pulsierende elektrische Umrandung */
+    /* Aktiver Dock-Button: kräftig pulsierende elektrische Umrandung (Theme-Farbe) */
     @keyframes bfDockPulse {
-      0%,100% { box-shadow: inset 0 0 0 1px rgba(139,92,246,0.55), 0 0 0 rgba(139,92,246,0); }
-      50%     { box-shadow: inset 0 0 0 1px rgba(167,139,250,0.95), 0 0 16px rgba(139,92,246,0.55); }
+      0%,100% { box-shadow: inset 0 0 0 1px rgba(var(--accent-rgb),0.7), 0 0 6px rgba(var(--accent-rgb),0.3); }
+      50%     { box-shadow: inset 0 0 0 1.5px rgba(var(--accent-rgb),1), 0 0 22px rgba(var(--accent-rgb),0.8); }
     }
-    .dock-btn.active { animation: bfDockPulse 2.4s ease-in-out infinite; }
+    .dock-btn.active { animation: bfDockPulse 1.8s ease-in-out infinite; position: relative; z-index: 1; }
 
-    /* Minimap = Kreis-Emblem des Logos: atmendes Glühen + rotierender Energie-Bogen */
-    @keyframes bfMiniGlow {
-      0%,100% { box-shadow: var(--glow), inset 0 0 30px rgba(0,0,0,0.4), 0 0 13px rgba(139,92,246,0.22); }
-      50%     { box-shadow: var(--glow), inset 0 0 30px rgba(0,0,0,0.4), 0 0 26px rgba(139,92,246,0.5); }
+    /* ── Dock: Blitz, der sich aus der Mitte nach außen ausdehnt ── */
+    #dock { overflow: visible; }
+    .dock-btn { position: relative; z-index: 1; }   /* Buttons über dem Blitz */
+    /* radialer Energie-Burst hinter dem Dock */
+    #dock::before {
+      content: ''; position: absolute; left: 50%; top: 50%; width: 70px; height: 70px; z-index: 0;
+      transform: translate(-50%,-50%) scale(0.2); border-radius: 50%; pointer-events: none;
+      background: radial-gradient(circle, rgba(var(--accent-rgb),0.6), rgba(var(--accent-rgb),0) 70%);
+      animation: bfDockBurst 3.2s ease-out infinite;
     }
-    #minimap { animation: bfMiniGlow 4s ease-in-out infinite; }
+    @keyframes bfDockBurst {
+      0%   { transform: translate(-50%,-50%) scale(0.2); opacity: 0; }
+      8%   { opacity: 0.95; }
+      55%  { opacity: 0; }
+      100% { transform: translate(-50%,-50%) scale(8); opacity: 0; }
+    }
+    /* heller Blitz-Strahl, der vom Zentrum nach beiden Seiten aufreißt */
+    #dockBolt {
+      position: absolute; left: 50%; top: 50%; width: 100%; height: 3px; z-index: 0; border-radius: 3px;
+      transform: translate(-50%,-50%) scaleX(0); pointer-events: none;
+      background: linear-gradient(90deg, transparent, rgba(var(--accent-rgb),0.9) 18%, #fff 50%, rgba(var(--accent-rgb),0.9) 82%, transparent);
+      box-shadow: 0 0 12px rgba(var(--accent-rgb),0.95), 0 0 26px rgba(var(--accent-rgb),0.6);
+      animation: bfBolt 3.2s ease-out infinite;
+    }
+    @keyframes bfBolt {
+      0%   { transform: translate(-50%,-50%) scaleX(0); opacity: 0; }
+      6%   { opacity: 1; }
+      20%  { transform: translate(-50%,-50%) scaleX(1); opacity: 1; }
+      40%  { transform: translate(-50%,-50%) scaleX(1); opacity: 0; }
+      100% { opacity: 0; }
+    }
+
+    /* Minimap = Kreis-Emblem des Logos: kräftiges Glühen + 2 rotierende Energie-Bögen */
+    @keyframes bfMiniGlow {
+      0%,100% { box-shadow: var(--glow), inset 0 0 30px rgba(0,0,0,0.4), 0 0 16px rgba(var(--accent-rgb),0.35); }
+      50%     { box-shadow: var(--glow), inset 0 0 30px rgba(0,0,0,0.4), 0 0 40px rgba(var(--accent-rgb),0.75); }
+    }
+    #minimap { animation: bfMiniGlow 3s ease-in-out infinite; border-color: rgba(var(--accent-rgb),0.5); }
     @keyframes bfSpinAng { to { --bf-ang: 360deg; } }
     #minimapRing {
       position: absolute; top: 0; left: 0; width: clamp(200px, 15vw, 320px); height: clamp(200px, 15vw, 320px);
       border-radius: 50%; pointer-events: none; z-index: 1;
-      background: conic-gradient(from var(--bf-ang), transparent 0deg, transparent 210deg, rgba(167,139,250,0.6) 305deg, transparent 360deg);
-      -webkit-mask: radial-gradient(farthest-side, transparent calc(100% - 4px), #000 calc(100% - 3px));
-              mask: radial-gradient(farthest-side, transparent calc(100% - 4px), #000 calc(100% - 3px));
-      animation: bfSpinAng 5.5s linear infinite; filter: drop-shadow(0 0 4px rgba(139,92,246,0.6));
+      background: conic-gradient(from var(--bf-ang),
+        transparent 0deg, rgba(var(--accent-rgb),0.85) 55deg, transparent 110deg,
+        transparent 180deg, rgba(var(--accent-rgb),0.85) 235deg, transparent 290deg);
+      -webkit-mask: radial-gradient(farthest-side, transparent calc(100% - 6px), #000 calc(100% - 5px));
+              mask: radial-gradient(farthest-side, transparent calc(100% - 6px), #000 calc(100% - 5px));
+      animation: bfSpinAng 4s linear infinite; filter: drop-shadow(0 0 6px rgba(var(--accent-rgb),0.9));
     }
 
     /* Komfort/Performance: Bewegung global abschaltbar */
@@ -707,6 +749,7 @@
 
   <!-- Dock (Overlay-Modus / Alt): klickbare Schnellzugriffe. Icons werden per JS injiziert. -->
   <div id="dock">
+    <div id="dockBolt"></div>
     <button class="dock-btn" data-act="profile" aria-label="Profil"><span>Profil</span></button>
     <button class="dock-btn" data-act="dino" aria-label="Dino"><span>Dino</span></button>
     <button class="dock-btn" data-act="group" aria-label="Gruppe"><span>Gruppe</span></button>

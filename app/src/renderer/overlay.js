@@ -4,14 +4,16 @@ import { loadMapImage, drawFullMap, drawMinimap, drawHeatmap, normToWorld, world
 const el = (id) => document.getElementById(id);
 
 // ── Color-Themes (Overlay personalisieren) ───────────────────────────────────
+// rgb = "r,g,b" des Akzents (für rgba(var(--accent-rgb),a) in FX/Blitzen).
+// panel = ans Theme gekoppelte Hintergrundfarbe der Panels (dunkler Akzent-Ton).
 const BF_THEMES = {
-  violett: { name: 'Violett', accent: '#8b5cf6', accent2: '#a78bfa', accentD: '#7c3aed', border: 'rgba(139,92,246,0.32)' },
-  blau:    { name: 'Blau',    accent: '#3b82f6', accent2: '#60a5fa', accentD: '#2563eb', border: 'rgba(59,130,246,0.32)' },
-  cyan:    { name: 'Cyan',    accent: '#06b6d4', accent2: '#22d3ee', accentD: '#0891b2', border: 'rgba(6,182,212,0.32)' },
-  gruen:   { name: 'Grün',    accent: '#22c55e', accent2: '#4ade80', accentD: '#16a34a', border: 'rgba(34,197,94,0.32)' },
-  gold:    { name: 'Gold',    accent: '#f59e0b', accent2: '#fbbf24', accentD: '#d97706', border: 'rgba(245,158,11,0.32)' },
-  rot:     { name: 'Rot',     accent: '#ef4444', accent2: '#f87171', accentD: '#dc2626', border: 'rgba(239,68,68,0.32)' },
-  pink:    { name: 'Pink',    accent: '#ec4899', accent2: '#f472b6', accentD: '#db2777', border: 'rgba(236,72,153,0.32)' },
+  violett: { name: 'Violett', accent: '#8b5cf6', accent2: '#a78bfa', accentD: '#7c3aed', border: 'rgba(139,92,246,0.32)', rgb: '139,92,246', panel: 'rgba(20,13,38,0.82)' },
+  blau:    { name: 'Blau',    accent: '#3b82f6', accent2: '#60a5fa', accentD: '#2563eb', border: 'rgba(59,130,246,0.32)', rgb: '59,130,246', panel: 'rgba(12,18,38,0.82)' },
+  cyan:    { name: 'Cyan',    accent: '#06b6d4', accent2: '#22d3ee', accentD: '#0891b2', border: 'rgba(6,182,212,0.32)', rgb: '6,182,212', panel: 'rgba(8,24,30,0.82)' },
+  gruen:   { name: 'Grün',    accent: '#22c55e', accent2: '#4ade80', accentD: '#16a34a', border: 'rgba(34,197,94,0.32)', rgb: '34,197,94', panel: 'rgba(10,28,18,0.82)' },
+  gold:    { name: 'Gold',    accent: '#f59e0b', accent2: '#fbbf24', accentD: '#d97706', border: 'rgba(245,158,11,0.32)', rgb: '245,158,11', panel: 'rgba(32,24,8,0.84)' },
+  rot:     { name: 'Rot',     accent: '#ef4444', accent2: '#f87171', accentD: '#dc2626', border: 'rgba(239,68,68,0.32)', rgb: '239,68,68', panel: 'rgba(34,12,12,0.84)' },
+  pink:    { name: 'Pink',    accent: '#ec4899', accent2: '#f472b6', accentD: '#db2777', border: 'rgba(236,72,153,0.32)', rgb: '236,72,153', panel: 'rgba(34,12,26,0.84)' },
 };
 let currentTheme = localStorage.getItem('bf-theme') || 'violett';
 function applyTheme(key) {
@@ -19,6 +21,7 @@ function applyTheme(key) {
   const r = document.documentElement.style;
   r.setProperty('--accent', t.accent); r.setProperty('--accent-2', t.accent2);
   r.setProperty('--accent-d', t.accentD); r.setProperty('--border', t.border);
+  r.setProperty('--accent-rgb', t.rgb); r.setProperty('--panel', t.panel);
   localStorage.setItem('bf-theme', currentTheme);
 }
 function renderThemePicker() {
