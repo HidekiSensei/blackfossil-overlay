@@ -728,7 +728,8 @@ app.get('/me/tickets', async (req, res) => {
   const s = sessionFrom(req);
   if (!s) return res.status(401).json({ error: 'Keine Session' });
   const all = readJson(`${BOT_DATA_DIR}/tickets.json`, {});
-  const mine = Object.entries(all).filter(([, m]) => m && m.openerId === s.discordId);
+  // Eigene Tickets (als Ersteller) + Tickets, die man als Team-Mitglied bearbeitet (claimedBy)
+  const mine = Object.entries(all).filter(([, m]) => m && (m.openerId === s.discordId || m.claimedBy === s.discordId));
   let nameOf = () => null;
   try {
     if (DISCORD_BOT_TOKEN && DISCORD_GUILD_ID && mine.some(([, m]) => m.claimedBy)) {
@@ -743,11 +744,43 @@ app.get('/me/tickets', async (req, res) => {
     category: m.category,
     status: m.claimedBy ? 'in_bearbeitung' : 'offen',
     handler: m.claimedBy ? nameOf(m.claimedBy) : null,
+    // 'handler' = ich bearbeite das Ticket (nicht selbst eröffnet), sonst 'opener'
+    role: m.openerId === s.discordId ? 'opener' : 'handler',
     createdAt: m.createdAt,
     lastMessageAt: m.lastMessageAt || m.createdAt || 0,
     lastFromOther: m.lastMessageBy ? m.lastMessageBy !== s.discordId : false,
   })).sort((a, b) => (b.lastMessageAt || 0) - (a.lastMessageAt || 0));
   res.json({ tickets });
+});
+
+// Echte Channel-Nachrichten eines Tickets (für das Chat-Fenster im Overlay-Profil).
+// Autorisiert für den Ersteller ODER den bearbeitenden Team-Member. Bot-Nachrichten
+// (Embeds/Systemmeldungen) werden ausgeblendet — nur die echte Konversation.
+app.get('/me/ticket-messages', async (req, res) => {
+  const s = sessionFrom(req);
+  if (!s) return res.status(401).json({ error: 'Keine Session' });
+  const channelId = String(req.query.channelId || '').trim();
+  if (!channelId) return res.status(400).json({ error: 'channelId fehlt' });
+  const all = readJson(`${BOT_DATA_DIR}/tickets.json`, {});
+  const m = all[channelId];
+  if (!m) return res.status(404).json({ error: 'Ticket nicht gefunden' });
+  if (m.openerId !== s.discordId && m.claimedBy !== s.discordId) return res.status(403).json({ error: 'Kein Zugriff' });
+  if (!DISCORD_BOT_TOKEN) return res.status(503).json({ error: 'Discord nicht konfiguriert' });
+  try {
+    const raw = await discordApi(`/channels/${channelId}/messages?limit=25`);
+    const messages = (Array.isArray(raw) ? raw : [])
+      .filter((x) => x && x.author && !x.author.bot)               // keine Bot-Embeds/Systemmeldungen
+      .reverse()                                                   // Discord liefert neueste zuerst → chronologisch
+      .map((x) => ({
+        id: x.id,
+        author: (x.member && x.member.nick) || (x.author.global_name) || x.author.username || '?',
+        fromMe: x.author.id === s.discordId,
+        content: (x.content || '').slice(0, 600),
+        hasAttachment: Array.isArray(x.attachments) && x.attachments.length > 0,
+        at: x.timestamp ? Date.parse(x.timestamp) : 0,
+      }));
+    res.json({ ticketId: m.ticketId, category: m.category, messages });
+  } catch (e) { res.status(502).json({ error: e.message }); }
 });
 
 // Discord-Scheduled-Events, an denen der User „interessiert" ist (mit 60s-Cache)

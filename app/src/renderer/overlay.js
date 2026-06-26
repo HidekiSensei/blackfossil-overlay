@@ -327,8 +327,6 @@ async function init() {
   el('tpConfirmYes').onclick = () => useTp();
   el('tpConfirmNo').onclick = () => { el('tpConfirm').style.display = 'none'; tpConfirmTarget = null; };
   el('centerBtn').onclick = () => centerOnMe();
-  el('zoomInBtn').onclick = () => zoomBy(1.3);
-  el('zoomOutBtn').onclick = () => zoomBy(1 / 1.3);
   el('resetViewBtn').onclick = () => { mapZoom = 1; mapPanX = 0; mapPanY = 0; renderBigMap(); };
 
   // Sprechreichweiten-Buttons
@@ -595,20 +593,30 @@ function renderBigMap() {
 // Gruppe unten-rechts auf der großen Karte (Mitglieder mit Map-Farbe + Distanz)
 function renderMapGroup() {
   const box = el('mapGroup'); if (!box) return;
+  box.style.display = 'block';   // immer sichtbar — zeigt auch den "keine Gruppe"-Hinweis
   const myG = me && me.groupId;
   const members = players.filter((p) => !p.isYou && !p.isDead && ((myG && p.groupId === myG) || p.ovgroup));
-  if (!members.length) { box.style.display = 'none'; return; }
-  members.sort((a, b) => Math.hypot(a.x - me.x, a.y - me.y) - Math.hypot(b.x - me.x, b.y - me.y));
-  box.style.display = 'block';
+  if (!members.length) {
+    box.innerHTML = `<div style="font-weight:700;margin-bottom:4px">👥 Gruppe</div>` +
+      `<div style="color:var(--muted);line-height:1.4">Aktuell bist du in keiner Gruppe.</div>`;
+    return;
+  }
+  if (me) members.sort((a, b) => Math.hypot(a.x - me.x, a.y - me.y) - Math.hypot(b.x - me.x, b.y - me.y));
   box.innerHTML = `<div style="font-weight:700;margin-bottom:6px">👥 Gruppe (${members.length})</div>` +
+    `<div style="color:var(--muted);font-size:10px;margin-bottom:6px">Klick = Karte auf Mitglied zentrieren</div>` +
     members.map((p) => {
       const col = groupColorFor(p.steamId);
-      const dist = `${Math.round(Math.hypot(p.x - me.x, p.y - me.y) / UNITS_PER_M)} m`;
-      return `<div style="display:flex;align-items:center;gap:7px;padding:3px 0;font-size:12px">
+      const dist = me ? `${Math.round(Math.hypot(p.x - me.x, p.y - me.y) / UNITS_PER_M)} m` : '';
+      return `<div class="mapGroupRow" data-sid="${escapeHtml(p.steamId)}" style="display:flex;align-items:center;gap:7px;padding:4px 4px;margin:0 -4px;border-radius:6px;font-size:12px;cursor:pointer">
         <span style="width:9px;height:9px;border-radius:50%;background:${col};flex:none"></span>
         <span style="flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${escapeHtml(p.name || '?')}</span>
         <span style="color:var(--muted);flex:none">${dist}</span></div>`;
     }).join('');
+  box.querySelectorAll('.mapGroupRow').forEach((row) => {
+    row.onmouseenter = () => { row.style.background = 'rgba(139,92,246,0.18)'; };
+    row.onmouseleave = () => { row.style.background = 'transparent'; };
+    row.onclick = () => centerOnPlayer(row.dataset.sid);
+  });
 }
 
 // Bildschirm-Event → normalisierte Kartenkoordinate (berücksichtigt Zoom/Pan)
@@ -677,16 +685,6 @@ function onMapWheel(e) {
   renderBigMap();
 }
 
-function zoomBy(factor) {
-  const cv = el('bigMapCanvas');
-  const cx = cv.width / 2, cy = cv.height / 2;
-  const newZoom = Math.min(8, Math.max(1, mapZoom * factor));
-  mapPanX = cx - (cx - mapPanX) / mapZoom * newZoom;
-  mapPanY = cy - (cy - mapPanY) / mapZoom * newZoom;
-  mapZoom = newZoom;
-  clampPan();
-  renderBigMap();
-}
 
 function onMapMouseDown(e) {
   dragging = true; dragMoved = false;
@@ -705,15 +703,20 @@ function onMapMouseMove(e) {
   renderBigMap();
 }
 
-function centerOnMe() {
-  if (!me) return;
+// Zentriert die Karte auf eine Welt-Position (mit Mindest-Zoom)
+function centerOnWorld(wx, wy) {
   const cv = el('bigMapCanvas');
-  const { nx, ny } = worldToNorm(me.x, me.y);
+  const { nx, ny } = worldToNorm(wx, wy);
   mapZoom = Math.max(mapZoom, 3);
   mapPanX = cv.width / 2 - nx * cv.width * mapZoom;
   mapPanY = cv.height / 2 - ny * cv.height * mapZoom;
   clampPan();
   renderBigMap();
+}
+function centerOnMe() { if (me) centerOnWorld(me.x, me.y); }
+function centerOnPlayer(steamId) {
+  const p = players.find((pl) => pl.steamId === steamId);
+  if (p) centerOnWorld(p.x, p.y);
 }
 
 // ── Auto-Kalibrierung (Teleport zu 6 Punkten + Klick auf die Karte) ──────────
@@ -1463,6 +1466,7 @@ function toggleFeature(id) {
 }
 function closeAllFeatures(skipInteractive) {
   ['dinoInfo', 'skinEditor', 'garage', 'market', 'group', 'profile', 'lexikon'].forEach((id) => { el(id).style.display = 'none'; });
+  const tc = el('ticketChat'); if (tc) tc.style.display = 'none';   // Ticket-Chat mit schließen
   if (featureOpen === 'dinoInfo') stopDinoInfo();
   featureOpen = null;
   if (!skipInteractive) updateInteractive();
@@ -1632,6 +1636,12 @@ function renderProfile() {
     </div>
     <button class="closeFeature secondary" style="margin-top:14px">Schließen</button>`;
   close();
+  // Tickets anklickbar → Chat-Fenster
+  panel.querySelectorAll('.profileTicketRow').forEach((row) => {
+    row.onmouseenter = () => { row.style.background = 'rgba(139,92,246,0.16)'; };
+    row.onmouseleave = () => { row.style.background = 'rgba(255,255,255,0.04)'; };
+    row.onclick = () => openTicketChat(row.dataset.channel, row.dataset.ticket, row.dataset.cat);
+  });
 }
 
 // ── Events & Tickets (Player-Info) ───────────────────────────────────────────
@@ -1653,9 +1663,11 @@ function profileTicketsHtml() {
   return myTickets.map((t) => {
     const st = t.status === 'in_bearbeitung' ? `<span style="color:#22c55e">In Bearbeitung${t.handler ? ' · ' + escapeHtml(t.handler) : ''}</span>` : '<span style="color:#f59e0b">Offen</span>';
     const neu = t.lastFromOther ? ' <span style="background:rgba(34,197,94,0.2);color:#86efac;border-radius:5px;padding:1px 6px;font-size:10px">💬 neue Antwort</span>' : '';
-    return `<div style="padding:7px 9px;margin-bottom:5px;background:rgba(255,255,255,0.04);border-radius:8px">
-      <div style="font-size:13px;font-weight:600">#${t.ticketId} · ${escapeHtml(t.category || '')}${neu}</div>
-      <div style="font-size:11px">${st}</div>
+    const role = t.role === 'handler' ? ' <span style="background:rgba(139,92,246,0.25);color:#c4b5fd;border-radius:5px;padding:1px 6px;font-size:10px">🛠️ Du bearbeitest</span>' : '';
+    return `<div class="profileTicketRow" data-channel="${escapeHtml(t.channelId)}" data-ticket="${t.ticketId}" data-cat="${escapeHtml(t.category || '')}"
+        style="padding:7px 9px;margin-bottom:5px;background:rgba(255,255,255,0.04);border-radius:8px;cursor:pointer;transition:background .12s">
+      <div style="font-size:13px;font-weight:600">#${t.ticketId} · ${escapeHtml(t.category || '')}${role}${neu}</div>
+      <div style="font-size:11px">${st} <span style="color:var(--muted)">· öffnen 💬</span></div>
     </div>`;
   }).join('');
 }
@@ -1687,6 +1699,78 @@ async function loadMyEvents() {
     myEvents = (await r.json()).events || [];
     if (featureOpen === 'profile') renderProfile();
   } catch {}
+}
+
+// ── Ticket-Chat-Fenster (kleines Modal über dem Profil) ──────────────────────
+// Zeigt die letzte eigene Nachricht und — falls es danach neue Antworten gibt —
+// diese direkt darunter. Antworten passieren weiterhin im Discord-Ticket.
+function ticketChatModal() {
+  let modal = el('ticketChat');
+  if (!modal) {
+    modal = document.createElement('div');
+    modal.id = 'ticketChat';
+    modal.style.cssText = 'position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);z-index:70;'
+      + 'width:clamp(320px,30vw,440px);max-height:72vh;display:none;flex-direction:column;'
+      + 'background:var(--panel);border:1px solid var(--border);border-radius:14px;padding:16px;'
+      + 'box-shadow:var(--glow-strong);backdrop-filter:var(--blur);-webkit-backdrop-filter:var(--blur)';
+    document.body.appendChild(modal);
+  }
+  return modal;
+}
+function closeTicketChat() {
+  const modal = el('ticketChat'); if (modal) modal.style.display = 'none';
+  if (featureOpen === 'profile') renderProfile();   // Badges/Seen aktualisieren
+  updateInteractive();
+}
+async function openTicketChat(channelId, ticketId, category) {
+  const modal = ticketChatModal();
+  modal.style.display = 'flex';
+  modal.innerHTML = `<div style="color:var(--muted)">Lädt Ticket #${ticketId}…</div>`;
+  updateInteractive();
+  try {
+    const r = await fetch(`${config.tokenBase}/me/ticket-messages?channelId=${encodeURIComponent(channelId)}`,
+      { headers: { Authorization: `Bearer ${sessionToken}` } });
+    if (!r.ok) throw new Error('HTTP ' + r.status);
+    const data = await r.json();
+    renderTicketChat(modal, channelId, ticketId, category, data.messages || []);
+  } catch (e) {
+    modal.innerHTML = `<div style="font-weight:700;margin-bottom:10px">🎫 Ticket #${ticketId}</div>`
+      + `<div style="color:#fca5a5;margin-bottom:12px">Nachrichten konnten nicht geladen werden.</div>`
+      + `<button id="ticketChatClose" class="secondary">Schließen</button>`;
+    el('ticketChatClose').onclick = closeTicketChat;
+  }
+}
+function renderTicketChat(modal, channelId, ticketId, category, messages) {
+  // Ticket als gesehen markieren (löscht die "neue Antwort"-Markierung)
+  const t = myTickets.find((x) => x.channelId === channelId);
+  if (t) { const seen = ticketSeen(); seen[channelId] = t.lastMessageAt || Date.now(); setTicketSeen(seen); }
+
+  // Letzte eigene Nachricht finden; alles ab da zeigen (= eigene + neue Antworten danach).
+  let ownIdx = -1;
+  for (let i = messages.length - 1; i >= 0; i--) { if (messages[i].fromMe) { ownIdx = i; break; } }
+  const shown = ownIdx >= 0 ? messages.slice(ownIdx) : messages.slice(-1);
+  const hasNew = ownIdx >= 0 && shown.length > 1;
+
+  const bubbles = shown.map((m) => {
+    const mine = m.fromMe;
+    const body = escapeHtml(m.content || '') || `<i style="opacity:.6">${m.hasAttachment ? '[Anhang]' : '[leer]'}</i>`;
+    return `<div style="display:flex;flex-direction:column;align-items:${mine ? 'flex-end' : 'flex-start'};margin-bottom:9px">
+      <div style="font-size:10px;color:var(--muted);margin-bottom:2px">${mine ? 'Du' : escapeHtml(m.author)} · ${fmtEventTime(m.at ? new Date(m.at).toISOString() : '')}</div>
+      <div style="max-width:85%;padding:8px 11px;border-radius:12px;font-size:13px;line-height:1.35;${mine
+        ? 'background:linear-gradient(135deg,var(--accent),#7c3aed);color:#fff;border-bottom-right-radius:4px'
+        : 'background:rgba(255,255,255,0.06);color:#eee;border-bottom-left-radius:4px'}">${body}</div>
+    </div>`;
+  }).join('') || '<div style="color:var(--muted)">Noch keine Nachrichten in diesem Ticket.</div>';
+
+  modal.innerHTML = `
+    <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:12px">
+      <div style="font-weight:700">🎫 Ticket #${ticketId} <span style="color:var(--muted);font-weight:400;font-size:12px">· ${escapeHtml(category || '')}</span></div>
+      <button id="ticketChatClose" class="secondary" style="flex:none;padding:4px 11px;min-width:0">✕</button>
+    </div>
+    ${hasNew ? '<div style="font-size:11px;color:#86efac;margin-bottom:8px">💬 Neue Antwort seit deiner letzten Nachricht</div>' : ''}
+    <div style="flex:1;overflow:auto;padding-right:4px">${bubbles}</div>
+    <div style="margin-top:10px;font-size:11px;color:var(--muted)">Zum Antworten ins Discord-Ticket schreiben.</div>`;
+  el('ticketChatClose').onclick = closeTicketChat;
 }
 
 // ── Dino-Lexikon (statischer Content, von Hideki/Team pflegbar) ───────────────
