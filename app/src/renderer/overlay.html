@@ -6,7 +6,7 @@
   <style>
     :root {
       --accent:#8b5cf6; --accent-2:#a78bfa; --accent-d:#7c3aed; --accent-rgb:139,92,246; --on:#22c55e; --off:#ef4444; --warn:#f59e0b;
-      --panel:rgba(20,13,38,0.82); --border:rgba(139,92,246,0.32); --muted:#b3a9cc;
+      --panel:rgba(20,13,38,0.82); --border:rgba(139,92,246,0.32); --muted:#b3a9cc; --input-bg:#160d28;
       --glow: 0 8px 32px rgba(0,0,0,0.45), 0 0 0 1px rgba(139,92,246,0.10), 0 0 24px rgba(139,92,246,0.12);
       --glow-strong: 0 10px 40px rgba(0,0,0,0.5), 0 0 0 1px rgba(139,92,246,0.18), 0 0 36px rgba(139,92,246,0.22);
       --blur: blur(14px) saturate(1.2);
@@ -17,12 +17,12 @@
     ::-webkit-scrollbar { width: 10px; height: 10px; }
     ::-webkit-scrollbar-track { background: transparent; }
     ::-webkit-scrollbar-thumb {
-      background: linear-gradient(180deg, rgba(139,92,246,0.65), rgba(124,58,237,0.55));
+      background: linear-gradient(180deg, rgba(var(--accent-rgb),0.7), rgba(var(--accent-rgb),0.45));
       border: 2px solid transparent; background-clip: padding-box; border-radius: 999px;
     }
     ::-webkit-scrollbar-thumb:hover { background: linear-gradient(180deg, var(--accent), var(--accent-2)); background-clip: padding-box; }
     ::-webkit-scrollbar-corner { background: transparent; }
-    * { scrollbar-width: thin; scrollbar-color: rgba(139,92,246,0.65) transparent; }
+    * { scrollbar-width: thin; scrollbar-color: rgba(var(--accent-rgb),0.7) transparent; }
     /* Glas-Optik für alle Panels mit var(--panel) */
     #hud, .toast, #micIndicator, #zoneBox, #rangeBox, #settings, #adminPanel, .feature-panel,
     #zonePanel, #calibPanel, #dinoDetail .box {
@@ -91,7 +91,7 @@
       background: var(--panel); border: 1px solid var(--border); border-radius: 16px; padding: 26px; box-shadow: var(--glow-strong); }
     #settings h2 { font-size: 16px; margin-bottom: 14px; }
     .kv { display: flex; justify-content: space-between; padding: 7px 0; font-size: 13px; border-bottom: 1px solid rgba(255,255,255,0.06); }
-    .kv kbd { background: #120d24; border: 1px solid var(--border); border-radius: 5px; padding: 2px 7px; font-size: 12px; }
+    .kv kbd { background: var(--input-bg); border: 1px solid var(--border); border-radius: 5px; padding: 2px 7px; font-size: 12px; }
     .btnrow { display: flex; gap: 8px; margin-top: 16px; }
     button { background: linear-gradient(135deg, var(--accent), var(--accent-d)); color: #fff; border: 0; border-radius: 8px; padding: 9px 14px;
       font-size: 13px; font-weight: 600; cursor: pointer; flex: 1; transition: transform 0.12s, box-shadow 0.12s, filter 0.12s; }
@@ -104,7 +104,7 @@
     .vmode { font-size: 12px; padding: 8px 6px; }
     .vmode.active { background: var(--accent); color: #fff; border-color: var(--accent); }
     .hk-row { display: flex; justify-content: space-between; align-items: center; padding: 6px 0; font-size: 13px; border-bottom: 1px solid rgba(255,255,255,0.06); }
-    .hk-row button { flex: none; padding: 4px 12px; font-size: 12px; background: #120d24; border: 1px solid var(--border); color: #eee; min-width: 64px; }
+    .hk-row button { flex: none; padding: 4px 12px; font-size: 12px; background: var(--input-bg); border: 1px solid var(--border); color: #eee; min-width: 64px; }
     .hk-row button.listening { background: var(--warn); color: #000; }
 
     /* Settings: 3-Spalten-Layout */
@@ -124,7 +124,7 @@
     .set-block { margin-top: 16px; }
     .set-block:first-child { margin-top: 0; }
     .set-label { font-size: 12px; color: var(--muted); margin-bottom: 6px; }
-    .bf-select { width: 100%; padding: 8px; border-radius: 7px; border: 1px solid var(--border); background: #120d24; color: #eee; font-size: 12px; cursor: pointer; }
+    .bf-select { width: 100%; padding: 8px; border-radius: 7px; border: 1px solid var(--border); background: var(--input-bg); color: #eee; font-size: 12px; cursor: pointer; }
     .vcol-btns { display: flex; flex-direction: column; gap: 8px; }
     .vmode-stack { display: flex; flex-direction: column; gap: 6px; }
     .vmode-stack .vmode { width: 100%; text-align: left; }
@@ -139,23 +139,23 @@
       font-weight: 600; border: 1px solid #ef4444; max-width: 60vw; text-align: center; }
 
     /* Dock (Overlay-/Nav-Modus, „^") */
-    #dock { position: absolute; bottom: 16px; left: 50%; transform: translateX(-50%); display: none; gap: 6px;
-      background: var(--panel); border: 1px solid var(--border); border-radius: 16px; padding: 8px 10px; z-index: 55;
-      backdrop-filter: var(--blur); -webkit-backdrop-filter: var(--blur); animation: bfDock .16s ease-out; }
+    /* #dock = transparenter Anker; #dockInner = sichtbares Panel, das beim Öffnen vom Blitz auseinandergeschoben wird */
+    #dock { position: absolute; bottom: 16px; left: 50%; transform: translateX(-50%); display: none; z-index: 55; }
+    #dockInner { position: relative; z-index: 1; display: flex; gap: 6px; background: var(--panel); border: 1px solid var(--border);
+      border-radius: 16px; padding: 8px 10px; backdrop-filter: var(--blur); -webkit-backdrop-filter: var(--blur); }
     .dock-btn { display: flex; flex-direction: column; align-items: center; gap: 3px; width: 56px; padding: 7px 0;
       border-radius: 11px; background: transparent; border: 0; color: var(--muted); cursor: pointer; font-size: 20px; line-height: 1;
-      transition: background .12s, color .12s, transform .1s; }
+      position: relative; z-index: 1; transition: background .12s, color .12s, transform .1s; }
     .dock-btn span { font-size: 10px; font-weight: 600; }
     .dock-btn svg { display: block; }
-    .dock-btn:hover { background: rgba(139,92,246,0.18); color: #eee; }
+    .dock-btn:hover { background: rgba(var(--accent-rgb),0.18); color: #eee; }
     .dock-btn:active { transform: scale(0.94); }
-    .dock-btn.active { background: rgba(139,92,246,0.32); color: #fff; box-shadow: inset 0 0 0 1px rgba(139,92,246,0.6); }
+    .dock-btn.active { background: rgba(var(--accent-rgb),0.32); color: #fff; box-shadow: inset 0 0 0 1px rgba(var(--accent-rgb),0.6); }
     .dock-sep { width: 1px; align-self: stretch; margin: 4px 4px; background: var(--border); }
     .dock-close { color: #fca5a5; }
     .dock-close:hover { background: rgba(239,68,68,0.18); color: #fff; }
     /* Einheitliches Schließen läuft jetzt über den Dock-Button — In-Panel-Schließen-Buttons ausgeblendet */
     .closeFeature, #closeBtn, #adminCloseBtn { display: none !important; }
-    @keyframes bfDock { from { opacity: 0; transform: translateX(-50%) translateY(10px); } to { opacity: 1; transform: translateX(-50%) translateY(0); } }
     @keyframes bfPop { from { opacity: 0; transform: translate(-50%,-50%) scale(0.97); } to { opacity: 1; transform: translate(-50%,-50%) scale(1); } }
     .feature-panel, #settings, #adminPanel { animation: bfPop .14s ease-out; }
     /* Feature-Panels */
@@ -356,36 +356,73 @@
     }
     .dock-btn.active { animation: bfDockPulse 1.8s ease-in-out infinite; position: relative; z-index: 1; }
 
-    /* ── Dock: Blitz, der sich aus der Mitte nach außen ausdehnt ── */
+    /* ═══ Dock: Öffnen/Schließen als Blitz-Einschlag (Schließen = reversed) ═══ */
     #dock { overflow: visible; }
-    .dock-btn { position: relative; z-index: 1; }   /* Buttons über dem Blitz */
-    /* radialer Energie-Burst hinter dem Dock */
-    #dock::before {
-      content: ''; position: absolute; left: 50%; top: 50%; width: 70px; height: 70px; z-index: 0;
-      transform: translate(-50%,-50%) scale(0.2); border-radius: 50%; pointer-events: none;
-      background: radial-gradient(circle, rgba(var(--accent-rgb),0.6), rgba(var(--accent-rgb),0) 70%);
-      animation: bfDockBurst 3.2s ease-out infinite;
+
+    /* Gezackte Blitze rund um das Dock (wie im Logo) — als SVG-Overlay über #dockInner */
+    #dockLightning { position: absolute; inset: -7px; width: calc(100% + 14px); height: calc(100% + 14px);
+      pointer-events: none; z-index: 0; overflow: visible; }
+    #dockLightning polyline { fill: none; stroke: rgba(var(--accent-rgb),0.9); stroke-width: 1.5;
+      stroke-linejoin: round; stroke-linecap: round; vector-effect: non-scaling-stroke;
+      filter: drop-shadow(0 0 4px rgba(var(--accent-rgb),0.95)); }
+    /* Rand-Blitze flackern im Ruhezustand dezent (gezackt rundherum) */
+    #dockLightning .bolt-edge { opacity: .45; animation: dockEdgeFlick 2.4s steps(1,end) infinite; }
+    @keyframes dockEdgeFlick {
+      0%,100% { opacity: .22; } 12% { opacity: .6; } 26% { opacity: .3; } 41% { opacity: .72; }
+      55% { opacity: .28; } 70% { opacity: .55; } 86% { opacity: .35; }
     }
-    @keyframes bfDockBurst {
-      0%   { transform: translate(-50%,-50%) scale(0.2); opacity: 0; }
-      8%   { opacity: 0.95; }
-      55%  { opacity: 0; }
-      100% { transform: translate(-50%,-50%) scale(8); opacity: 0; }
+    /* Seiten-Blitze (drücken nach außen) nur während Öffnen/Schließen sichtbar */
+    #dockLightning .bolt-burst { opacity: 0; transform-box: view-box; transform-origin: 50% 50%; }
+
+    /* kleiner 4eckiger Licht-Kasten in der Mitte (Blitz-Keim) */
+    #dockCore { position: absolute; left: 50%; top: 50%; width: 22px; height: 22px; z-index: 2; pointer-events: none;
+      transform: translate(-50%,-50%) scale(.2); opacity: 0; border-radius: 5px;
+      background: rgba(var(--accent-rgb),0.95); box-shadow: 0 0 20px rgba(var(--accent-rgb),0.95), inset 0 0 9px #fff; }
+
+    /* —— Öffnen —— */
+    .dock-opening #dockInner  { animation: dockUnfurl .5s cubic-bezier(.16,1,.3,1) both; }
+    .dock-opening .dock-btn   { animation: dockBtnsIn .5s ease-out both; }
+    .dock-opening #dockCore   { animation: dockCore .5s ease-out both; }
+    .dock-opening .bolt-burst { animation: dockBurstBolt .5s ease-out both; }
+    .dock-opening .bolt-edge  { animation: dockEdgeBurst .5s ease-out both; }
+    /* —— Schließen = exakt reversed —— */
+    .dock-closing #dockInner  { animation: dockUnfurl .5s cubic-bezier(.16,1,.3,1) reverse both; }
+    .dock-closing .dock-btn   { animation: dockBtnsIn .5s ease-out reverse both; }
+    .dock-closing #dockCore   { animation: dockCore .5s ease-out reverse both; }
+    .dock-closing .bolt-burst { animation: dockBurstBolt .5s ease-out reverse both; }
+    .dock-closing .bolt-edge  { animation: dockEdgeBurst .5s ease-out reverse both; }
+
+    /* Panel zieht sich aus der Mitte auf + heller Einschlag-Blitz */
+    @keyframes dockUnfurl {
+      0%   { clip-path: inset(0 49% 0 49% round 16px); filter: brightness(2.6); }
+      14%  { clip-path: inset(0 44% 0 44% round 16px); filter: brightness(1.9); }
+      100% { clip-path: inset(0 0 0 0 round 16px); filter: brightness(1); }
     }
-    /* heller Blitz-Strahl, der vom Zentrum nach beiden Seiten aufreißt */
-    #dockBolt {
-      position: absolute; left: 50%; top: 50%; width: 100%; height: 3px; z-index: 0; border-radius: 3px;
-      transform: translate(-50%,-50%) scaleX(0); pointer-events: none;
-      background: linear-gradient(90deg, transparent, rgba(var(--accent-rgb),0.9) 18%, #fff 50%, rgba(var(--accent-rgb),0.9) 82%, transparent);
-      box-shadow: 0 0 12px rgba(var(--accent-rgb),0.95), 0 0 26px rgba(var(--accent-rgb),0.6);
-      animation: bfBolt 3.2s ease-out infinite;
+    /* Buttons erscheinen erst, wenn das Dock weit genug aufgerissen ist */
+    @keyframes dockBtnsIn {
+      0%,30% { opacity: 0; transform: translateY(4px) scale(.94); }
+      55%    { opacity: 1; }
+      100%   { opacity: 1; transform: none; }
     }
-    @keyframes bfBolt {
-      0%   { transform: translate(-50%,-50%) scaleX(0); opacity: 0; }
-      6%   { opacity: 1; }
-      20%  { transform: translate(-50%,-50%) scaleX(1); opacity: 1; }
-      40%  { transform: translate(-50%,-50%) scaleX(1); opacity: 0; }
+    /* Mittiger Kasten blitzt zuerst, verschwindet beim Aufreißen */
+    @keyframes dockCore {
+      0%   { opacity: 0; transform: translate(-50%,-50%) scale(.2) rotate(-8deg); }
+      10%  { opacity: 1; transform: translate(-50%,-50%) scale(1.2) rotate(0deg); }
+      24%  { opacity: 1; transform: translate(-50%,-50%) scale(1); }
+      48%  { opacity: 0; transform: translate(-50%,-50%) scale(.7); }
       100% { opacity: 0; }
+    }
+    /* Seiten-Blitze reißen vom Zentrum nach links & rechts auf (mit kurzer Verzögerung) */
+    @keyframes dockBurstBolt {
+      0%,8% { opacity: 0; transform: scaleX(0); }
+      16%   { opacity: 1; }
+      30%   { opacity: 1; transform: scaleX(1); }
+      52%   { opacity: 0; transform: scaleX(1); }
+      100%  { opacity: 0; }
+    }
+    /* Rand-Blitze zünden beim Öffnen kräftig, beruhigen sich dann */
+    @keyframes dockEdgeBurst {
+      0% { opacity: 0; } 14% { opacity: 1; } 40% { opacity: .9; } 100% { opacity: .45; }
     }
 
     /* Minimap = Kreis-Emblem des Logos: kräftiges Glühen + 2 rotierende Energie-Bögen */
@@ -749,20 +786,35 @@
 
   <!-- Dock (Overlay-Modus / Alt): klickbare Schnellzugriffe. Icons werden per JS injiziert. -->
   <div id="dock">
-    <div id="dockBolt"></div>
-    <button class="dock-btn" data-act="profile" aria-label="Profil"><span>Profil</span></button>
-    <button class="dock-btn" data-act="dino" aria-label="Dino"><span>Dino</span></button>
-    <button class="dock-btn" data-act="group" aria-label="Gruppe"><span>Gruppe</span></button>
-    <button class="dock-btn" data-act="lexikon" aria-label="Lexikon"><span>Lexikon</span></button>
-    <button class="dock-btn" data-act="garage" aria-label="Garage"><span>Garage</span></button>
-    <button class="dock-btn" data-act="market" aria-label="Markt"><span>Markt</span></button>
-    <button class="dock-btn" data-act="quests" aria-label="Quests"><span>Quests</span></button>
-    <button class="dock-btn" data-act="map" aria-label="Karte"><span>Karte</span></button>
-    <button class="dock-btn" data-act="skin" aria-label="Skin"><span>Skin</span></button>
-    <button class="dock-btn" data-act="settings" aria-label="Einstellungen"><span>Settings</span></button>
-    <button class="dock-btn" id="dockAdmin" data-act="admin" aria-label="Admin" style="display:none"><span>Admin</span></button>
-    <div class="dock-sep"></div>
-    <button class="dock-btn dock-close" id="dockClose" aria-label="Schließen & weiterspielen"><span>Schließen</span></button>
+    <!-- Blitz-FX (nicht vom Aufzieh-Clip betroffen) -->
+    <div id="dockCore"></div>
+    <svg id="dockLightning" viewBox="0 0 660 80" preserveAspectRatio="none" aria-hidden="true">
+      <g class="bolt-edge">
+        <polyline points="14,6 70,1 128,10 196,2 262,9 318,1 372,10 440,2 506,9 566,1 628,8 646,4"/>
+        <polyline points="14,74 70,79 128,70 196,78 262,71 318,79 372,70 440,78 506,71 566,79 628,72 646,76"/>
+        <polyline points="4,14 1,34 9,52 2,66"/>
+        <polyline points="656,14 659,34 651,52 658,66"/>
+      </g>
+      <g class="bolt-burst">
+        <polyline points="330,40 296,30 268,46 232,28 202,47 168,31 138,41 104,29 78,44 44,30 12,42"/>
+        <polyline points="330,40 364,30 392,46 428,28 458,47 492,31 522,41 556,29 582,44 616,30 648,42"/>
+      </g>
+    </svg>
+    <div id="dockInner">
+      <button class="dock-btn" data-act="profile" aria-label="Profil"><span>Profil</span></button>
+      <button class="dock-btn" data-act="dino" aria-label="Dino"><span>Dino</span></button>
+      <button class="dock-btn" data-act="group" aria-label="Gruppe"><span>Gruppe</span></button>
+      <button class="dock-btn" data-act="lexikon" aria-label="Lexikon"><span>Lexikon</span></button>
+      <button class="dock-btn" data-act="garage" aria-label="Garage"><span>Garage</span></button>
+      <button class="dock-btn" data-act="market" aria-label="Markt"><span>Markt</span></button>
+      <button class="dock-btn" data-act="quests" aria-label="Quests"><span>Quests</span></button>
+      <button class="dock-btn" data-act="map" aria-label="Karte"><span>Karte</span></button>
+      <button class="dock-btn" data-act="skin" aria-label="Skin"><span>Skin</span></button>
+      <button class="dock-btn" data-act="settings" aria-label="Einstellungen"><span>Settings</span></button>
+      <button class="dock-btn" id="dockAdmin" data-act="admin" aria-label="Admin" style="display:none"><span>Admin</span></button>
+      <div class="dock-sep"></div>
+      <button class="dock-btn dock-close" id="dockClose" aria-label="Schließen & weiterspielen"><span>Schließen</span></button>
+    </div>
   </div>
   <div id="skinEditor" class="feature-panel"><h2>🎨 Skin Editor</h2><p>Wird in Kürze verfügbar sein.</p><button class="closeFeature secondary">Schließen</button></div>
   <div id="garage" class="feature-panel"><h2>🚗 Garage</h2><p>Ein- und Ausparken deiner Dinos — kommt in Phase 4.</p><button class="closeFeature secondary">Schließen</button></div>

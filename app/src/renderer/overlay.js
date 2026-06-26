@@ -7,13 +7,13 @@ const el = (id) => document.getElementById(id);
 // rgb = "r,g,b" des Akzents (für rgba(var(--accent-rgb),a) in FX/Blitzen).
 // panel = ans Theme gekoppelte Hintergrundfarbe der Panels (dunkler Akzent-Ton).
 const BF_THEMES = {
-  violett: { name: 'Violett', accent: '#8b5cf6', accent2: '#a78bfa', accentD: '#7c3aed', border: 'rgba(139,92,246,0.32)', rgb: '139,92,246', panel: 'rgba(20,13,38,0.82)' },
-  blau:    { name: 'Blau',    accent: '#3b82f6', accent2: '#60a5fa', accentD: '#2563eb', border: 'rgba(59,130,246,0.32)', rgb: '59,130,246', panel: 'rgba(12,18,38,0.82)' },
-  cyan:    { name: 'Cyan',    accent: '#06b6d4', accent2: '#22d3ee', accentD: '#0891b2', border: 'rgba(6,182,212,0.32)', rgb: '6,182,212', panel: 'rgba(8,24,30,0.82)' },
-  gruen:   { name: 'Grün',    accent: '#22c55e', accent2: '#4ade80', accentD: '#16a34a', border: 'rgba(34,197,94,0.32)', rgb: '34,197,94', panel: 'rgba(10,28,18,0.82)' },
-  gold:    { name: 'Gold',    accent: '#f59e0b', accent2: '#fbbf24', accentD: '#d97706', border: 'rgba(245,158,11,0.32)', rgb: '245,158,11', panel: 'rgba(32,24,8,0.84)' },
-  rot:     { name: 'Rot',     accent: '#ef4444', accent2: '#f87171', accentD: '#dc2626', border: 'rgba(239,68,68,0.32)', rgb: '239,68,68', panel: 'rgba(34,12,12,0.84)' },
-  pink:    { name: 'Pink',    accent: '#ec4899', accent2: '#f472b6', accentD: '#db2777', border: 'rgba(236,72,153,0.32)', rgb: '236,72,153', panel: 'rgba(34,12,26,0.84)' },
+  violett: { name: 'Violett', accent: '#8b5cf6', accent2: '#a78bfa', accentD: '#7c3aed', border: 'rgba(139,92,246,0.32)', rgb: '139,92,246', panel: 'rgba(20,13,38,0.82)', inputBg: '#160d28' },
+  blau:    { name: 'Blau',    accent: '#3b82f6', accent2: '#60a5fa', accentD: '#2563eb', border: 'rgba(59,130,246,0.32)', rgb: '59,130,246', panel: 'rgba(12,18,38,0.82)', inputBg: '#0c1426' },
+  cyan:    { name: 'Cyan',    accent: '#06b6d4', accent2: '#22d3ee', accentD: '#0891b2', border: 'rgba(6,182,212,0.32)', rgb: '6,182,212', panel: 'rgba(8,24,30,0.82)', inputBg: '#07181d' },
+  gruen:   { name: 'Grün',    accent: '#22c55e', accent2: '#4ade80', accentD: '#16a34a', border: 'rgba(34,197,94,0.32)', rgb: '34,197,94', panel: 'rgba(10,28,18,0.82)', inputBg: '#0a1c12' },
+  gold:    { name: 'Gold',    accent: '#f59e0b', accent2: '#fbbf24', accentD: '#d97706', border: 'rgba(245,158,11,0.32)', rgb: '245,158,11', panel: 'rgba(32,24,8,0.84)', inputBg: '#1c1506' },
+  rot:     { name: 'Rot',     accent: '#ef4444', accent2: '#f87171', accentD: '#dc2626', border: 'rgba(239,68,68,0.32)', rgb: '239,68,68', panel: 'rgba(34,12,12,0.84)', inputBg: '#1e0c0c' },
+  pink:    { name: 'Pink',    accent: '#ec4899', accent2: '#f472b6', accentD: '#db2777', border: 'rgba(236,72,153,0.32)', rgb: '236,72,153', panel: 'rgba(34,12,26,0.84)', inputBg: '#1e0c18' },
 };
 let currentTheme = localStorage.getItem('bf-theme') || 'violett';
 function applyTheme(key) {
@@ -22,6 +22,7 @@ function applyTheme(key) {
   r.setProperty('--accent', t.accent); r.setProperty('--accent-2', t.accent2);
   r.setProperty('--accent-d', t.accentD); r.setProperty('--border', t.border);
   r.setProperty('--accent-rgb', t.rgb); r.setProperty('--panel', t.panel);
+  r.setProperty('--input-bg', t.inputBg);
   localStorage.setItem('bf-theme', currentTheme);
 }
 function renderThemePicker() {
@@ -2538,16 +2539,16 @@ async function renderSkinEditor() {
     <div style="display:grid;grid-template-columns:1fr 1fr;gap:6px;margin:8px 0 14px">${swatches}</div>
     <div class="sec-title">Muster & Variation</div>
     <div style="display:flex;gap:6px;margin:8px 0 8px">${[0, 1, 2].map((i) => `<button data-pat="${i}" style="flex:1" class="${skinState.patternIndex === i ? '' : 'secondary'}">Muster ${i + 1}</button>`).join('')}</div>
-    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px"><span style="font-size:13px">Skin-Variation</span><input id="skVar" type="number" min="0" value="${skinState.skinVariation}" style="width:80px;padding:6px;border-radius:6px;border:1px solid var(--border);background:#120d24;color:#eee"></div>
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px"><span style="font-size:13px">Skin-Variation</span><input id="skVar" type="number" min="0" value="${skinState.skinVariation}" style="width:80px;padding:6px;border-radius:6px;border:1px solid var(--border);background:var(--input-bg);color:#eee"></div>
     <div class="sec-title" style="margin-top:16px">🔗 Farben teilen</div>
     <button id="skShare" style="width:100%;margin:8px 0">📋 Farb-Code kopieren</button>
     <div style="display:flex;gap:6px;margin-bottom:4px">
-      <input id="skImport" placeholder="Farb-Code einfügen…" style="flex:1;min-width:0;padding:8px;border-radius:6px;border:1px solid var(--border);background:#120d24;color:#eee">
+      <input id="skImport" placeholder="Farb-Code einfügen…" style="flex:1;min-width:0;padding:8px;border-radius:6px;border:1px solid var(--border);background:var(--input-bg);color:#eee">
       <button id="skImportBtn" class="secondary" style="width:auto;padding:8px 12px">Anwenden</button>
     </div>
     <div class="sec-title" style="margin-top:16px">📁 Eigene Vorlagen <span style="color:var(--muted);font-weight:400;font-size:11px">(dino-übergreifend)</span></div>
     <div style="display:flex;gap:6px;margin:8px 0">
-      <input id="skTplName" placeholder="Vorlagen-Name…" maxlength="30" style="flex:1;min-width:0;padding:8px;border-radius:6px;border:1px solid var(--border);background:#120d24;color:#eee">
+      <input id="skTplName" placeholder="Vorlagen-Name…" maxlength="30" style="flex:1;min-width:0;padding:8px;border-radius:6px;border:1px solid var(--border);background:var(--input-bg);color:#eee">
       <button id="skTplSave" style="width:auto;padding:8px 12px">💾 Speichern</button>
     </div>
     <div id="skTplList"></div>
@@ -2789,7 +2790,7 @@ function showSellDialog(card) {
   box.innerHTML = `<div style="display:flex;gap:14px;align-items:center;margin-bottom:14px">${dinoPreview(card, 'dd')}<div><div style="font-size:18px;font-weight:700">${card.dino}${card.isElder ? ' 👑' : ''}</div><div style="font-size:12px;color:var(--muted)">${card.gender || ''} · ${Math.round((card.grow || 0) * 100)}%</div></div></div>
     <button id="sdServer" style="width:100%;margin-bottom:8px">💰 An Server verkaufen (+500)</button>
     <div style="display:flex;gap:6px;margin-bottom:8px">
-      <input id="sdPrice" type="number" min="1" placeholder="Preis in Punkten" style="flex:1;padding:9px;border-radius:8px;border:1px solid var(--border);background:#120d24;color:#eee;font-size:13px">
+      <input id="sdPrice" type="number" min="1" placeholder="Preis in Punkten" style="flex:1;padding:9px;border-radius:8px;border:1px solid var(--border);background:var(--input-bg);color:#eee;font-size:13px">
       <button id="sdPlayer" style="flex:none;padding:9px 14px">An Spieler listen</button>
     </div>
     <button class="secondary" id="sdClose" style="width:100%">Abbrechen</button>`;
@@ -2834,11 +2835,38 @@ async function updateDinoInfo() {
   });
 }
 
+// Dock mit Blitz-Animation ein-/ausblenden. Öffnen-Keyframes werden zum
+// Schließen exakt rückwärts abgespielt (.dock-closing). Nur bei echtem Übergang.
+let dockShown = false;
+let dockCloseTimer = null;
+function setDockVisible(visible) {
+  const d = el('dock'); if (!d) return;
+  if (visible === dockShown) return;        // kein Zustandswechsel → keine Animation
+  dockShown = visible;
+  if (dockCloseTimer) { clearTimeout(dockCloseTimer); dockCloseTimer = null; }
+  d.classList.remove('dock-opening', 'dock-closing');
+  // reflow erzwingen, damit dieselbe Animation erneut starten kann
+  // eslint-disable-next-line no-unused-expressions
+  void d.offsetWidth;
+  if (visible) {
+    d.style.display = 'flex';
+    d.classList.add('dock-opening');
+    dockCloseTimer = setTimeout(() => { d.classList.remove('dock-opening'); dockCloseTimer = null; }, 520);
+  } else {
+    d.classList.add('dock-closing');         // Öffnen rückwärts
+    dockCloseTimer = setTimeout(() => {
+      d.classList.remove('dock-closing');
+      if (!dockShown) d.style.display = 'none';
+      dockCloseTimer = null;
+    }, 520);
+  }
+}
+
 function updateInteractive() {
   updateDockActive(); // Dock-Highlight immer am aktuellen Stand halten
   const anyPanel = settingsOpen || mapOpen || adminOpen || !!featureOpen;
   // Dock IMMER einblenden, sobald ein Panel offen ist (auch per Hotkey geöffnet) — oder im „^"-Modus.
-  const d = el('dock'); if (d) d.style.display = (overlayMode || anyPanel) ? 'flex' : 'none';
+  setDockVisible(overlayMode || anyPanel);
   // Maus durchlassen nur wenn nichts offen ist
   window.bf.setInteractive(overlayMode || anyPanel);
 }
