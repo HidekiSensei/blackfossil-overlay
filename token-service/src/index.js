@@ -57,14 +57,15 @@ const TIER_ROLES = (process.env.TIER_ROLES ?? 'Obsidian,Bernstein,Knochen').spli
 // Staff-Ränge von höchstem zu niedrigstem
 const STAFF_ROLES = (process.env.STAFF_ROLES ?? 'Owner,Admin,Supporter').split(',').map((s) => s.trim());
 // EINHEITLICHE Rang-Leiter (höchster → niedrigster). Es wird nur der höchste angezeigt.
-const RANK_ROLES = (process.env.RANK_ROLES ?? 'Owner,Admin,Support,Beta Tester,Fossil').split(',').map((s) => s.trim());
-// Welche Ränge zählen als Admin bzw. Team
-const ADMIN_RANKS = (process.env.ADMIN_RANKS ?? 'Owner,Admin').split(',').map((s) => s.trim());
-const TEAM_RANKS  = (process.env.TEAM_RANKS  ?? 'Owner,Admin,Support').split(',').map((s) => s.trim());
+const RANK_ROLES = (process.env.RANK_ROLES ?? 'Owner,Admin,Moderator,Support,Beta Tester,Fossil').split(',').map((s) => s.trim());
+// Rechte-Stufen: admin = volle Config; ingame = Ingame-Tools (Moderator+); team = alle Staff inkl. Support
+const ADMIN_RANKS  = (process.env.ADMIN_RANKS  ?? 'Owner,Admin').split(',').map((s) => s.trim());
+const INGAME_RANKS = (process.env.INGAME_RANKS ?? 'Owner,Admin,Moderator').split(',').map((s) => s.trim());
+const TEAM_RANKS   = (process.env.TEAM_RANKS   ?? 'Owner,Admin,Moderator,Support').split(',').map((s) => s.trim());
 
 // ── Discord-Rollen-Check (Admin + Tier + Staff-Rang) ────────────────────────
 async function getDiscordStatus(discordId) {
-  const result = { admin: false, team: false, rank: 'Fossil', tier: 'Fossil', staff: null };
+  const result = { admin: false, ingame: false, team: false, rank: 'Fossil', tier: 'Fossil', staff: null };
   if (!DISCORD_BOT_TOKEN || !DISCORD_GUILD_ID) return result;
   try {
     const headers = { Authorization: `Bot ${DISCORD_BOT_TOKEN}` };
@@ -83,6 +84,7 @@ async function getDiscordStatus(discordId) {
     result.tier = rank;          // HUD zeigt nur diesen einen Rang
     result.staff = null;         // kein zweites Badge mehr
     result.admin = ADMIN_RANKS.includes(rank);
+    result.ingame = INGAME_RANKS.includes(rank);
     result.team = TEAM_RANKS.includes(rank);
     return result;
   } catch {
@@ -156,11 +158,11 @@ app.get('/auth/callback', async (req, res) => {
     }
 
     // Höchster Rang + abgeleitete Rechte anhand Discord-Rollen
-    const { admin, team, rank, tier, staff } = await getDiscordStatus(user.id);
+    const { admin, ingame, team, rank, tier, staff } = await getDiscordStatus(user.id);
 
     // App-Session ausstellen (30 Tage)
     const session = jwt.sign(
-      { steamId, discordId: user.id, name: user.global_name || user.username, admin, team, rank, tier, staff, avatar: user.avatar ?? null },
+      { steamId, discordId: user.id, name: user.global_name || user.username, admin, ingame, team, rank, tier, staff, avatar: user.avatar ?? null },
       SESSION_SECRET,
       { expiresIn: '30d' }
     );
@@ -206,6 +208,7 @@ app.get('/token', async (req, res) => {
     identity: payload.steamId,
     name: payload.name,
     admin: !!payload.admin,
+    ingame: !!payload.ingame || !!payload.admin,
     team: isTeamMember(payload),
     rank: payload.rank || payload.tier || 'Fossil',
     tier: payload.rank || payload.tier || 'Fossil',
@@ -390,7 +393,7 @@ app.post('/calibration', express.json(), (req, res) => {
   let payload;
   try { payload = jwt.verify(sessionToken, SESSION_SECRET); }
   catch { return res.status(401).json({ error: 'Session ungültig' }); }
-  if (!isTeamMember(payload)) return res.status(403).json({ error: 'Nur für das Team' });
+  if (!isIngameMember(payload)) return res.status(403).json({ error: 'Nur für Moderatoren+' });
 
   const affine = req.body?.affine;
   if (!affine || typeof affine.a !== 'number') return res.status(400).json({ error: 'Ungültige Kalibrierung' });
@@ -549,9 +552,13 @@ const FORCE_ADMIN_STEAMIDS = (process.env.FORCE_ADMIN_STEAMIDS ?? '').split(',')
 function isTeamMember(s) {
   return !!(s && (s.team || s.admin || s.staff || FORCE_TEAM_STEAMIDS.includes(s.steamId)));
 }
-// Admin = NUR Owner/Admin (kein Support). Gilt für das ganze Admin-Panel.
+// Admin = NUR Owner/Admin (volle Config: Beschenken, Dino-Limits, Rollen).
 function isAdminMember(s) {
   return !!(s && (s.admin || FORCE_ADMIN_STEAMIDS.includes(s.steamId)));
+}
+// Ingame = Owner/Admin/Moderator — Ingame-Tools (AI, Lightning, TP, Kalibrierung).
+function isIngameMember(s) {
+  return !!(s && (s.ingame || s.admin || FORCE_ADMIN_STEAMIDS.includes(s.steamId)));
 }
 
 // ── AI-Dinos: Proxy zum control-server (Game-Box), nur Team ──────────────────
@@ -574,13 +581,13 @@ async function controlFetch(path, method = 'POST', body) {
 }
 app.get('/admin/ai/status', async (req, res) => {
   const s = sessionFrom(req);
-  if (!isTeamMember(s)) return res.status(403).json({ error: 'Nur für das Team' });
+  if (!isIngameMember(s)) return res.status(403).json({ error: 'Nur für Moderatoren+' });
   try { const r = await controlFetch('/ai/status', 'GET'); return res.status(r.status).json(r.data); }
   catch (e) { return res.status(502).json({ error: e.message }); }
 });
 app.post('/admin/ai/:action', express.json(), async (req, res) => {
   const s = sessionFrom(req);
-  if (!isTeamMember(s)) return res.status(403).json({ error: 'Nur für das Team' });
+  if (!isIngameMember(s)) return res.status(403).json({ error: 'Nur für Moderatoren+' });
   const path = AI_ACTION_PATHS[req.params.action];
   if (!path) return res.status(400).json({ error: 'Unbekannte Aktion' });
   try {
@@ -624,7 +631,7 @@ async function guildMembers() {
 // Liste aller verknüpften Discord-User (für das Such-Dropdown)
 app.get('/admin/users', async (req, res) => {
   const s = sessionFrom(req);
-  if (!isAdminMember(s)) return res.status(403).json({ error: 'Nur für Admins' });
+  if (!isIngameMember(s)) return res.status(403).json({ error: 'Nur für Moderatoren+' });
   if (!DISCORD_BOT_TOKEN || !DISCORD_GUILD_ID) return res.status(503).json({ error: 'Discord nicht konfiguriert' });
   try {
     const accounts = readJson(ACCOUNTS_PATH, {});
@@ -655,7 +662,7 @@ app.get('/admin/roles', async (req, res) => {
 // User-Info: Punkte, Token, Rang/Rollen, Live-Dino
 app.post('/admin/user-info', express.json(), async (req, res) => {
   const s = sessionFrom(req);
-  if (!isAdminMember(s)) return res.status(403).json({ error: 'Nur für Admins' });
+  if (!isIngameMember(s)) return res.status(403).json({ error: 'Nur für Moderatoren+' });
   const steamId = String(req.body?.steamId || '').trim();
   if (!/^\d{17}$/.test(steamId)) return res.status(400).json({ error: 'Ungültige SteamID' });
   const accounts = readJson(ACCOUNTS_PATH, {});
@@ -685,7 +692,7 @@ app.post('/admin/user-info', express.json(), async (req, res) => {
 // Lightning Strike (Slay) auf den aktiven Ingame-Dino
 app.post('/admin/lightning', express.json(), async (req, res) => {
   const s = sessionFrom(req);
-  if (!isAdminMember(s)) return res.status(403).json({ error: 'Nur für Admins' });
+  if (!isIngameMember(s)) return res.status(403).json({ error: 'Nur für Moderatoren+' });
   const steamId = String(req.body?.steamId || '').trim();
   if (!/^\d{17}$/.test(steamId)) return res.status(400).json({ error: 'Ungültige SteamID' });
   try {
@@ -728,6 +735,34 @@ app.post('/admin/gift', express.json(), async (req, res) => {
     if (type === 'points') addPoints(sid, amt); else addToken(sid, type, amt);
   }
   res.json({ ok: true, affected: steamIds.length, type, amount: amt });
+});
+
+// ── Dino-Limits (Admin setzt im Overlay, sichtbar für alle + im Discord) ─────
+// In BOT_DATA_DIR, damit der Discord-Bot sie direkt lesen kann. {species: maxAnzahl},
+// 0/fehlt = unbegrenzt. Rein informativ (Soft-Limit), keine harte Durchsetzung.
+const DINO_LIMITS_FILE = `${BOT_DATA_DIR}/dinolimits.json`;
+const DINO_LIMIT_SPECIES = [
+  'Tyrannosaurus', 'Allosaurus', 'Carnotaurus', 'Ceratosaurus', 'Dilophosaurus', 'Herrerasaurus',
+  'Omniraptor', 'Troodon', 'Pteranodon', 'Deinosuchus', 'Beipiaosaurus', 'Triceratops',
+  'Diabloceratops', 'Stegosaurus', 'Tenontosaurus', 'Dryosaurus', 'Hypsilophodon',
+  'Pachycephalosaurus', 'Maiasaura', 'Gallimimus',
+];
+app.get('/dino-limits', (req, res) => {
+  const s = sessionFrom(req);
+  if (!s) return res.status(401).json({ error: 'Keine Session' });
+  res.json({ species: DINO_LIMIT_SPECIES, limits: readJson(DINO_LIMITS_FILE, {}) });
+});
+app.post('/admin/dino-limits', express.json(), (req, res) => {
+  const s = sessionFrom(req);
+  if (!isAdminMember(s)) return res.status(403).json({ error: 'Nur für Admins' });
+  const incoming = req.body?.limits || {};
+  const limits = {};
+  for (const sp of DINO_LIMIT_SPECIES) {
+    const v = parseInt(incoming[sp], 10);
+    if (Number.isFinite(v) && v > 0) limits[sp] = v;   // 0/leer = unbegrenzt → nicht speichern
+  }
+  writeJsonFile(DINO_LIMITS_FILE, limits);
+  res.json({ ok: true, limits });
 });
 
 // Eigene Support-Tickets (Status, Bearbeiter, neue-Nachricht-Flag) fürs Overlay
@@ -1429,8 +1464,8 @@ app.get('/teleports', (req, res) => {
       x: t.x, y: t.y, cooldownRemaining: tpCooldownRemaining(s.steamId, t.id),
     })),
     points: getPoints(s.steamId),
-    isTeam: isTeamMember(s),
-    isAdmin: isTeamMember(s), // abwärtskompatibel für ältere Overlay-Clients
+    isTeam: isIngameMember(s),
+    isAdmin: isIngameMember(s), // Ingame-Tools (Moderator+) — abwärtskompatibel für ältere Clients
   });
 });
 
@@ -1438,7 +1473,7 @@ app.get('/teleports', (req, res) => {
 app.post('/teleports', express.json(), async (req, res) => {
   const s = sessionFrom(req);
   if (!s) return res.status(401).json({ error: 'Keine Session' });
-  if (!isTeamMember(s)) return res.status(403).json({ error: 'Nur für das Team' });
+  if (!isIngameMember(s)) return res.status(403).json({ error: 'Nur für Moderatoren+' });
   const name = String(req.body?.name ?? '').trim().slice(0, 40);
   const price = Math.max(0, Math.round(Number(req.body?.price) || 0));
   const cooldownMin = Math.max(0, Math.round(Number(req.body?.cooldownMin) || 0));
@@ -1459,7 +1494,7 @@ app.post('/teleports', express.json(), async (req, res) => {
 app.delete('/teleports/:id', (req, res) => {
   const s = sessionFrom(req);
   if (!s) return res.status(401).json({ error: 'Keine Session' });
-  if (!isTeamMember(s)) return res.status(403).json({ error: 'Nur für das Team' });
+  if (!isIngameMember(s)) return res.status(403).json({ error: 'Nur für Moderatoren+' });
   const tps = readJson(TELEPORTS_FILE, []);
   const next = tps.filter((t) => t.id !== req.params.id);
   if (next.length === tps.length) return res.status(404).json({ error: 'Nicht gefunden' });

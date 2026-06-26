@@ -92,7 +92,8 @@ function updateVersionInfo() {
 let sessionToken = null;
 let calibPairs = [];
 let armedRef = null;
-let isAdmin = false;
+let isAdmin = false;     // Owner/Admin — volle Config
+let isIngame = false;    // Owner/Admin/Moderator — Ingame-Tools (Admin-Panel)
 let zoneEditMode = false;
 let activeZone = null; // 'pvp' | 'pve'
 let pttHeld = false, ptmHeld = false;
@@ -923,13 +924,15 @@ let adminUserMap = new Map();   // Option-Text → { steamId, discordId, name }
 let admSelectedSteamId = null;
 
 function openAdminPanel() {
-  if (!isAdmin) { showToast('Nur für Admins', 'error'); return; }
+  if (!isIngame) { showToast('Nur für Team (Moderator+)', 'error'); return; }
   adminOpen = true;
   el('adminPanel').style.display = 'block';
+  // Admin-only Spalten (Beschenken, Dino-Limits) für Moderatoren ausblenden
+  document.querySelectorAll('#adminPanel .admin-only').forEach((c) => { c.style.display = isAdmin ? '' : 'none'; });
   updateInteractive();
   ensureGiftTypeOptions();
   loadAdminUsers();
-  loadAdminRoles();
+  if (isAdmin) { loadAdminRoles(); loadDinoLimits(); }
   loadTeleports();
   renderAdminTpList();
 }
@@ -940,8 +943,43 @@ function closeAdminPanel() {
 }
 // Hotkey „admin-menu": Panel umschalten (nur Admins)
 function openAdminMenu() {
-  if (!isAdmin) { loadTeleports(); return; }
+  if (!isIngame) { loadTeleports(); return; }
   if (adminOpen) closeAdminPanel(); else openAdminPanel();
+}
+
+// ── Dino-Limits (Admin-Editor + globaler Cache fürs Lexikon) ─────────────────
+let dinoLimits = {};          // {species: max} — für alle (Lexikon)
+let dinoLimitSpecies = [];
+let dinoLimitsLoaded = false;
+async function fetchDinoLimits() {
+  if (!sessionToken) return;
+  try {
+    const r = await fetch(`${config.tokenBase}/dino-limits`, { headers: { Authorization: `Bearer ${sessionToken}` } });
+    if (!r.ok) return;
+    const d = await r.json();
+    dinoLimits = d.limits || {};
+    dinoLimitSpecies = d.species || [];
+    dinoLimitsLoaded = true;
+  } catch {}
+}
+async function loadDinoLimits() {            // Admin-Editor
+  await fetchDinoLimits();
+  const box = el('dinoLimitList'); if (!box) return;
+  box.innerHTML = dinoLimitSpecies.map((sp) =>
+    `<div class="dlimit-row"><span>${escapeHtml(sp)}</span><input type="number" min="0" data-sp="${escapeHtml(sp)}" value="${dinoLimits[sp] || 0}" class="bf-select"></div>`).join('');
+  const btn = el('dinoLimitSave'); if (btn) btn.onclick = () => saveDinoLimits();
+}
+async function saveDinoLimits() {
+  const limits = {};
+  document.querySelectorAll('#dinoLimitList input[data-sp]').forEach((inp) => { const v = parseInt(inp.value, 10); if (v > 0) limits[inp.dataset.sp] = v; });
+  const res = el('dinoLimitResult'); if (res) res.textContent = 'Speichere…';
+  try {
+    const r = await fetch(`${config.tokenBase}/admin/dino-limits`, { method: 'POST', headers: { Authorization: `Bearer ${sessionToken}`, 'Content-Type': 'application/json' }, body: JSON.stringify({ limits }) });
+    const d = await r.json(); if (!r.ok) throw new Error(d.error || 'Fehler');
+    dinoLimits = d.limits || {};
+    if (res) res.textContent = '✅ Gespeichert.';
+    showToast('🦖 Dino-Limits gespeichert', 'success');
+  } catch (e) { if (res) res.textContent = '⚠️ ' + e.message; showToast(e.message, 'error'); }
 }
 
 // Discord-User laden → Such-Datalists füllen + Name→SteamID-Map
@@ -2083,9 +2121,12 @@ function lexOrderedNames() {
 function renderLexikon() {
   const panel = el('lexikon');
   panel.classList.add('lex-wide');
+  if (!dinoLimitsLoaded) fetchDinoLimits().then(() => { if (featureOpen === 'lexikon') renderLexikon(); });
 
   if (lexSel && DINO_LEXIKON[lexSel]) {
     const d = DINO_LEXIKON[lexSel];
+    const lim = dinoLimits[lexSel];
+    const limitHtml = `<div style="font-size:13px;margin-bottom:10px">🦖 <b>Server-Limit:</b> ${lim ? `max. ${lim} gleichzeitig` : '<span style="color:var(--muted)">unbegrenzt</span>'}</div>`;
     const li = (arr, col) => arr.map((s) => `<li style="color:${col}">${escapeHtml(s)}</li>`).join('');
     const ord = lexOrderedNames();
     const idx = ord.indexOf(lexSel);
@@ -2094,6 +2135,7 @@ function renderLexikon() {
     panel.innerHTML = `<h2>📖 ${escapeHtml(lexSel)} <span style="font-size:12px;color:var(--muted);font-weight:400">· ${idx + 1}/${ord.length}</span></h2>
       <img src="assets/dinos/${encodeURIComponent(lexSel)}.png" alt="" onerror="this.style.display='none'" style="display:block;width:100%;max-height:200px;object-fit:contain;border-radius:10px;background:rgba(0,0,0,0.25);margin-bottom:10px">
       <div style="font-size:13px;margin-bottom:10px"><span style="color:${DIET_DOT[d.diet]}">●</span> ${DIET_LABEL[d.diet]} · <b>${escapeHtml(d.role)}</b> · Wachstum: ${escapeHtml(d.growth)}</div>
+      ${limitHtml}
       <div style="display:flex;gap:18px;flex-wrap:wrap">
         <div style="flex:1;min-width:180px"><div style="font-weight:600;color:#22c55e;margin-bottom:4px">Stärken</div><ul style="margin:0 0 0 16px;font-size:13px;line-height:1.6">${li(d.strengths, '#cbd5b0')}</ul></div>
         <div style="flex:1;min-width:180px"><div style="font-weight:600;color:#ef4444;margin-bottom:4px">Schwächen</div><ul style="margin:0 0 0 16px;font-size:13px;line-height:1.6">${li(d.weaknesses, '#e4b8b8')}</ul></div>
@@ -2825,7 +2867,7 @@ function updateDockActive() {
 // Dock als Navigation: Klick wechselt zum Ziel-Fenster (immer nur eins offen);
 // Klick aufs bereits aktive Icon schließt es wieder (zurück zum reinen Dock).
 function navTo(target) {
-  if (target === 'admin' && !isAdmin) { showToast('Nur für Admins', 'error'); return; }
+  if (target === 'admin' && !isIngame) { showToast('Nur für Team (Moderator+)', 'error'); return; }
   const wasActive = activeNav() === target;
   closeAllPanels();
   if (!wasActive) {
@@ -2936,9 +2978,10 @@ async function connectWithSession(session) {
     if (res.status === 401) { window.bf.logout(); return; }
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
     const data = await res.json();
-    isAdmin = !!data.admin;
-    { const ab = el('openAdminBtn'); if (ab) ab.style.display = isAdmin ? 'block' : 'none'; }
-    { const da = el('dockAdmin'); if (da) da.style.display = isAdmin ? 'flex' : 'none'; }
+    isAdmin = !!data.admin;            // volle Config (Beschenken, Dino-Limits, Rollen)
+    isIngame = !!data.ingame || isAdmin; // Ingame-Tools (Moderator+): Admin-Panel sichtbar
+    { const ab = el('openAdminBtn'); if (ab) ab.style.display = isIngame ? 'block' : 'none'; }
+    { const da = el('dockAdmin'); if (da) da.style.display = isIngame ? 'flex' : 'none'; }
     // Tickets/Events/Overlay-Gruppe laden + periodisch (Benachrichtigungen)
     loadMyTickets(); loadMyEvents(); loadOvGroup();
     if (!loadMyTickets._t) loadMyTickets._t = setInterval(loadMyTickets, 20000);
