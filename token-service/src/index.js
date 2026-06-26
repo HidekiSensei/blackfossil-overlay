@@ -987,9 +987,17 @@ app.get('/me/events', async (req, res) => {
     for (const ev of events) {
       let interested = false;
       try { interested = (await eventUserIds(ev.id)).has(s.discordId); } catch {}
-      if (interested) out.push({ id: ev.id, name: ev.name, start: ev.scheduled_start_time, description: (ev.description || '').slice(0, 200), userCount: ev.user_count ?? null });
+      const image = ev.image ? `https://cdn.discordapp.com/guild-events/${ev.id}/${ev.image}.png?size=1024` : null;
+      out.push({
+        id: ev.id, name: ev.name,
+        start: ev.scheduled_start_time, end: ev.scheduled_end_time || null,
+        description: ev.description || '',
+        image, location: (ev.entity_metadata && ev.entity_metadata.location) || null,
+        status: ev.status, userCount: ev.user_count ?? null, interested,
+      });
     }
-    out.sort((a, b) => new Date(a.start || 0) - new Date(b.start || 0));
+    // Interessierte zuerst, dann nach Startzeit
+    out.sort((a, b) => (b.interested - a.interested) || (new Date(a.start || 0) - new Date(b.start || 0)));
     res.json({ events: out });
   } catch (e) { res.status(502).json({ error: e.message }); }
 });

@@ -276,6 +276,16 @@
     #dinoDetail { display: none; position: absolute; inset: 0; background: rgba(8,5,18,0.7); z-index: 40; align-items: center; justify-content: center; }
     #dinoDetail .box { background: var(--panel); border: 1px solid var(--border); border-radius: 16px; padding: 22px; width: clamp(360px, 30vw, 480px); max-height: 86vh; overflow: auto; box-shadow: var(--glow-strong); }
     .mut-chip { display: inline-block; font-size: 11px; padding: 3px 8px; border-radius: 12px; background: rgba(139,92,246,0.18); border: 1px solid var(--border); margin: 2px; }
+    /* Dino-Detailansicht (Garage/Markt) — überarbeitet */
+    #dinoDetail .box.dd-box-wide { width: clamp(440px, 48vw, 680px); }
+    .dd-header { display: flex; gap: 16px; align-items: flex-start; margin-bottom: 16px; }
+    .prevwrap.ddbig { width: 190px; height: 124px; border-radius: 12px; overflow: hidden; flex: none; border: 1px solid var(--border); }
+    .dd-header .pal { display: flex; gap: 0; height: 9px; margin-top: 10px; border-radius: 5px; overflow: hidden; }
+    .dd-header .pal span { flex: 1; }
+    .dd-cols { display: flex; gap: 20px; align-items: flex-start; }
+    /* Garage — überarbeitet */
+    #garage.gr-wide { width: clamp(440px, 56vw, 760px); }
+    .gr-park { display: flex; align-items: center; gap: 14px; padding: 12px 14px; margin: 8px 0 14px; border: 1px solid var(--border); border-radius: 12px; background: rgba(255,255,255,0.03); }
   </style>
 </head>
 <body>

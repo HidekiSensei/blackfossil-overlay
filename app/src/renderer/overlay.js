@@ -1670,6 +1670,12 @@ function renderProfile() {
     row.onmouseleave = () => { row.style.background = 'rgba(255,255,255,0.04)'; };
     row.onclick = () => openTicketChat(row.dataset.channel, row.dataset.ticket, row.dataset.cat);
   });
+  // Events anklickbar → Detail-Modal (Banner, Beschreibung, Ort)
+  panel.querySelectorAll('.profileEventRow').forEach((row) => {
+    row.onmouseenter = () => { row.style.background = 'rgba(139,92,246,0.16)'; };
+    row.onmouseleave = () => { row.style.background = 'rgba(255,255,255,0.04)'; };
+    row.onclick = () => openEventDetail(parseInt(row.dataset.ev));
+  });
 }
 
 // ── Events & Tickets (Player-Info) ───────────────────────────────────────────
@@ -1680,11 +1686,36 @@ function fmtEventTime(iso) {
   try { return new Date(iso).toLocaleString('de-DE', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' }); } catch { return ''; }
 }
 function profileEventsHtml() {
-  if (!myEvents.length) return '<div style="color:var(--muted);font-size:12px">Keine Events, für die du dich interessierst.</div>';
-  return myEvents.map((e) => `<div style="padding:7px 9px;margin-bottom:5px;background:rgba(255,255,255,0.04);border-radius:8px">
-    <div style="font-size:13px;font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${escapeHtml(e.name || '?')}</div>
-    <div style="font-size:11px;color:var(--accent-2)">🗓️ ${fmtEventTime(e.start)}${e.userCount != null ? ` · ${e.userCount} interessiert` : ''}</div>
+  if (!myEvents.length) return '<div style="color:var(--muted);font-size:12px">Aktuell keine geplanten Events.</div>';
+  return myEvents.map((e, i) => `<div class="profileEventRow" data-ev="${i}" style="padding:7px 9px;margin-bottom:5px;background:rgba(255,255,255,0.04);border-radius:8px;cursor:pointer;transition:background .12s">
+    <div style="font-size:13px;font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${e.interested ? '⭐ ' : ''}${escapeHtml(e.name || '?')}</div>
+    <div style="font-size:11px;color:var(--accent-2)">🗓️ ${fmtEventTime(e.start)}${e.userCount != null ? ` · ${e.userCount} interessiert` : ''} · Details 📋</div>
   </div>`).join('');
+}
+// Event-Detail-Modal (Banner, Beschreibung, Ort, Zeit) — nutzt das Ticket-Modal-Muster
+function openEventDetail(idx) {
+  const e = myEvents[idx]; if (!e) return;
+  const modal = ticketChatModal();   // gleiches Modal-Element wiederverwenden
+  modal.style.display = 'flex';
+  const when = `${fmtEventTime(e.start)}${e.end ? ' – ' + fmtEventTime(e.end) : ''}`;
+  modal.innerHTML = `
+    <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:12px">
+      <div style="font-weight:700">📅 Event</div>
+      <button id="ticketChatClose" class="secondary" style="flex:none;padding:4px 11px;min-width:0">✕</button>
+    </div>
+    <div style="flex:1;overflow:auto;padding-right:4px">
+      ${e.image ? `<img src="${e.image}" alt="" onerror="this.style.display='none'" style="width:100%;max-height:200px;object-fit:cover;border-radius:12px;margin-bottom:12px">` : ''}
+      <div style="font-size:17px;font-weight:700;margin-bottom:6px">${e.interested ? '⭐ ' : ''}${escapeHtml(e.name || '?')}</div>
+      <div style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:10px">
+        <span class="di-mchip">🗓️ ${when}</span>
+        ${e.location ? `<span class="di-mchip">📍 ${escapeHtml(e.location)}</span>` : ''}
+        ${e.userCount != null ? `<span class="di-mchip">👥 ${e.userCount} interessiert</span>` : ''}
+        ${e.interested ? '<span class="di-mchip" style="color:#fcd34d">⭐ Du bist dabei</span>' : ''}
+      </div>
+      ${e.description ? `<div style="font-size:13px;line-height:1.5;white-space:pre-wrap;color:#ddd">${escapeHtml(e.description)}</div>` : '<div style="color:var(--muted);font-size:13px">Keine Beschreibung.</div>'}
+    </div>
+    <div style="margin-top:10px;font-size:11px;color:var(--muted)">Interesse bekundest du im Discord (Event-Beitrag).</div>`;
+  el('ticketChatClose').onclick = closeTicketChat;
 }
 function profileTicketsHtml() {
   if (!myTickets.length) return '<div style="color:var(--muted);font-size:12px">Keine offenen Tickets.</div>';
@@ -2088,7 +2119,6 @@ function renderDinoInfo() {
       <div style="flex:1;min-width:0">
         <div class="di-head"><span class="di-dino" id="di-dino">Dino</span><span class="di-sub" id="di-grow"></span></div>
         <div class="di-sub" id="di-name"></div>
-        <div class="di-badges" id="di-badges"></div>
         <div class="di-meta" id="di-meta"></div>
         <div style="margin-top:10px">
           <div class="stat-top"><span>🌱 Wachstum</span><span class="val" id="di-grow-v">—</span></div>
@@ -2196,7 +2226,24 @@ function showDinoDetail(card, ctx) {
   let action = '';
   if (ctx.mode === 'garage') action = `<button id="ddUnpark" style="width:100%;margin-top:14px">⬆️ Ausparken</button>`;
   else if (ctx.mode === 'market') action = ctx.mine ? `<div class="price-tag" style="margin-top:14px">Dein Angebot · ${(ctx.price || 0).toLocaleString('de-DE')} Pkt.</div>` : `<button id="ddBuy" style="width:100%;margin-top:14px">🦖 Kaufen — ${(ctx.price || 0).toLocaleString('de-DE')} Pkt.</button>`;
-  box.innerHTML = `<div style="display:flex;gap:14px;align-items:center;margin-bottom:14px">${dinoPreview(card, 'dd')}<div><div style="font-size:18px;font-weight:700">${card.dino}${card.isElder ? ' 👑' : ''}</div><div style="font-size:12px;color:var(--muted)">${card.gender || ''} · ${Math.round((card.grow || 0) * 100)}% Wachstum${card.isPrime ? ' · ⭐ Prime' : ''}</div></div></div><div class="sec-title">Vitals</div>${vitalsHTML(card)}<div class="sec-title" style="margin-top:12px">Mutationen</div><div style="margin-top:6px">${mutHTML(card.mutations)}</div>${action}<button class="secondary" id="ddClose" style="width:100%;margin-top:8px">Schließen</button>`;
+  box.classList.add('dd-box-wide');
+  const badges = [card.isElder ? '👑 Elder' : '', card.isPrime ? '⭐ Prime' : '', card.gender || '', card.isBleeding ? '🩸 Blutet' : '']
+    .filter(Boolean).map((b) => `<span class="di-mchip">${b}</span>`).join('');
+  box.innerHTML = `
+    <div class="dd-header">
+      <div class="prevwrap ddbig">${dinoPreviewSVG(card)}<img class="photo" src="${dinoImgSrc(card.dino)}" alt="" onerror="this.remove()"></div>
+      <div style="flex:1;min-width:0">
+        <div style="font-size:19px;font-weight:800;overflow:hidden;text-overflow:ellipsis">${escapeHtml(card.dino || '?')}</div>
+        <div style="font-size:12px;color:var(--muted);margin:3px 0 9px">${Math.round((card.grow || 0) * 100)}% Wachstum</div>
+        <div style="display:flex;gap:5px;flex-wrap:wrap">${badges}</div>
+        ${paletteHTML(card.colors)}
+      </div>
+    </div>
+    <div class="dd-cols">
+      <div style="flex:1;min-width:0"><div class="sec-title">📊 Vitals</div>${vitalsHTML(card)}</div>
+      <div style="flex:1;min-width:0"><div class="sec-title">🧬 Mutationen</div><div style="margin-top:6px">${mutHTML(card.mutations)}</div></div>
+    </div>
+    <div style="margin-top:16px;display:flex;flex-direction:column;gap:8px">${action}<button class="secondary" id="ddClose">Schließen</button></div>`;
   el('dinoDetail').style.display = 'flex';
   box.querySelector('#ddClose').onclick = closeDinoDetail;
   const u = box.querySelector('#ddUnpark'); if (u) u.onclick = () => { closeDinoDetail(); unparkById(card.id); };
@@ -2216,12 +2263,17 @@ const buyOfferId = (id) => apiAction('/market/buy', { offerId: id }, '🦖 {dino
 
 // ── Garage (Karten-Grid) ─────────────────────────────────────────────────────
 async function renderGarage() {
+  el('garage').classList.add('gr-wide');
   el('garage').innerHTML = `<h2>🚗 Garage <span id="garageCount" style="font-size:13px;color:var(--muted);font-weight:400"></span></h2>
-    <div id="garageCd" style="font-size:12px;color:#f59e0b;margin-bottom:6px;display:none"></div>
-    <button id="parkBtn" style="width:100%;margin:6px 0 14px">⬇️ Aktuellen Dino einparken</button>
-    <div id="garageGrid" class="dino-grid"></div>
-    <button class="closeFeature secondary" style="margin-top:8px">Schließen (F8)</button>`;
-  el('garage').querySelector('.closeFeature').onclick = () => closeAllFeatures();
+    <div class="gr-park">
+      <div style="flex:1;min-width:0">
+        <div style="font-weight:600;font-size:13px">Aktuellen Dino einparken</div>
+        <div style="font-size:11px;color:var(--muted)">Speichert deinen Dino als Token-Slot. Klick auf einen Dino unten für Details.</div>
+        <div id="garageCd" style="font-size:12px;color:#f59e0b;margin-top:5px;display:none"></div>
+      </div>
+      <button id="parkBtn" style="flex:none;width:auto;padding:9px 16px">⬇️ Einparken</button>
+    </div>
+    <div id="garageGrid" class="dino-grid"></div>`;
   el('parkBtn').onclick = () => apiAction('/garage/park', {}, '🚗 {dino} eingeparkt', loadGarage);
   await loadGarage();
 }
@@ -2542,7 +2594,6 @@ async function updateDinoInfo() {
     el('di-dino').textContent = 'Nicht im Spiel';
     el('di-grow').textContent = '';
     el('di-name').textContent = 'Verbinde dich mit dem Server, um deine Stats zu sehen.';
-    el('di-badges').innerHTML = '';
     { const im = el('di-img'); if (im) im.style.visibility = 'hidden'; const mt = el('di-meta'); if (mt) mt.innerHTML = ''; }
     el('di-elder').innerHTML = '<span style="color:var(--muted);font-size:12px">—</span>';
     Object.keys(VITAL_TOKEN).forEach((k) => { const c = el(`di-tok-${k}`); if (c) c.innerHTML = ''; });
@@ -2558,20 +2609,12 @@ async function updateDinoInfo() {
   el('di-name').textContent = `${d.gender || ''} · ${d.name || ''}`;
   { const im = el('di-img'); if (im) { const src = dinoImgSrc(d.dino); if (im.dataset.src !== src) { im.dataset.src = src; im.src = src; } im.style.visibility = 'visible'; } }
   { const mt = el('di-meta'); if (mt) mt.innerHTML =
-      `<span class="di-mchip">⏱️ ${fmtPlaytime(d.playtime)}</span>`
-      + `<span class="di-mchip">💰 ${(d.points || 0).toLocaleString('de-DE')} Pkt.</span>`
-      + (d.tier ? `<span class="di-mchip tier-${d.tier}">${escapeHtml(d.tier)}</span>` : ''); }
+      `<span class="di-mchip tier-${d.tier || 'Fossil'}">🏅 Rang: ${escapeHtml(d.tier || 'Fossil')}</span>`
+      + `<span class="di-mchip">⏱️ ${fmtPlaytime(d.playtime)} gespielt</span>`
+      + `<span class="di-mchip">💰 ${(d.points || 0).toLocaleString('de-DE')} Punkte</span>`; }
   const gp = Math.round((d.grow || 0) * 100);
   el('di-grow').textContent = `Wachstum ${gp}%`;
   { const gf = el('di-grow-f'); if (gf) gf.style.width = gp + '%'; const gv = el('di-grow-v'); if (gv) gv.textContent = gp + '%'; }
-
-  // Elder-Checker + Status-Badges
-  const stage = d.isElder ? 'Elder' : d.isHatchling ? 'Hatchling' : 'Adult';
-  el('di-badges').innerHTML =
-    `<span class="di-badge ${d.isElder ? 'elder elder-glow' : 'off'}">${d.isElder ? '👑 ELDER' : 'Kein Elder'}${d.isElder && d.elderStacks ? ' · ' + d.elderStacks + ' Stacks' : ''}</span>` +
-    `<span class="di-badge ${d.isPrime ? 'on' : 'off'}">${d.isPrime ? '⭐ Prime' : 'Kein Prime'}</span>` +
-    `<span class="di-badge off">${stage}</span>` +
-    (d.isBleeding ? `<span class="di-badge" style="background:rgba(220,38,38,0.2);border-color:#dc2626;color:#fca5a5">🩸 Blutet</span>` : '');
 
   DI_STATS.forEach((s) => {
     const pct = Math.max(0, Math.min(100, Math.round((d[s.key] ?? 0) * 100)));
