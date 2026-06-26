@@ -2865,10 +2865,12 @@ function setDockVisible(visible) {
 function updateInteractive() {
   updateDockActive(); // Dock-Highlight immer am aktuellen Stand halten
   const anyPanel = settingsOpen || mapOpen || adminOpen || !!featureOpen;
-  // Dock IMMER einblenden, sobald ein Panel offen ist (auch per Hotkey geöffnet) — oder im „^"-Modus.
-  setDockVisible(overlayMode || anyPanel);
-  // Maus durchlassen nur wenn nichts offen ist
-  window.bf.setInteractive(overlayMode || anyPanel);
+  // Dock IMMER einblenden, sobald ein Panel offen ist (auch per Hotkey geöffnet), im „^"-Modus oder im Edit-Mode.
+  setDockVisible(overlayMode || anyPanel || editMode);
+  // Maus durchlassen nur wenn nichts offen ist (im Edit-Mode immer klickbar)
+  window.bf.setInteractive(overlayMode || anyPanel || editMode);
+  // Frisch geöffnete Panels im Edit-Mode sofort bearbeitbar machen (Resize-Griff)
+  refreshEditAffordances();
 }
 
 // Einheitliches Schließen (Dock-Button): alle Panels zu, Overlay-Modus aus,
@@ -3227,9 +3229,6 @@ const MOVABLE = [
   { id: 'lexikon',     label: 'Dino-Lexikon' },
 ];
 let editMode = false;
-// Diese großen, mittig gestapelten Panels werden im Edit-Mode versetzt (cascade),
-// damit sie sich nicht überlappen und einzeln greifbar sind.
-const CASCADE_PANELS = ['settings', 'dinoInfo', 'skinEditor', 'garage', 'market', 'group', 'profile', 'lexikon'];
 function loadPositions() { try { return JSON.parse(localStorage.getItem('bf-layout')) || {}; } catch { return {}; } }
 function savePositions(p) { localStorage.setItem('bf-layout', JSON.stringify(p)); }
 function applySavedPositions() {
@@ -3239,6 +3238,7 @@ function applySavedPositions() {
     if (pos.left) { e.style.left = pos.left; e.style.top = pos.top; e.style.right = 'auto'; e.style.bottom = 'auto'; e.style.transform = 'none'; }
     if (pos.width) e.style.width = pos.width;
     if (pos.height) { e.style.height = pos.height; e.style.maxHeight = 'none'; }
+    if (pos.miniSize) e.style.setProperty('--mini-size', pos.miniSize);   // Minimap-Größe
   }
 }
 function resetPositions() {
@@ -3247,36 +3247,43 @@ function resetPositions() {
     const e = el(m.id); if (!e) continue;
     e.style.left = ''; e.style.top = ''; e.style.right = ''; e.style.bottom = ''; e.style.transform = '';
     e.style.width = ''; e.style.height = ''; e.style.maxHeight = '';
+    e.style.removeProperty('--mini-size');
   }
   showToast('Layout zurückgesetzt', 'success');
 }
 function setEditMode(on) {
   editMode = on;
   document.body.classList.toggle('bf-edit', on);
-  const saved = loadPositions();
-  let cascade = 0;
-  for (const m of MOVABLE) {
-    const e = el(m.id); if (!e) continue;
-    e.classList.toggle('bf-movable', on);
-    if (on) {
-      e.dataset.editLabel = m.label;
-      if (getComputedStyle(e).display === 'none') { e.dataset.bfHidden = '1'; e.style.display = m.id === 'hud' ? 'flex' : 'block'; }
-      // Große gestapelte Panels ohne gespeicherte Position versetzt anordnen → einzeln greifbar
-      if (CASCADE_PANELS.includes(m.id) && !(saved[m.id] && saved[m.id].left)) {
-        e.style.left = (40 + cascade * 46) + 'px';
-        e.style.top = (54 + cascade * 40) + 'px';
-        e.style.right = 'auto'; e.style.bottom = 'auto'; e.style.transform = 'none';
-        cascade++;
-      }
-      if (m.id !== 'hud') addResizeHandle(e, m.id);   // HUD nicht resizebar (Pille)
-    } else {
+  if (!on) {
+    // Edit-Mode aus → alle Bearbeitungs-Griffe entfernen
+    for (const m of MOVABLE) {
+      const e = el(m.id); if (!e) continue;
+      e.classList.remove('bf-movable');
       removeResizeHandle(e);
-      if (e.dataset.bfHidden) { e.style.display = 'none'; delete e.dataset.bfHidden; }
-      // temporäre Cascade-Position wieder lösen, wenn nicht gespeichert → zurück zur Mitte
-      if (CASCADE_PANELS.includes(m.id) && !(saved[m.id] && saved[m.id].left)) { e.style.left = ''; e.style.top = ''; e.style.right = ''; e.style.bottom = ''; e.style.transform = ''; }
     }
   }
-  window.bf.setInteractive(on || settingsOpen || mapOpen || !!featureOpen);
+  // Beim Einschalten KEINE Panels zwangsöffnen. Nur das, was gerade sichtbar ist
+  // (HUD + Minimap, und später jedes geöffnete Panel), wird bearbeitbar.
+  refreshEditAffordances();
+  updateInteractive();   // Dock einblenden + Overlay klickbar machen
+}
+// Macht alle aktuell SICHTBAREN verschiebbaren Elemente bearbeitbar (Outline + Resize-Griff)
+// und entfernt die Griffe von allem, was geschlossen ist. Wird bei jedem Panel-Öffnen/-Schließen
+// aufgerufen, damit ein NEU geöffnetes Panel sofort anpassbar ist (fixt den Resize-Bug).
+function refreshEditAffordances() {
+  if (!editMode) return;
+  for (const m of MOVABLE) {
+    const e = el(m.id); if (!e) continue;
+    const visible = getComputedStyle(e).display !== 'none';
+    if (visible) {
+      e.classList.add('bf-movable');
+      e.dataset.editLabel = m.label;
+      if (m.id !== 'hud') addResizeHandle(e, m.id);   // HUD (Pille) nicht resizebar
+    } else {
+      e.classList.remove('bf-movable');
+      removeResizeHandle(e);
+    }
+  }
 }
 function makeDraggable(elm, id) {
   let dragging = false, ox = 0, oy = 0;
@@ -3307,13 +3314,32 @@ function makeDraggable(elm, id) {
 function addResizeHandle(elm, id) {
   if (elm.querySelector('.bf-resize')) return;
   const h = document.createElement('div'); h.className = 'bf-resize';
-  let rz = false, sx = 0, sy = 0, sw = 0, sh = 0;
-  const mv = (ev) => { if (!rz) return; elm.style.width = Math.max(220, sw + (ev.clientX - sx)) + 'px'; elm.style.height = Math.max(140, sh + (ev.clientY - sy)) + 'px'; elm.style.maxHeight = 'none'; };
-  const up = () => { if (!rz) return; rz = false; window.removeEventListener('mousemove', mv); window.removeEventListener('mouseup', up); const p = loadPositions(); p[id] = { ...(p[id] || {}), width: elm.style.width, height: elm.style.height }; savePositions(p); };
+  const isMini = id === 'minimapWrap';   // Minimap: runder Canvas → quadratisch über --mini-size skalieren
+  let rz = false, sx = 0, sy = 0, sw = 0, sh = 0, ss = 0;
+  const mv = (ev) => {
+    if (!rz) return;
+    if (isMini) {
+      const d = Math.max(ev.clientX - sx, ev.clientY - sy);          // diagonal, bleibt quadratisch
+      elm.style.setProperty('--mini-size', Math.max(140, Math.min(640, ss + d)) + 'px');
+    } else {
+      elm.style.width = Math.max(220, sw + (ev.clientX - sx)) + 'px';
+      elm.style.height = Math.max(140, sh + (ev.clientY - sy)) + 'px';
+      elm.style.maxHeight = 'none';
+    }
+  };
+  const up = () => {
+    if (!rz) return; rz = false;
+    window.removeEventListener('mousemove', mv); window.removeEventListener('mouseup', up);
+    const p = loadPositions();
+    if (isMini) p[id] = { ...(p[id] || {}), miniSize: elm.style.getPropertyValue('--mini-size') };
+    else p[id] = { ...(p[id] || {}), width: elm.style.width, height: elm.style.height };
+    savePositions(p);
+  };
   h.addEventListener('mousedown', (e) => {
     if (!editMode) return;
     e.preventDefault(); e.stopPropagation();
     rz = true; const r = elm.getBoundingClientRect(); sx = e.clientX; sy = e.clientY; sw = r.width; sh = r.height;
+    ss = parseInt(getComputedStyle(elm).getPropertyValue('--mini-size')) || el('minimap')?.getBoundingClientRect().width || r.width;
     window.addEventListener('mousemove', mv); window.addEventListener('mouseup', up);
   });
   elm.appendChild(h);
@@ -3323,7 +3349,7 @@ function setupEditMode() {
   for (const m of MOVABLE) { const e = el(m.id); if (e) makeDraggable(e, m.id); }
   applySavedPositions();
   el('editModeBtn').onclick = () => { setEditMode(true); toggleSettings(false); };
-  el('editDoneBtn').onclick = () => { setEditMode(false); toggleSettings(true); };   // „Fertig" → zurück in die Einstellungen
+  el('editDoneBtn').onclick = () => { toggleSettings(true); setEditMode(false); };   // „Fertig" → zurück in die Einstellungen (Settings zuerst → kein Dock-Flackern)
   el('editResetBtn').onclick = () => resetPositions();
   renderThemePicker();
 }

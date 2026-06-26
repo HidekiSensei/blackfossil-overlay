@@ -7,6 +7,7 @@
     :root {
       --accent:#8b5cf6; --accent-2:#a78bfa; --accent-d:#7c3aed; --accent-rgb:139,92,246; --on:#22c55e; --off:#ef4444; --warn:#f59e0b;
       --panel:rgba(20,13,38,0.82); --border:rgba(139,92,246,0.32); --muted:#b3a9cc; --input-bg:#160d28;
+      --mini-size: clamp(200px, 15vw, 320px);
       --glow: 0 8px 32px rgba(0,0,0,0.45), 0 0 0 1px rgba(139,92,246,0.10), 0 0 24px rgba(139,92,246,0.12);
       --glow-strong: 0 10px 40px rgba(0,0,0,0.5), 0 0 0 1px rgba(139,92,246,0.18), 0 0 36px rgba(139,92,246,0.22);
       --blur: blur(14px) saturate(1.2);
@@ -56,7 +57,7 @@
 
     /* Minimap oben rechts */
     #minimapWrap { position: absolute; top: 20px; right: 20px; }
-    #minimap { width: clamp(200px, 15vw, 320px); height: clamp(200px, 15vw, 320px); border-radius: 50%; border: 2px solid var(--border); background: rgba(15,10,30,0.55); box-shadow: var(--glow), inset 0 0 30px rgba(0,0,0,0.4); }
+    #minimap { width: var(--mini-size); height: var(--mini-size); border-radius: 50%; border: 2px solid var(--border); background: rgba(15,10,30,0.55); box-shadow: var(--glow), inset 0 0 30px rgba(0,0,0,0.4); }
     #micIndicator { margin-top: 10px; display: flex; align-items: center; gap: 9px; justify-content: center;
       background: var(--panel); border: 1px solid var(--border); border-radius: 10px; padding: 8px 12px; font-size: 13px; }
     #micIcon { display: inline-flex; width: 20px; height: 20px; transition: color 0.15s; }
@@ -433,7 +434,7 @@
     #minimap { animation: bfMiniGlow 3s ease-in-out infinite; border-color: rgba(var(--accent-rgb),0.5); }
     @keyframes bfSpinAng { to { --bf-ang: 360deg; } }
     #minimapRing {
-      position: absolute; top: 0; left: 0; width: clamp(200px, 15vw, 320px); height: clamp(200px, 15vw, 320px);
+      position: absolute; top: 0; left: 0; width: var(--mini-size); height: var(--mini-size);
       border-radius: 50%; pointer-events: none; z-index: 1;
       background: conic-gradient(from var(--bf-ang),
         transparent 0deg, rgba(var(--accent-rgb),0.85) 55deg, transparent 110deg,
