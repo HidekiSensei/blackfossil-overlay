@@ -122,6 +122,46 @@ function setMicState(state, text) {
   const hv = document.getElementById('hudVoice'); if (hv) hv.style.background = dotColor[state] || '#666';
 }
 
+// ── Voice-Verbindungs-Indikator (Qualität + Latenz + Relay-Warnung) ──────────
+let connQuality = 'unknown';
+let connRtt = null;
+let connRelay = false;
+let connStatsTimer = null;
+function setConnQuality(q) { connQuality = String(q || 'unknown').toLowerCase(); renderConnInd(); }
+function renderConnInd() {
+  const wrap = el('connInd'); if (!wrap) return;
+  if (!voiceConnected) { wrap.style.display = 'none'; return; }
+  wrap.style.display = 'flex';
+  const map = { excellent: ['#22c55e', 'Gut'], good: ['#22c55e', 'Gut'], poor: ['#f59e0b', 'Schwach'], lost: ['#ef4444', 'Schlecht'], unknown: ['#888', '…'] };
+  const [color, label] = map[connQuality] || map.unknown;
+  const dot = el('connDot'); if (dot) dot.style.background = color;
+  let txt = `Verbindung: ${label}`;
+  if (connRtt != null) txt += ` · ${connRtt} ms`;
+  if (connRelay) txt += ' · ⚠️ Relay';
+  const t = el('connText'); if (t) { t.textContent = txt; t.style.color = connRelay ? '#fca5a5' : '#ddd'; }
+}
+function startConnStats() { stopConnStats(); pollConnStats(); connStatsTimer = setInterval(pollConnStats, 3000); }
+function stopConnStats() { if (connStatsTimer) clearInterval(connStatsTimer); connStatsTimer = null; connRtt = null; connRelay = false; }
+async function pollConnStats() {
+  if (!room) return;
+  try {
+    const pub = room.localParticipant.getTrackPublication(Track.Source.Microphone);
+    const sender = pub && pub.track && pub.track.sender;
+    if (sender && sender.getStats) {
+      const stats = await sender.getStats();
+      let rtt = null, localId = null; const locals = {};
+      stats.forEach((s) => {
+        if (s.type === 'candidate-pair' && (s.state === 'succeeded' || s.nominated) && typeof s.currentRoundTripTime === 'number') { rtt = s.currentRoundTripTime; localId = s.localCandidateId; }
+        if (s.type === 'local-candidate') locals[s.id] = s;
+      });
+      if (rtt != null) connRtt = Math.round(rtt * 1000);
+      const lc = localId && locals[localId];
+      connRelay = !!(lc && (lc.candidateType === 'relay' || (lc.protocol && String(lc.protocol).toLowerCase() === 'tcp')));
+    }
+  } catch {}
+  renderConnInd();
+}
+
 // ── Toast-System ─────────────────────────────────────────────────────────────
 function showToast(msg, type = '') {
   const t = document.createElement('div');
@@ -1999,8 +2039,9 @@ async function connect({ token, url }) {
   //   pausierte Subscriptions → Cutouts).
   room = new Room({ adaptiveStream: false, dynacast: false, webAudioMix: true });
   room
-    .on(RoomEvent.Connected, () => { voiceConnected = true; refreshMicState(); el('connBtn').textContent = 'Trennen'; broadcastRange(); updateVoiceWarn(); })
-    .on(RoomEvent.Disconnected, () => { voiceConnected = false; el('connBtn').textContent = 'Verbinden'; setMicState('disconnected'); updateVoiceWarn(); })
+    .on(RoomEvent.Connected, () => { voiceConnected = true; refreshMicState(); el('connBtn').textContent = 'Trennen'; broadcastRange(); updateVoiceWarn(); setConnQuality(room.localParticipant.connectionQuality); startConnStats(); })
+    .on(RoomEvent.Disconnected, () => { voiceConnected = false; el('connBtn').textContent = 'Verbinden'; setMicState('disconnected'); updateVoiceWarn(); stopConnStats(); renderConnInd(); })
+    .on(RoomEvent.ConnectionQualityChanged, (q, p) => { if (room && p === room.localParticipant) setConnQuality(q); })
     .on(RoomEvent.ParticipantConnected, () => { broadcastRange(); if (settingsOpen) renderVoiceUsers(); })  // Neuer Teilnehmer lernt meine Reichweite
     .on(RoomEvent.ParticipantDisconnected, () => { if (settingsOpen) renderVoiceUsers(); })
     .on(RoomEvent.DataReceived, (payload, participant) => {
