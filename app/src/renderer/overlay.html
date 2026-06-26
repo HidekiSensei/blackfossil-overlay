@@ -444,6 +444,18 @@
       animation: bfSpinAng 4s linear infinite; filter: drop-shadow(0 0 6px rgba(var(--accent-rgb),0.9));
     }
 
+    /* ── Gezackte Blitz-Rahmen rund um Panels & Minimap (SVG-Displacement) ──
+       Liegen als body-Elemente ÜBER dem jeweiligen Panel (umgehen overflow:auto-Clip).
+       Position/Größe per JS (syncLightningFrames). Mitte transparent → nur Rand-Linie. */
+    .bf-bolt-frame {
+      position: fixed; display: none; pointer-events: none; z-index: 70; border-radius: 18px;
+      border: 1.6px solid rgba(var(--accent-rgb),0.85);
+      filter: url(#bf-lightning) drop-shadow(0 0 5px rgba(var(--accent-rgb),0.85));
+      opacity: .6; animation: bfFrameFlick 2.6s steps(1,end) infinite;
+    }
+    .bf-bolt-frame.round { border-radius: 50%; }
+    @keyframes bfFrameFlick { 0%,100% { opacity: .42; } 18% { opacity: .72; } 37% { opacity: .48; } 55% { opacity: .78; } 78% { opacity: .52; } }
+
     /* Komfort/Performance: Bewegung global abschaltbar */
     @media (prefers-reduced-motion: reduce) {
       *, *::before, *::after { animation-duration: .01ms !important; animation-iteration-count: 1 !important; }
@@ -452,6 +464,19 @@
   </style>
 </head>
 <body>
+  <!-- Globaler Blitz-Filter: verzerrt Rahmen-Linien zu gezackten, flackernden Blitzen (wie im Logo) -->
+  <svg width="0" height="0" aria-hidden="true" style="position:absolute;pointer-events:none">
+    <defs>
+      <filter id="bf-lightning" x="-35%" y="-35%" width="170%" height="170%">
+        <feTurbulence type="fractalNoise" baseFrequency="0.022" numOctaves="2" seed="2" result="bfNoise">
+          <animate attributeName="seed" values="1;9;3;12;1" dur="2.6s" repeatCount="indefinite"/>
+          <animate attributeName="baseFrequency" values="0.018;0.032;0.018" dur="5s" repeatCount="indefinite"/>
+        </feTurbulence>
+        <feDisplacementMap in="SourceGraphic" in2="bfNoise" scale="11" xChannelSelector="R" yChannelSelector="G"/>
+      </filter>
+    </defs>
+  </svg>
+
   <!-- Edit-Mode-Banner -->
   <div id="editBanner">🎨 Edit-Mode aktiv — Panels ziehen, Position wird gespeichert <button id="editResetBtn">Reset</button><button id="editDoneBtn">Fertig</button></div>
 

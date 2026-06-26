@@ -2871,7 +2871,49 @@ function updateInteractive() {
   window.bf.setInteractive(overlayMode || anyPanel || editMode);
   // Frisch geöffnete Panels im Edit-Mode sofort bearbeitbar machen (Resize-Griff)
   refreshEditAffordances();
+  // Blitz-Rahmen an sichtbare Panels/Minimap anpassen (jetzt + nach Öffnen-Animation nachziehen)
+  bfScheduleFrameSync();
 }
+let bfFrameSyncT = [];
+function bfScheduleFrameSync() {
+  syncLightningFrames();
+  bfFrameSyncT.forEach(clearTimeout);
+  bfFrameSyncT = [setTimeout(syncLightningFrames, 180), setTimeout(syncLightningFrames, 360)];
+}
+
+// ── Gezackte Blitz-Rahmen rund um Panels & Minimap ──────────────────────────
+// Pro sichtbarem Ziel ein body-Element (#overflow-sicher) das exakt über dem Rand liegt;
+// der SVG-Filter #bf-lightning verzerrt die Rahmenlinie zu flackernden Blitzen.
+const bfFrames = new Map();
+function bfLightningTargets() {
+  const out = [];
+  document.querySelectorAll('.feature-panel').forEach((e) => out.push({ el: e, round: false }));
+  for (const id of ['settings', 'adminPanel', 'bigMap']) { const e = el(id); if (e) out.push({ el: e, round: false }); }
+  const ddBox = document.querySelector('#dinoDetail .box'); if (ddBox) out.push({ el: ddBox, round: false });
+  const mm = el('minimap'); if (mm) out.push({ el: mm, round: true });
+  return out;
+}
+function syncLightningFrames() {
+  for (const t of bfLightningTargets()) {
+    let f = bfFrames.get(t.el);
+    const shown = getComputedStyle(t.el).display !== 'none';
+    const r = shown ? t.el.getBoundingClientRect() : null;
+    if (!shown || !r || r.width < 6 || r.height < 6) { if (f) f.style.display = 'none'; continue; }
+    if (!f) {
+      f = document.createElement('div');
+      f.className = 'bf-bolt-frame' + (t.round ? ' round' : '');
+      document.body.appendChild(f);
+      bfFrames.set(t.el, f);
+    }
+    const pad = t.round ? 4 : 3;
+    f.style.display = 'block';
+    f.style.left = (r.left - pad) + 'px';
+    f.style.top = (r.top - pad) + 'px';
+    f.style.width = (r.width + pad * 2) + 'px';
+    f.style.height = (r.height + pad * 2) + 'px';
+  }
+}
+window.addEventListener('resize', syncLightningFrames);
 
 // Einheitliches Schließen (Dock-Button): alle Panels zu, Overlay-Modus aus,
 // Fokus zurück ins Spiel (setInteractive(false) im Main-Prozess).
@@ -3301,6 +3343,7 @@ function makeDraggable(elm, id) {
     const y = Math.max(0, Math.min(window.innerHeight - 40, e.clientY - oy));
     elm.style.left = x + 'px'; elm.style.top = y + 'px';
     elm.style.right = 'auto'; elm.style.bottom = 'auto'; elm.style.transform = 'none';
+    syncLightningFrames();   // Blitz-Rahmen mitziehen
   });
   window.addEventListener('mouseup', () => {
     if (!dragging) return;
@@ -3326,6 +3369,7 @@ function addResizeHandle(elm, id) {
       elm.style.height = Math.max(140, sh + (ev.clientY - sy)) + 'px';
       elm.style.maxHeight = 'none';
     }
+    syncLightningFrames();   // Blitz-Rahmen mitskalieren
   };
   const up = () => {
     if (!rz) return; rz = false;
@@ -3352,6 +3396,7 @@ function setupEditMode() {
   el('editDoneBtn').onclick = () => { toggleSettings(true); setEditMode(false); };   // „Fertig" → zurück in die Einstellungen (Settings zuerst → kein Dock-Flackern)
   el('editResetBtn').onclick = () => resetPositions();
   renderThemePicker();
+  syncLightningFrames();   // Minimap-Blitzrahmen direkt anzeigen
 }
 
 init().then(() => setupEditMode());
