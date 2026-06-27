@@ -1765,9 +1765,10 @@ function renderProfile() {
     ? (qa.status === 'active' ? '🟢 Läuft' : qa.status === 'rolled' ? '⏳ Bereit zum Start' : qa.status === 'failed' ? '❌ Fehlgeschlagen' : '—')
     : 'Keine aktive Quest';
   const pfStat = (ico, label, val, wide) => `<div class="pf-stat${wide ? ' pf-stat-wide' : ''}"><div class="pf-stat-l">${ico} ${label}</div><div class="pf-stat-v">${val}</div></div>`;
-  const avatar = d.avatarUrl
+  const avInner = d.avatarUrl
     ? `<img class="pf-av" src="${d.avatarUrl}" alt="">`
     : `<span class="pf-av">🦖</span>`;
+  const avatar = `<div class="pf-av-wrap">${avInner}<span class="pf-av-bolt"></span></div>`;
   panel.classList.add('pf-wide');   // breit, mit Seiten-Panels (wie Dino-Info/Settings)
   panel.innerHTML = `<h2>🦖 Profil</h2>
     <div class="pf-main">
