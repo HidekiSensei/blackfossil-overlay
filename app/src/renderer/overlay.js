@@ -1638,7 +1638,35 @@ function closeAllFeatures(skipInteractive) {
 
 // ── Gruppen-Ansicht (Mitglieder mit gleicher groupId, Partner + Distanz) ─────
 let ovGroupState = { groupId: null, members: [], invites: [] };
+let groupChat = [];   // In-Memory Gruppen-Chat (ephemer)
 let ovInvitable = [];
+// Chat-Gruppen-Schlüssel: Overlay-Gruppe bevorzugt, sonst In-Game-groupId
+function myChatGroup() { return (ovGroupState && ovGroupState.groupId) || (me && me.groupId) || null; }
+function renderGroupChat() {
+  const box = el('grpChatBox'); if (!box) return;
+  if (!groupChat.length) { box.innerHTML = '<div style="color:var(--muted);text-align:center;margin:auto;font-size:11px">Noch keine Nachrichten.</div>'; return; }
+  box.innerHTML = groupChat.map((m) => `<div style="${m.own ? 'align-self:flex-end;background:linear-gradient(135deg,var(--accent),var(--accent-d));color:#fff' : 'align-self:flex-start;background:rgba(255,255,255,0.07)'};max-width:86%;padding:5px 9px;border-radius:10px;line-height:1.3">${m.own ? '' : `<b style="color:var(--accent-2);font-size:11px">${escapeHtml(m.name || '?')}</b><br>`}${escapeHtml(m.text)}</div>`).join('');
+  box.scrollTop = box.scrollHeight;
+}
+function receiveGroupChat(msg) {
+  const g = myChatGroup();
+  if (!g || msg.gid !== g || !msg.text) return;
+  groupChat.push({ name: msg.name, text: String(msg.text).slice(0, 240), own: false });
+  if (groupChat.length > 60) groupChat.shift();
+  if (featureOpen === 'group') renderGroupChat();
+  else showToast(`💬 ${msg.name || 'Gruppe'}: ${String(msg.text).slice(0, 80)}`);
+}
+function sendGroupChat(text) {
+  text = (text || '').trim(); if (!text) return;
+  const g = myChatGroup();
+  if (!g) { showToast('Du bist in keiner Gruppe.', 'error'); return; }
+  if (!room || !voiceConnected) { showToast('Verbinde dich mit dem Voice-Chat, um zu schreiben.', 'error'); return; }
+  try { room.localParticipant.publishData(new TextEncoder().encode(JSON.stringify({ t: 'chat', gid: g, name: me && me.name, text })), { reliable: true }); }
+  catch { showToast('Senden fehlgeschlagen', 'error'); return; }
+  groupChat.push({ name: me && me.name, text, own: true });
+  if (groupChat.length > 60) groupChat.shift();
+  renderGroupChat();
+}
 let ovInviteOpen = false;
 const ovInviteSeen = new Set();
 
@@ -1692,8 +1720,20 @@ function renderGroup() {
     <button id="ovInviteToggle" style="width:100%;margin:6px 0">${ovInviteOpen ? '▲ Einladen schließen' : '➕ Spieler einladen'}</button>
     ${invitable}
     ${ovGroupState.groupId ? '<button id="ovLeave" class="secondary" style="width:100%;margin-top:6px">Overlay-Gruppe verlassen</button>' : ''}
+    <div class="sec-title" style="margin-top:12px">💬 Gruppen-Chat</div>
+    ${myChatGroup()
+      ? `<div id="grpChatBox" style="height:150px;overflow:auto;background:rgba(0,0,0,0.22);border:1px solid var(--border);border-radius:10px;padding:8px;font-size:12px;display:flex;flex-direction:column;gap:5px"></div>
+         <div style="display:flex;gap:6px;margin-top:6px">
+           <input id="grpChatInput" maxlength="240" placeholder="Nachricht an die Gruppe…" style="flex:1;padding:8px;border-radius:8px;border:1px solid var(--border);background:var(--input-bg);color:#eee;box-sizing:border-box">
+           <button id="grpChatSend" style="width:auto;padding:8px 14px;flex:none">Senden</button>
+         </div>`
+      : '<div style="color:var(--muted);font-size:12px">Tritt einer Gruppe bei (im Spiel oder Overlay-Gruppe oben), um zu chatten.</div>'}
     <button class="closeFeature secondary" style="margin-top:12px">Schließen</button>`;
   panel.querySelector('.closeFeature').onclick = () => closeAllFeatures();
+  renderGroupChat();
+  { const ci = el('grpChatInput'), cs = el('grpChatSend');
+    if (cs && ci) cs.onclick = () => { sendGroupChat(ci.value); ci.value = ''; ci.focus(); };
+    if (ci) ci.onkeydown = (e) => { if (e.key === 'Enter') { e.preventDefault(); sendGroupChat(ci.value); ci.value = ''; } }; }
   const tgl = el('ovInviteToggle'); if (tgl) tgl.onclick = () => { ovInviteOpen = !ovInviteOpen; if (ovInviteOpen) loadOvInvitable(); else renderGroup(); };
   panel.querySelectorAll('[data-acc]').forEach((b) => { b.onclick = () => ovAccept(b.dataset.acc); });
   panel.querySelectorAll('[data-inv]').forEach((b) => { b.onclick = () => ovInvite(b.dataset.inv); });
@@ -3162,6 +3202,7 @@ async function connect({ token, url }) {
       try {
         const msg = JSON.parse(new TextDecoder().decode(payload));
         if (msg.t === 'range' && participant) { remoteRanges[participant.identity] = msg.r; updateProximityVolumes(); }
+        else if (msg.t === 'chat') receiveGroupChat(msg);
       } catch {}
     })
     .on(RoomEvent.TrackSubscribed, (track) => {
