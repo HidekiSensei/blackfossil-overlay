@@ -641,7 +641,7 @@ app.post('/admin/ai/:action', express.json(), async (req, res) => {
 // Spielerliste vom Game-Server — mit kurzem geteiltem Cache (~1s) + In-Flight-Dedup.
 // So kollabieren ALLE gleichzeitigen /positions-, /me- und Chat-Polls auf
 // höchstens ~1 Game-API-Call pro Sekunde, unabhängig von der Nutzerzahl.
-const PLAYERS_TTL = Number(process.env.PLAYERS_CACHE_MS ?? 1000);
+const PLAYERS_TTL = Number(process.env.PLAYERS_CACHE_MS ?? 750);
 let _playersCache = { ts: 0, data: null, inflight: null };
 async function fetchPlayers() {
   const now = Date.now();
