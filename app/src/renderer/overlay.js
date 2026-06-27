@@ -255,14 +255,19 @@ function updateHud(d) {
   checkPrimes(d.primes, d.dino);   // immer aufrufen → Offline/Dino-Wechsel resettet die Basis
   updateHeart(d);                   // permanente Lebensanzeige
 }
-// Herz-Lebensanzeige (Part 3b): Farbe + % nach Health; grau wenn offline
+// Herz-Lebensanzeige (Part 3b): Herz füllt sich von unten nach HP, Farbe nach HP; grau/leer wenn offline
 function updateHeart(d) {
-  const path = document.getElementById('heartPath'); const val = document.getElementById('heartVal'); const wrap = document.getElementById('hudHeart');
-  if (!path || !val || !wrap) return;
-  if (!d || !d.online || typeof d.health !== 'number') { wrap.style.setProperty('--heart-color', '#666'); val.textContent = '—'; return; }
-  const pct = Math.max(0, Math.min(100, Math.round(d.health * 100)));
-  wrap.style.setProperty('--heart-color', pct > 50 ? '#22c55e' : pct > 25 ? '#f59e0b' : '#ef4444');
-  val.textContent = pct + '%';
+  const val = document.getElementById('heartVal'); const wrap = document.getElementById('hudHeart');
+  const e1 = document.getElementById('hpE1'); const f1 = document.getElementById('hpF1'); const f2 = document.getElementById('hpF2');
+  if (!val || !wrap || !e1 || !f1 || !f2) return;
+  const online = d && d.online && typeof d.health === 'number';
+  const pct = online ? Math.max(0, Math.min(100, Math.round(d.health * 100))) : 0;
+  const col = !online ? '#666' : pct > 50 ? '#22c55e' : pct > 25 ? '#f59e0b' : '#ef4444';
+  const fillLine = 1 - pct / 100;                 // 0 = voll (Füllung von unten), 1 = leer
+  e1.setAttribute('offset', fillLine); f1.setAttribute('offset', fillLine);
+  f1.setAttribute('stop-color', col); f2.setAttribute('stop-color', col);
+  wrap.style.setProperty('--heart-color', col);
+  val.textContent = online ? pct + '%' : '—';
 }
 async function pollHud() {
   if (!sessionToken) return;
@@ -1699,6 +1704,9 @@ const ovInviteSeen = new Set();
 
 function renderGroup() {
   const panel = el('group');
+  // Chat-Eingabefeld über das Re-Render retten (Polling baut das Panel sonst neu → Reset)
+  const _ci = el('grpChatInput');
+  const _chat = _ci ? { val: _ci.value, focused: document.activeElement === _ci, s: _ci.selectionStart, e: _ci.selectionEnd } : null;
   const myG = me && me.groupId;
   let members = players.filter((p) => p.isYou || (myG && p.groupId === myG) || p.ovgroup);
   if (!members.length && me) members = [me];
@@ -1760,7 +1768,8 @@ function renderGroup() {
   renderGroupChat();
   { const ci = el('grpChatInput'), cs = el('grpChatSend');
     if (cs && ci) cs.onclick = () => { sendGroupChat(ci.value); ci.value = ''; ci.focus(); };
-    if (ci) ci.onkeydown = (e) => { if (e.key === 'Enter') { e.preventDefault(); sendGroupChat(ci.value); ci.value = ''; } }; }
+    if (ci) ci.onkeydown = (e) => { if (e.key === 'Enter') { e.preventDefault(); sendGroupChat(ci.value); ci.value = ''; } };
+    if (_chat && ci) { ci.value = _chat.val; if (_chat.focused) { ci.focus(); try { ci.setSelectionRange(_chat.s, _chat.e); } catch {} } } }
   const tgl = el('ovInviteToggle'); if (tgl) tgl.onclick = () => { ovInviteOpen = !ovInviteOpen; if (ovInviteOpen) loadOvInvitable(); else renderGroup(); };
   panel.querySelectorAll('[data-acc]').forEach((b) => { b.onclick = () => ovAccept(b.dataset.acc); });
   panel.querySelectorAll('[data-inv]').forEach((b) => { b.onclick = () => ovInvite(b.dataset.inv); });

@@ -477,15 +477,16 @@
     body.bf-noblitz #logoFx { filter: drop-shadow(0 3px 9px rgba(0,0,0,0.55)); }
 
     /* Lebensanzeige (Herz) — permanent sichtbar, skalierbar via --info-scale */
-    #hudHeart { position: fixed; top: 96px; left: 16px; width: 84px; z-index: 55;
+    #hudHeart { position: fixed; top: 96px; left: 16px; width: 88px; z-index: 55;
       display: flex; flex-direction: column; align-items: center;
       transform-origin: top left; transform: scale(var(--info-scale, 1)); --heart-color: #ef4444; }
     #hudHeart svg { width: 100%; height: auto; overflow: visible;
-      filter: drop-shadow(0 2px 6px rgba(0,0,0,0.55)) drop-shadow(0 0 9px var(--heart-color));
+      filter: drop-shadow(0 2px 6px rgba(0,0,0,0.55)) drop-shadow(0 0 10px var(--heart-color));
       animation: heartBeat 1.5s ease-in-out infinite; }
-    #hudHeart #heartPath { fill: var(--heart-color); transition: fill .4s; }
-    #heartVal { margin-top: -7px; font-size: 14px; font-weight: 800; color: #fff; text-shadow: 0 1px 3px #000, 0 0 6px var(--heart-color); }
-    @keyframes heartBeat { 0%,100% { transform: scale(1); } 14% { transform: scale(1.13); } 28% { transform: scale(1); } 42% { transform: scale(1.07); } 56% { transform: scale(1); } }
+    #hudHeart #heartPath { transition: none; }
+    #heartVal { margin-top: 2px; font-size: 19px; font-weight: 900; color: #fff; letter-spacing: .3px;
+      text-shadow: 0 1px 3px #000, 0 0 8px var(--heart-color); font-variant-numeric: tabular-nums; }
+    @keyframes heartBeat { 0%,100% { transform: scale(1); } 14% { transform: scale(1.1); } 28% { transform: scale(1); } 42% { transform: scale(1.05); } 56% { transform: scale(1); } }
     body.bf-noblitz #hudHeart svg { animation: none; }
     @keyframes bfFrameFlick { 0%,100% { opacity: .42; } 18% { opacity: .72; } 37% { opacity: .48; } 55% { opacity: .78; } 78% { opacity: .52; } }
 
@@ -535,10 +536,14 @@
       filter: url(#bf-lightning) drop-shadow(0 0 4px rgba(var(--accent-rgb),0.95));
       opacity: .6; animation: bfFrameFlick 2.6s steps(1,end) infinite; }
     body.bf-noblitz .pf-av-bolt { display: none; }
-    /* Profil-Name: laufender Licht-Schimmer */
-    .pf-nm { font-size: 21px; font-weight: 800; line-height: 1.12;
-      background: linear-gradient(100deg, #fff 0%, var(--accent-2) 30%, #fff 50%, var(--accent-2) 70%, #fff 100%);
-      background-size: 220% auto; animation: bfSheen 3.6s linear infinite; }
+    /* Profil-Name: solide & lesbar (weiß) + dezenter Glow-Puls */
+    .pf-nm { font-size: 22px; font-weight: 800; line-height: 1.14;
+      background: none; -webkit-text-fill-color: #fff; color: #fff; animation: pfNameGlow 2.8s ease-in-out infinite; }
+    @keyframes pfNameGlow {
+      0%,100% { text-shadow: 0 1px 2px rgba(0,0,0,.55), 0 0 4px rgba(var(--accent-rgb),0.25); }
+      50%     { text-shadow: 0 1px 2px rgba(0,0,0,.55), 0 0 14px rgba(var(--accent-rgb),0.85); }
+    }
+    body.bf-noblitz .pf-nm { animation: none; }
 
     /* Blitz-Effekte aus (Settings-Toggle): Blitze/Glühen weg, Funktion bleibt */
     body.bf-noblitz #dockLightning, body.bf-noblitz .bf-bolt-frame,
@@ -576,9 +581,19 @@
   <!-- Logo oben links (transparentes PNG), nur wenn Dock offen -->
   <img id="logoFx" src="assets/logo.png" alt="Black Fossil">
 
-  <!-- Part 3b: Lebensanzeige als Herz — permanent sichtbar, verschiebbar + skalierbar -->
-  <div id="hudHeart" title="Lebensanzeige">
-    <svg viewBox="0 0 32 29.6" aria-hidden="true"><path id="heartPath" d="M23.6,0c-3.4,0-6.3,2.7-7.6,5.6C14.7,2.7,11.8,0,8.4,0C3.8,0,0,3.8,0,8.4c0,9.4,9.5,11.9,16,21.2c6.1-9.3,16-12.1,16-21.2C32,3.8,28.2,0,23.6,0z"/></svg>
+  <!-- Part 3b: Lebensanzeige — Kreis mit Herz, füllt/leert sich nach HP. Permanent, verschiebbar + skalierbar -->
+  <div id="hudHeart" title="Lebensanzeige (HP)">
+    <svg viewBox="0 0 48 48" aria-hidden="true">
+      <defs><linearGradient id="hpGrad" x1="0" y1="0" x2="0" y2="1">
+        <stop id="hpE0" offset="0" stop-color="rgba(255,255,255,0.12)"/>
+        <stop id="hpE1" offset="1" stop-color="rgba(255,255,255,0.12)"/>
+        <stop id="hpF1" offset="1" stop-color="#ef4444"/>
+        <stop id="hpF2" offset="1" stop-color="#ef4444"/>
+      </linearGradient></defs>
+      <circle cx="24" cy="24" r="22" fill="rgba(8,5,18,0.55)" stroke="var(--heart-color)" stroke-width="2.2"/>
+      <path id="heartPath" transform="translate(11.4,12) scale(0.79)" fill="url(#hpGrad)" stroke="rgba(255,255,255,0.4)" stroke-width="0.8"
+            d="M23.6,0c-3.4,0-6.3,2.7-7.6,5.6C14.7,2.7,11.8,0,8.4,0C3.8,0,0,3.8,0,8.4c0,9.4,9.5,11.9,16,21.2c6.1-9.3,16-12.1,16-21.2C32,3.8,28.2,0,23.6,0z"/>
+    </svg>
     <span id="heartVal">—</span>
   </div>
 
