@@ -8,8 +8,8 @@
       --accent:#8b5cf6; --accent-2:#a78bfa; --accent-d:#7c3aed; --accent-rgb:139,92,246; --on:#22c55e; --off:#ef4444; --warn:#f59e0b;
       --panel:rgba(20,13,38,0.82); --border:rgba(139,92,246,0.32); --muted:#b3a9cc; --input-bg:#160d28;
       --mini-size: clamp(200px, 15vw, 320px);
-      --glow: 0 8px 32px rgba(0,0,0,0.45), 0 0 0 1px rgba(139,92,246,0.10), 0 0 24px rgba(139,92,246,0.12);
-      --glow-strong: 0 10px 40px rgba(0,0,0,0.5), 0 0 0 1px rgba(139,92,246,0.18), 0 0 36px rgba(139,92,246,0.22);
+      --glow: 0 8px 32px rgba(0,0,0,0.45), 0 0 0 1px rgba(var(--accent-rgb),0.10), 0 0 24px rgba(var(--accent-rgb),0.12);
+      --glow-strong: 0 10px 40px rgba(0,0,0,0.5), 0 0 0 1px rgba(var(--accent-rgb),0.18), 0 0 36px rgba(var(--accent-rgb),0.22);
       --blur: blur(14px) saturate(1.2);
     }
     * { box-sizing: border-box; margin: 0; padding: 0; }
@@ -86,7 +86,7 @@
     #tpList { width: 224px; flex: none; max-height: 76vh; overflow: auto; }
     #mapGroup { overflow: auto; }
     .map-viewbtn { display: block; width: 100%; text-align: left; padding: 8px 12px; margin: 0; background: var(--panel); border: 1px solid var(--border); color: #eee; border-radius: 8px; font-size: 13px; font-weight: 600; cursor: pointer; }
-    .map-viewbtn:hover { background: rgba(139,92,246,0.18); }
+    .map-viewbtn:hover { background: rgba(var(--accent-rgb),0.18); }
     .map-viewbtn + .map-viewbtn { margin-top: 6px; }
     .hint { margin-top: 12px; color: var(--muted); font-size: 13px; }
 
@@ -99,7 +99,7 @@
     .btnrow { display: flex; gap: 8px; margin-top: 16px; }
     button { background: linear-gradient(135deg, var(--accent), var(--accent-d)); color: #fff; border: 0; border-radius: 8px; padding: 9px 14px;
       font-size: 13px; font-weight: 600; cursor: pointer; flex: 1; transition: transform 0.12s, box-shadow 0.12s, filter 0.12s; }
-    button:hover { transform: translateY(-1px); box-shadow: 0 4px 18px rgba(139,92,246,0.45); filter: brightness(1.08); }
+    button:not(.dock-btn):not(.theme-sw):hover { transform: translateY(-1px); box-shadow: 0 4px 18px rgba(var(--accent-rgb),0.45); filter: brightness(1.08); }
     button:active { transform: translateY(0); }
     button.secondary { background: rgba(255,255,255,0.04); border: 1px solid var(--border); color: var(--muted); }
     button.secondary:hover { box-shadow: 0 0 0 1px var(--accent); color: #eee; filter: none; }
@@ -205,8 +205,8 @@
     .q-types { display: flex; gap: 12px; margin: 6px 0 4px; }
     .q-type { flex: 1; min-width: 0; text-align: center; padding: 14px 10px; border-radius: 12px; border: 1px solid var(--border);
       background: rgba(255,255,255,0.03); cursor: pointer; transition: background .12s, border-color .12s, transform .1s; }
-    .q-type:hover:not(.q-soon) { background: rgba(139,92,246,0.16); border-color: var(--accent); }
-    .q-type.q-active { background: rgba(139,92,246,0.22); border-color: var(--accent); box-shadow: inset 0 0 0 1px var(--accent); }
+    .q-type:hover:not(.q-soon) { background: rgba(var(--accent-rgb),0.16); border-color: var(--accent); }
+    .q-type.q-active { background: rgba(var(--accent-rgb),0.22); border-color: var(--accent); box-shadow: inset 0 0 0 1px var(--accent); }
     .q-type.q-soon { opacity: 0.5; cursor: not-allowed; }
     .q-type .q-ico { font-size: 26px; }
     .q-type .q-name { font-weight: 700; margin-top: 4px; font-size: 14px; }
@@ -227,7 +227,7 @@
     .q-chip { display: inline-flex; align-items: center; gap: 5px; padding: 3px 9px; border-radius: 999px; font-size: 11px; font-weight: 600; margin-right: 6px; }
     .q-chip.ok { background: rgba(34,197,94,0.18); color: #86efac; }
     .q-chip.no { background: rgba(255,255,255,0.06); color: var(--muted); }
-    .q-done-banner { text-align: center; padding: 10px; border-radius: 10px; background: linear-gradient(135deg, rgba(34,197,94,0.22), rgba(139,92,246,0.18)); color: #d9f99d; font-weight: 700; animation: qReveal .5s ease-out forwards; }
+    .q-done-banner { text-align: center; padding: 10px; border-radius: 10px; background: linear-gradient(135deg, rgba(34,197,94,0.22), rgba(var(--accent-rgb),0.18)); color: #d9f99d; font-weight: 700; animation: qReveal .5s ease-out forwards; }
     .di-main { display: flex; gap: 24px; margin-top: 14px; align-items: flex-start; }
     .di-elder-col { width: 280px; flex: none; }
     .di-vitals-col { flex: 1; min-width: 0; }
@@ -240,7 +240,7 @@
     /* ── Edit-Mode (verschiebbare Panels) ────────────────────────────────── */
     body.bf-edit .bf-movable { outline: 2px dashed var(--accent); outline-offset: 4px; cursor: grab; }
     body.bf-edit .bf-movable:hover { outline-color: var(--accent-2); }
-    body.bf-edit .bf-movable.dragging { cursor: grabbing; opacity: .85; outline-style: solid; box-shadow: 0 0 24px rgba(139,92,246,.6); }
+    body.bf-edit .bf-movable.dragging { cursor: grabbing; opacity: .85; outline-style: solid; box-shadow: 0 0 24px rgba(var(--accent-rgb),.6); }
     body.bf-edit .bf-movable .bf-resize { position: absolute; right: 0; bottom: 0; width: 20px; height: 20px; cursor: nwse-resize; z-index: 10001;
       background: linear-gradient(135deg, transparent 45%, var(--accent) 45%, var(--accent) 70%, transparent 70%, transparent 78%, var(--accent) 78%); border-radius: 0 0 14px 0; }
     body.bf-edit .bf-movable::before { content: attr(data-edit-label); position: absolute; top: -22px; left: 50%; transform: translateX(-50%); background: var(--accent); color: #fff; font-size: 11px; font-weight: 700; padding: 2px 9px; border-radius: 6px; pointer-events: none; white-space: nowrap; z-index: 10000; }
@@ -275,7 +275,7 @@
     .dino-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(140px, 1fr)); gap: 12px; margin: 10px 0; }
     .dino-card { background: rgba(255,255,255,0.04); border: 1px solid var(--border); border-radius: 12px; overflow: hidden;
       cursor: pointer; transition: transform 0.12s, border-color 0.12s, box-shadow 0.12s; }
-    .dino-card:hover { transform: translateY(-3px); border-color: var(--accent); box-shadow: 0 8px 24px rgba(139,92,246,0.35); }
+    .dino-card:hover { transform: translateY(-3px); border-color: var(--accent); box-shadow: 0 8px 24px rgba(var(--accent-rgb),0.35); }
     .dino-card .prev { height: 80px; display: block; }
     .prevwrap { position: relative; display: block; }
     .prevwrap .prev { width: 100%; height: 100%; display: block; }
@@ -290,9 +290,10 @@
     .price-tag { background: rgba(251,191,36,0.15); color: #fbbf24; font-weight: 700; font-size: 12px; padding: 4px 8px; border-radius: 6px; text-align: center; }
 
     /* Dino-Detail */
-    #dinoDetail { display: none; position: absolute; inset: 0; background: rgba(8,5,18,0.7); z-index: 40; align-items: center; justify-content: center; }
+    #dinoDetail { display: none; position: absolute; inset: 0; background: transparent; z-index: 40; align-items: center; justify-content: center; pointer-events: none; }
+    #dinoDetail .box { pointer-events: auto; }
     #dinoDetail .box { background: var(--panel); border: 1px solid var(--border); border-radius: 16px; padding: 22px; width: clamp(360px, 30vw, 480px); max-height: 86vh; overflow: auto; box-shadow: var(--glow-strong); }
-    .mut-chip { display: inline-block; font-size: 11px; padding: 3px 8px; border-radius: 12px; background: rgba(139,92,246,0.18); border: 1px solid var(--border); margin: 2px; }
+    .mut-chip { display: inline-block; font-size: 11px; padding: 3px 8px; border-radius: 12px; background: rgba(var(--accent-rgb),0.18); border: 1px solid var(--border); margin: 2px; }
     /* Dino-Detailansicht (Garage/Markt) — überarbeitet */
     #dinoDetail .box.dd-box-wide { width: clamp(440px, 48vw, 680px); }
     .dd-header { display: flex; gap: 16px; align-items: flex-start; margin-bottom: 16px; }
@@ -863,7 +864,7 @@
   <div id="serverBanner">⚠️ Nicht auf dem BlackFossil-Server — verbinde dich im Spiel, um Karte & Proximity zu nutzen.</div>
 
   <!-- Update-Hinweis (oben, während des Betriebs) -->
-  <div id="updateHint" style="display:none;position:fixed;top:10px;left:50%;transform:translateX(-50%);z-index:9999;background:rgba(139,92,246,0.92);color:#fff;padding:8px 16px;border-radius:10px;font-size:13px;font-weight:600;box-shadow:var(--glow);cursor:pointer">⬆️ Update verfügbar</div>
+  <div id="updateHint" style="display:none;position:fixed;top:10px;left:50%;transform:translateX(-50%);z-index:9999;background:rgba(var(--accent-rgb),0.92);color:#fff;padding:8px 16px;border-radius:10px;font-size:13px;font-weight:600;box-shadow:var(--glow);cursor:pointer">⬆️ Update verfügbar</div>
 
   <!-- Penetrante Warnung: auf dem Server, aber NICHT im Voice -->
   <style>@keyframes bfPulse{0%,100%{opacity:1;transform:translateX(-50%) scale(1)}50%{opacity:.6;transform:translateX(-50%) scale(1.04)}}</style>

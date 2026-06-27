@@ -286,7 +286,7 @@ async function init() {
   el('closeBtn').onclick = () => toggleSettings(false);
   el('heatBtn').onclick = () => {
     heatmapMode = !heatmapMode;
-    el('heatBtn').style.background = heatmapMode ? '#8b5cf6' : 'var(--panel)';
+    el('heatBtn').style.background = heatmapMode ? 'var(--accent)' : 'var(--panel)';
     // Zonen-Layer-Toggles nur anbieten, wenn Heatmap aus ist
     el('zoneLayers').style.display = heatmapMode ? 'none' : 'flex';
     renderBigMap();
@@ -299,7 +299,7 @@ async function init() {
     btn.onclick = () => {
       const on = !isZoneLayerVisible(key);
       setZoneLayer(key, on);
-      btn.style.background = on ? '#8b5cf6' : 'var(--panel)';
+      btn.style.background = on ? 'var(--accent)' : 'var(--panel)';
       renderBigMap();
     };
   }
@@ -711,7 +711,7 @@ function renderMapGroup() {
         <span style="color:var(--muted);flex:none">${dist}</span></div>`;
     }).join('');
   box.querySelectorAll('.mapGroupRow').forEach((row) => {
-    row.onmouseenter = () => { row.style.background = 'rgba(139,92,246,0.18)'; };
+    row.onmouseenter = () => { row.style.background = 'rgba(var(--accent-rgb),0.18)'; };
     row.onmouseleave = () => { row.style.background = 'transparent'; };
     row.onclick = () => centerOnPlayer(row.dataset.sid);
   });
@@ -922,7 +922,7 @@ function renderTpList() {
     const hot = t.id === hoveredTp;
     const cd = t.cooldownRemaining || 0;
     const row = document.createElement('div');
-    row.style.cssText = `padding:6px 8px;margin-bottom:4px;border-radius:8px;cursor:pointer;border:1px solid ${hot ? 'var(--accent)' : 'transparent'};background:${hot ? 'rgba(139,92,246,0.20)' : 'rgba(255,255,255,0.04)'}`;
+    row.style.cssText = `padding:6px 8px;margin-bottom:4px;border-radius:8px;cursor:pointer;border:1px solid ${hot ? 'var(--accent)' : 'transparent'};background:${hot ? 'rgba(var(--accent-rgb),0.20)' : 'rgba(255,255,255,0.04)'}`;
     row.innerHTML =
       `<div style="display:flex;justify-content:space-between;gap:6px"><b>#${t.number} ${escapeHtml(t.name)}</b>` +
       `<span style="color:var(--muted)">${t.price > 0 ? t.price + ' Pkt' : 'gratis'}</span></div>` +
@@ -1233,7 +1233,7 @@ function toggleCalib(force) {
   if (!isAdmin) { calibMode = false; el('calibPanel').style.display = 'none'; return; }
   calibMode = force !== undefined ? force : !calibMode;
   el('calibPanel').style.display = calibMode ? 'block' : 'none';
-  el('calibBtn').style.background = calibMode ? '#8b5cf6' : 'var(--panel)';
+  el('calibBtn').style.background = calibMode ? 'var(--accent)' : 'var(--panel)';
   // Punkte NICHT zurücksetzen — bleiben erhalten auch wenn man die Karte
   // zwischendurch schließt (zum Fliegen). Nur der Reset-Button löscht.
   if (calibMode) renderCalibList();
@@ -1255,8 +1255,8 @@ function renderCalibList() {
     const isArmed = armedRef && armedRef.label === ref.label;
     b.textContent = (isArmed ? '➤ ' : '') + ref.label;
     b.style.cssText = `padding:6px 8px;font-size:12px;border-radius:6px;text-align:left;cursor:pointer;
-      border:1px solid ${isArmed ? '#8b5cf6' : 'var(--border)'};
-      background:${isArmed ? 'rgba(139,92,246,0.2)' : 'transparent'};color:#eee`;
+      border:1px solid ${isArmed ? 'var(--accent)' : 'var(--border)'};
+      background:${isArmed ? 'rgba(var(--accent-rgb),0.2)' : 'transparent'};color:#eee`;
     b.onclick = () => { armedRef = ref; renderCalibList(); };
     el('calibRefs').appendChild(b);
   }
@@ -1314,7 +1314,7 @@ function toggleZonePanel(force) {
   if (!isAdmin) return;
   zoneEditMode = force !== undefined ? force : !zoneEditMode;
   el('zonePanel').style.display = zoneEditMode ? 'block' : 'none';
-  el('zoneBtn').style.background = zoneEditMode ? '#8b5cf6' : 'var(--panel)';
+  el('zoneBtn').style.background = zoneEditMode ? 'var(--accent)' : 'var(--panel)';
   if (zoneEditMode) updateZoneInfo();
 }
 
@@ -1655,7 +1655,7 @@ function renderGroup() {
       const grow = p.grow != null ? `${Math.round(p.grow * 100)}%` : '';
       const dist = (!you && me) ? `${Math.round(Math.hypot(p.x - me.x, p.y - me.y) / UNITS_PER_M)} m` : '';
       const tag = you ? ' <span style="color:var(--accent-2)">(Du)</span>' : (partner ? ' 💞' : (p.ovgroup ? ' 🔗' : ''));
-      return `<div style="display:flex;justify-content:space-between;align-items:center;gap:10px;padding:8px 10px;margin-bottom:6px;border-radius:9px;background:${you ? 'rgba(139,92,246,0.18)' : 'rgba(255,255,255,0.04)'};border:1px solid ${you ? 'var(--accent)' : 'transparent'}">
+      return `<div style="display:flex;justify-content:space-between;align-items:center;gap:10px;padding:8px 10px;margin-bottom:6px;border-radius:9px;background:${you ? 'rgba(var(--accent-rgb),0.18)' : 'rgba(255,255,255,0.04)'};border:1px solid ${you ? 'var(--accent)' : 'transparent'}">
         <span style="font-weight:600;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${escapeHtml(p.name || '?')}${tag}</span>
         <span style="color:var(--muted);font-size:12px;flex:none">${escapeHtml(p.dino || '—')}${grow ? ' · ' + grow : ''}</span>
         <span style="color:var(--accent-2);font-size:12px;flex:none;min-width:42px;text-align:right">${dist}</span>
@@ -1806,13 +1806,13 @@ function renderProfile() {
   close();
   // Tickets anklickbar → Chat-Fenster
   panel.querySelectorAll('.profileTicketRow').forEach((row) => {
-    row.onmouseenter = () => { row.style.background = 'rgba(139,92,246,0.16)'; };
+    row.onmouseenter = () => { row.style.background = 'rgba(var(--accent-rgb),0.16)'; };
     row.onmouseleave = () => { row.style.background = 'rgba(255,255,255,0.04)'; };
     row.onclick = () => openTicketChat(row.dataset.channel, row.dataset.ticket, row.dataset.cat);
   });
   // Events anklickbar → Detail-Modal (Banner, Beschreibung, Ort)
   panel.querySelectorAll('.profileEventRow').forEach((row) => {
-    row.onmouseenter = () => { row.style.background = 'rgba(139,92,246,0.16)'; };
+    row.onmouseenter = () => { row.style.background = 'rgba(var(--accent-rgb),0.16)'; };
     row.onmouseleave = () => { row.style.background = 'rgba(255,255,255,0.04)'; };
     row.onclick = () => openEventDetail(parseInt(row.dataset.ev));
   });
@@ -1862,7 +1862,7 @@ function profileTicketsHtml() {
   return myTickets.map((t) => {
     const st = t.status === 'in_bearbeitung' ? `<span style="color:#22c55e">In Bearbeitung${t.handler ? ' · ' + escapeHtml(t.handler) : ''}</span>` : '<span style="color:#f59e0b">Offen</span>';
     const neu = t.lastFromOther ? ' <span style="background:rgba(34,197,94,0.2);color:#86efac;border-radius:5px;padding:1px 6px;font-size:10px">💬 neue Antwort</span>' : '';
-    const role = t.role === 'handler' ? ' <span style="background:rgba(139,92,246,0.25);color:#c4b5fd;border-radius:5px;padding:1px 6px;font-size:10px">🛠️ Du bearbeitest</span>' : '';
+    const role = t.role === 'handler' ? ' <span style="background:rgba(var(--accent-rgb),0.25);color:#c4b5fd;border-radius:5px;padding:1px 6px;font-size:10px">🛠️ Du bearbeitest</span>' : '';
     return `<div class="profileTicketRow" data-channel="${escapeHtml(t.channelId)}" data-ticket="${t.ticketId}" data-cat="${escapeHtml(t.category || '')}"
         style="padding:7px 9px;margin-bottom:5px;background:rgba(255,255,255,0.04);border-radius:8px;cursor:pointer;transition:background .12s">
       <div style="font-size:13px;font-weight:600">#${t.ticketId} · ${escapeHtml(t.category || '')}${role}${neu}</div>
@@ -1954,7 +1954,7 @@ function renderTicketChat(modal, channelId, ticketId, category, messages) {
     const divider = (i === newFrom) ? '<div style="text-align:center;margin:6px 0 10px;font-size:10px;color:#86efac"><span style="background:rgba(34,197,94,0.14);border-radius:999px;padding:2px 10px">💬 Neue Antworten</span></div>' : '';
     const body = escapeHtml(m.content || '') || `<i style="opacity:.6">${m.hasAttachment ? '[Anhang]' : '[leer]'}</i>`;
     if (m.fromBot) {
-      return divider + `<div style="margin:8px 0;text-align:center"><div style="display:inline-block;max-width:92%;padding:7px 11px;border-radius:10px;background:rgba(139,92,246,0.10);border:1px solid var(--border);color:var(--muted);font-size:12px;line-height:1.35">🤖 <b style="color:var(--accent-2)">${escapeHtml(m.author)}</b> · ${body}</div></div>`;
+      return divider + `<div style="margin:8px 0;text-align:center"><div style="display:inline-block;max-width:92%;padding:7px 11px;border-radius:10px;background:rgba(var(--accent-rgb),0.10);border:1px solid var(--border);color:var(--muted);font-size:12px;line-height:1.35">🤖 <b style="color:var(--accent-2)">${escapeHtml(m.author)}</b> · ${body}</div></div>`;
     }
     const mine = m.fromMe;
     return divider + `<div style="display:flex;flex-direction:column;align-items:${mine ? 'flex-end' : 'flex-start'};margin-bottom:9px">
@@ -2196,7 +2196,7 @@ function renderLexikon() {
         <div style="flex:1;min-width:180px"><div style="font-weight:600;color:#22c55e;margin-bottom:4px">Stärken</div><ul style="margin:0 0 0 16px;font-size:13px;line-height:1.6">${li(d.strengths, '#cbd5b0')}</ul></div>
         <div style="flex:1;min-width:180px"><div style="font-weight:600;color:#ef4444;margin-bottom:4px">Schwächen</div><ul style="margin:0 0 0 16px;font-size:13px;line-height:1.6">${li(d.weaknesses, '#e4b8b8')}</ul></div>
       </div>
-      <div style="margin-top:12px;padding:9px 11px;background:rgba(139,92,246,0.12);border:1px solid var(--border);border-radius:8px;font-size:13px">💡 ${escapeHtml(d.tip)}</div>
+      <div style="margin-top:12px;padding:9px 11px;background:rgba(var(--accent-rgb),0.12);border:1px solid var(--border);border-radius:8px;font-size:13px">💡 ${escapeHtml(d.tip)}</div>
       ${d.fact ? `<div style="margin-top:10px;padding:9px 11px;background:rgba(255,255,255,0.04);border:1px solid var(--border);border-radius:8px;font-size:13px;line-height:1.55"><b style="color:var(--accent-2)">📚 Wissenswert</b><br>${escapeHtml(d.fact)}</div>` : ''}
       <div style="display:flex;gap:8px;margin-top:14px;align-items:center">
         <button id="lexPrev" class="secondary" style="flex:1">← ${escapeHtml(prev)}</button>
@@ -2339,7 +2339,7 @@ function confirmRedeemToken(id, label, emoji, cell) {
   tokenConfirmOpen = true; // Refresh friert die Token-Zellen ein, bis entschieden
   cell.innerHTML = '';
   const wrap = document.createElement('div');
-  wrap.style.cssText = 'padding:7px;border:1px solid var(--accent);border-radius:8px;background:rgba(139,92,246,0.14)';
+  wrap.style.cssText = 'padding:7px;border:1px solid var(--accent);border-radius:8px;background:rgba(var(--accent-rgb),0.14)';
   wrap.innerHTML = `<div style="font-size:11px;margin-bottom:6px">${emoji} ${label} einlösen?</div>`;
   const btns = document.createElement('div'); btns.style.cssText = 'display:flex;gap:5px';
   const yes = document.createElement('button'); yes.textContent = '✅'; yes.style.cssText = 'flex:1;padding:5px';
@@ -2733,7 +2733,7 @@ async function renderMarket() {
   el('mkTabOffers').onclick = () => { marketView = 'offers'; loadMarket(); };
   el('mkTabCreate').onclick = () => { marketView = 'create'; loadMarket(); };
   const dietBox = el('mkDiet');
-  const chips = [['all', 'Alle', '', '#8b5cf6'], ...MK_DIETS];
+  const chips = [['all', 'Alle', '', 'var(--accent)'], ...MK_DIETS];
   dietBox.innerHTML = chips.map(([k, l, , c]) => `<button class="mk-chip${marketDiet === k ? ' on' : ''}" data-diet="${k}" style="--c:${c}">${l}</button>`).join('');
   dietBox.querySelectorAll('.mk-chip').forEach((b) => { b.onclick = () => { marketDiet = b.dataset.diet; dietBox.querySelectorAll('.mk-chip').forEach((x) => x.classList.toggle('on', x.dataset.diet === marketDiet)); renderMarketOffers(); }; });
   const se = el('mkSearch'); se.value = marketSearch; se.oninput = (e) => { marketSearch = e.target.value; renderMarketOffers(); };
