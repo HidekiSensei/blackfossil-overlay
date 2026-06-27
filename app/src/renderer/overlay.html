@@ -158,6 +158,10 @@
     .dock-sep { width: 1px; align-self: stretch; margin: 4px 4px; background: var(--border); }
     .dock-close { color: #fca5a5; }
     .dock-close:hover { background: rgba(239,68,68,0.18); color: #fff; }
+    /* Ungelesen-Zähler für den Gruppen-Chat am Dock-Button */
+    .dock-btn .chat-badge { position: absolute; top: 1px; right: 7px; min-width: 16px; height: 16px; padding: 0 4px;
+      border-radius: 999px; background: #ef4444; color: #fff; font-size: 10px; font-weight: 800; line-height: 1;
+      display: flex; align-items: center; justify-content: center; box-shadow: 0 0 6px rgba(239,68,68,0.85); z-index: 2; }
     /* Einheitliches Schließen läuft jetzt über den Dock-Button — In-Panel-Schließen-Buttons ausgeblendet */
     .closeFeature, #closeBtn, #adminCloseBtn { display: none !important; }
     @keyframes bfPop { from { opacity: 0; transform: translate(-50%,-50%) scale(0.97); } to { opacity: 1; transform: translate(-50%,-50%) scale(1); } }

@@ -1619,7 +1619,7 @@ function toggleFeature(id) {
   if (id === 'dinoInfo') renderDinoInfo();
   else if (id === 'garage') renderGarage();
   else if (id === 'market') renderMarket();
-  else if (id === 'group') { ovInviteOpen = false; renderGroup(); loadOvGroup(); }
+  else if (id === 'group') { ovInviteOpen = false; renderGroup(); loadOvGroup(); setChatUnread(0); pollGroupChat(); }
   else if (id === 'profile') { renderProfile(); loadMyTickets(); loadMyEvents(); }
   else if (id === 'lexikon') renderLexikon();
   else if (id === 'skinEditor') renderSkinEditor();
@@ -1638,9 +1638,12 @@ function closeAllFeatures(skipInteractive) {
 
 // ── Gruppen-Ansicht (Mitglieder mit gleicher groupId, Partner + Distanz) ─────
 let ovGroupState = { groupId: null, members: [], invites: [] };
-let groupChat = [];   // In-Memory Gruppen-Chat (ephemer)
-let ovInvitable = [];
-// Chat-Gruppen-Schlüssel: Overlay-Gruppe bevorzugt, sonst In-Game-groupId
+// ── Gruppen-Chat (eigener Backend-Relay über token-service) ──────────────────
+let groupChat = [];          // aktuell sichtbare Nachrichten der eigenen Gruppe
+let chatLastId = 0;          // höchste gesehene Nachrichten-ID
+let chatGroupCur = null;     // aktueller Gruppen-Key (Wechsel erkennen)
+let chatUnread = 0;          // ungelesene Nachrichten (Zähler am Dock)
+// Chat ist nutzbar, sobald man in irgendeiner Gruppe ist (vom Server bestimmt)
 function myChatGroup() { return (ovGroupState && ovGroupState.groupId) || (me && me.groupId) || null; }
 function renderGroupChat() {
   const box = el('grpChatBox'); if (!box) return;
@@ -1648,24 +1651,48 @@ function renderGroupChat() {
   box.innerHTML = groupChat.map((m) => `<div style="${m.own ? 'align-self:flex-end;background:linear-gradient(135deg,var(--accent),var(--accent-d));color:#fff' : 'align-self:flex-start;background:rgba(255,255,255,0.07)'};max-width:86%;padding:5px 9px;border-radius:10px;line-height:1.3">${m.own ? '' : `<b style="color:var(--accent-2);font-size:11px">${escapeHtml(m.name || '?')}</b><br>`}${escapeHtml(m.text)}</div>`).join('');
   box.scrollTop = box.scrollHeight;
 }
-function receiveGroupChat(msg) {
-  const g = myChatGroup();
-  if (!g || msg.gid !== g || !msg.text) return;
-  groupChat.push({ name: msg.name, text: String(msg.text).slice(0, 240), own: false });
-  if (groupChat.length > 60) groupChat.shift();
-  if (featureOpen === 'group') renderGroupChat();
-  else showToast(`💬 ${msg.name || 'Gruppe'}: ${String(msg.text).slice(0, 80)}`);
+function setChatUnread(n) {
+  chatUnread = Math.max(0, n);
+  const btn = document.querySelector('.dock-btn[data-act="group"]'); if (!btn) return;
+  let b = btn.querySelector('.chat-badge');
+  if (!chatUnread) { if (b) b.remove(); return; }
+  if (!b) { b = document.createElement('span'); b.className = 'chat-badge'; btn.appendChild(b); }
+  b.textContent = chatUnread > 9 ? '9+' : String(chatUnread);
 }
-function sendGroupChat(text) {
+async function pollGroupChat() {
+  if (!sessionToken) return;
+  let data;
+  try {
+    const res = await fetch(`${config.tokenBase}/group/chat`, { headers: { Authorization: `Bearer ${sessionToken}` } });
+    if (!res.ok) return; data = await res.json();
+  } catch { return; }
+  const msgs = data.messages || [];
+  const groupChanged = data.group !== chatGroupCur;
+  chatGroupCur = data.group;
+  const panelOpen = featureOpen === 'group';
+  if (!groupChanged) {
+    const fresh = msgs.filter((m) => m.id > chatLastId && !m.me);
+    if (fresh.length && !panelOpen) {
+      setChatUnread(chatUnread + fresh.length);
+      const last = fresh[fresh.length - 1];
+      showToast(`💬 ${last.name || 'Gruppe'}: ${String(last.text).slice(0, 80)}`);
+    }
+  }
+  groupChat = msgs.map((m) => ({ name: m.name, text: m.text, own: !!m.me }));
+  chatLastId = msgs.reduce((mx, m) => Math.max(mx, m.id), groupChanged ? 0 : chatLastId);
+  if (panelOpen) { renderGroupChat(); setChatUnread(0); }
+}
+async function sendGroupChat(text) {
   text = (text || '').trim(); if (!text) return;
-  const g = myChatGroup();
-  if (!g) { showToast('Du bist in keiner Gruppe.', 'error'); return; }
-  if (!room || !voiceConnected) { showToast('Verbinde dich mit dem Voice-Chat, um zu schreiben.', 'error'); return; }
-  try { room.localParticipant.publishData(new TextEncoder().encode(JSON.stringify({ t: 'chat', gid: g, name: me && me.name, text })), { reliable: true }); }
-  catch { showToast('Senden fehlgeschlagen', 'error'); return; }
-  groupChat.push({ name: me && me.name, text, own: true });
-  if (groupChat.length > 60) groupChat.shift();
-  renderGroupChat();
+  if (!myChatGroup()) { showToast('Du bist in keiner Gruppe.', 'error'); return; }
+  try {
+    const res = await fetch(`${config.tokenBase}/group/chat`, {
+      method: 'POST', headers: { Authorization: `Bearer ${sessionToken}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ text }),
+    });
+    const d = await res.json(); if (!res.ok) throw new Error(d.error || 'Fehler');
+  } catch (e) { showToast(e.message, 'error'); return; }
+  pollGroupChat();   // eigene Nachricht sofort nachladen
 }
 let ovInviteOpen = false;
 const ovInviteSeen = new Set();
@@ -3176,6 +3203,7 @@ async function connectWithSession(session) {
     setStaff(data.staff);
     pollHud();
     if (!pollHud._timer) pollHud._timer = setInterval(pollHud, 6000);
+    if (!pollGroupChat._timer) pollGroupChat._timer = setInterval(pollGroupChat, 4000);
     loadTeleports();
     if (!loadTeleports._timer) loadTeleports._timer = setInterval(() => { if (mapOpen) loadTeleports(); }, 4000);
     await connect(data);
@@ -3202,7 +3230,6 @@ async function connect({ token, url }) {
       try {
         const msg = JSON.parse(new TextDecoder().decode(payload));
         if (msg.t === 'range' && participant) { remoteRanges[participant.identity] = msg.r; updateProximityVolumes(); }
-        else if (msg.t === 'chat') receiveGroupChat(msg);
       } catch {}
     })
     .on(RoomEvent.TrackSubscribed, (track) => {

@@ -219,6 +219,27 @@ app.get('/token', async (req, res) => {
 // Overlay-Aktivität: wer pollt /positions = hat das Overlay an. Für die Overlay-Pflicht.
 const overlayActivity = {}; // steamId → lastSeen-ts (in-memory, periodisch in Datei geflusht)
 
+// ── Gruppen-Chat (eigener Relay, datenschutzfreundlich, in-memory) ──────────
+const chatStore = {};        // gruppenKey → [{id,name,steamId,text,ts}]
+const chatGroupCache = {};   // steamId → {key,name,ts} — wird aus /positions gefüllt (keine Extra-Game-Last)
+let chatSeq = 1;
+const CHAT_MAX = 80;                 // max. Nachrichten pro Gruppe
+const CHAT_TTL = 1000 * 60 * 60;     // Nachrichten nach 1h verwerfen
+const CHAT_CACHE_TTL = 20000;        // Gruppen-Key-Cache 20s gültig
+// Gruppen-Schlüssel eines Spielers: Overlay-Gruppe bevorzugt, sonst In-Game-groupId.
+// Nutzt den Cache aus /positions; nur als Fallback ein Game-API-Call.
+async function chatGroupKey(steamId) {
+  const c = chatGroupCache[steamId];
+  if (c && Date.now() - c.ts < CHAT_CACHE_TTL) return c;
+  const ov = readOv();
+  const og = myOvGroupId(ov, steamId);
+  let key = og ? 'ov:' + og : null, name = steamId;
+  if (!key) { try { const ps = await fetchPlayers(); const p = ps.find((x) => x.steamId === steamId); if (p) { name = p.playerName; if (p.groupId != null) key = 'g:' + p.groupId; } } catch {} }
+  const entry = { key, name, ts: Date.now() };
+  chatGroupCache[steamId] = entry;
+  return entry;
+}
+
 // ── 4) Spielerpositionen relayen (Welt-Koordinaten) ────────────────────────
 app.get('/positions', async (req, res) => {
   const auth = req.headers.authorization ?? '';
@@ -266,10 +287,42 @@ app.get('/positions', async (req, res) => {
         writeJsonFile(tf, store);
       }
     } catch {}
+    // Chat-Gruppen-Key für diesen Spieler cachen (ohne Extra-Game-Call)
+    { const og = myOvGroupId(ov, payload.steamId);
+      const meP = players.find((x) => x.isYou);
+      const key = og ? 'ov:' + og : (meP && meP.groupId != null ? 'g:' + meP.groupId : null);
+      chatGroupCache[payload.steamId] = { key, name: (meP && meP.name) || payload.steamId, ts: Date.now() }; }
     res.json({ players, you: payload.steamId, toasts });
   } catch (err) {
     res.status(502).json({ error: err.message });
   }
+});
+
+// ── 4c) Gruppen-Chat: senden + abfragen ────────────────────────────────────
+app.post('/group/chat', express.json(), async (req, res) => {
+  const s = sessionFrom(req); if (!s) return res.status(401).json({ error: 'Keine Session' });
+  const text = String(req.body?.text ?? '').trim().slice(0, 240);
+  if (!text) return res.status(400).json({ error: 'Leere Nachricht' });
+  const { key, name } = await chatGroupKey(s.steamId);
+  if (!key) return res.status(400).json({ error: 'Keine Gruppe' });
+  const msg = { id: chatSeq++, name, steamId: s.steamId, text, ts: Date.now() };
+  const arr = chatStore[key] || (chatStore[key] = []);
+  arr.push(msg);
+  if (arr.length > CHAT_MAX) arr.splice(0, arr.length - CHAT_MAX);
+  res.json({ ok: true, id: msg.id });
+});
+
+app.get('/group/chat', async (req, res) => {
+  const s = sessionFrom(req); if (!s) return res.status(401).json({ error: 'Keine Session' });
+  const since = parseInt(req.query.since) || 0;
+  const { key } = await chatGroupKey(s.steamId);
+  if (!key) return res.json({ messages: [], group: null });
+  const now = Date.now();
+  const arr = (chatStore[key] || []).filter((m) => now - m.ts < CHAT_TTL);
+  chatStore[key] = arr;   // alte Nachrichten weglaufen lassen
+  const messages = arr.filter((m) => m.id > since)
+    .map((m) => ({ id: m.id, name: m.name, text: m.text, ts: m.ts, me: m.steamId === s.steamId }));
+  res.json({ messages, group: key });
 });
 
 // ── 4b) Eigene Dino-Stats ──────────────────────────────────────────────────
