@@ -1001,7 +1001,8 @@ function openAdminPanel() {
   updateInteractive();
   ensureGiftTypeOptions();
   loadAdminUsers();
-  if (isAdmin) { loadAdminRoles(); loadDinoLimits(); }
+  loadAdminRoles();                       // Gift-Rollen-Dropdown — jetzt auch für Moderatoren (Beschenken)
+  if (isAdmin) loadDinoLimits();
   loadTeleports();
   renderAdminTpList();
 }

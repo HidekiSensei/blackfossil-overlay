@@ -709,7 +709,7 @@ app.get('/admin/users', async (req, res) => {
 // Liste aller Rollen (für Beschenken an Rolle)
 app.get('/admin/roles', async (req, res) => {
   const s = sessionFrom(req);
-  if (!isAdminMember(s)) return res.status(403).json({ error: 'Nur für Admins' });
+  if (!isIngameMember(s)) return res.status(403).json({ error: 'Nur für Moderatoren+' });   // nur Rollen-Liste fürs Beschenken-Dropdown
   if (!DISCORD_BOT_TOKEN || !DISCORD_GUILD_ID) return res.status(503).json({ error: 'Discord nicht konfiguriert' });
   try {
     const roles = await discordApi(`/guilds/${DISCORD_GUILD_ID}/roles`);
@@ -771,7 +771,7 @@ app.post('/admin/lightning', express.json(), async (req, res) => {
 // Beschenken: Punkte/Token an einen User, eine Rolle oder alle Online
 app.post('/admin/gift', express.json(), async (req, res) => {
   const s = sessionFrom(req);
-  if (!isAdminMember(s)) return res.status(403).json({ error: 'Nur für Admins' });
+  if (!isIngameMember(s)) return res.status(403).json({ error: 'Nur für Moderatoren+' });   // Beschenken ab Moderator
   const { targetKind, targetId, type } = req.body || {};
   const amt = Math.round(Number(req.body?.amount));
   if (!amt || amt < 1) return res.status(400).json({ error: 'Menge ungültig' });
