@@ -252,16 +252,11 @@ app.get('/positions', async (req, res) => {
   overlayActivity[payload.steamId] = Date.now(); // Overlay ist aktiv
 
   try {
-    const r = await fetch(`${PANEL_BASE_URL}/players`, {
-      headers: { Authorization: `Bearer ${PANEL_ADMIN_TOKEN}` },
-      signal: AbortSignal.timeout(8000),
-    });
-    if (!r.ok) throw new Error(`Game-Server HTTP ${r.status}`);
-    const data = await r.json();
+    const gamePlayers = await fetchPlayers();   // gecacht (~1s) → keine Last-Vervielfachung
     const ov = readOv();
-    if (enforceGroupDiet(ov, data.Players ?? [])) writeOv(ov);   // Diät-Wechsel → Auto-Kick
+    if (enforceGroupDiet(ov, gamePlayers)) writeOv(ov);   // Diät-Wechsel → Auto-Kick
     const ovMembers = new Set(ovMembersOf(ov, payload.steamId));
-    const players = (data.Players ?? []).map((p) => ({
+    const players = gamePlayers.map((p) => ({
       steamId: p.steamId,
       name: p.playerName,
       dino: p.dinoClass,
@@ -335,15 +330,10 @@ app.get('/me', async (req, res) => {
   catch { return res.status(401).json({ error: 'Session ungültig' }); }
 
   try {
-    const r = await fetch(`${PANEL_BASE_URL}/players`, {
-      headers: { Authorization: `Bearer ${PANEL_ADMIN_TOKEN}` },
-      signal: AbortSignal.timeout(8000),
-    });
-    if (!r.ok) throw new Error(`Game-Server HTTP ${r.status}`);
-    const data = await r.json();
+    const gamePlayers = await fetchPlayers();   // gecacht (~1s)
     const points = getPoints(payload.steamId);
     const tier = payload.tier || 'Fossil';
-    const p = (data.Players ?? []).find((x) => x.steamId === payload.steamId);
+    const p = gamePlayers.find((x) => x.steamId === payload.steamId);
     const tokens = getInventory(payload.steamId);
     const playtime = readJson(`${BOT_DATA_DIR}/playtime.json`, {})[payload.discordId]?.totalSeconds ?? 0;
     const avatarUrl = payload.avatar ? `https://cdn.discordapp.com/avatars/${payload.discordId}/${payload.avatar}.png?size=64` : null;
@@ -648,13 +638,28 @@ app.post('/admin/ai/:action', express.json(), async (req, res) => {
     return res.status(r.status).json(r.data);
   } catch (e) { return res.status(502).json({ error: e.message }); }
 });
+// Spielerliste vom Game-Server — mit kurzem geteiltem Cache (~1s) + In-Flight-Dedup.
+// So kollabieren ALLE gleichzeitigen /positions-, /me- und Chat-Polls auf
+// höchstens ~1 Game-API-Call pro Sekunde, unabhängig von der Nutzerzahl.
+const PLAYERS_TTL = Number(process.env.PLAYERS_CACHE_MS ?? 1000);
+let _playersCache = { ts: 0, data: null, inflight: null };
 async function fetchPlayers() {
-  const r = await fetch(`${PANEL_BASE_URL}/players`, {
-    headers: { Authorization: `Bearer ${PANEL_ADMIN_TOKEN}` },
-    signal: AbortSignal.timeout(8000),
-  });
-  if (!r.ok) throw new Error(`Game-Server HTTP ${r.status}`);
-  return (await r.json()).Players ?? [];
+  const now = Date.now();
+  if (_playersCache.data && now - _playersCache.ts < PLAYERS_TTL) return _playersCache.data;
+  if (_playersCache.inflight) return _playersCache.inflight;   // laufenden Abruf mitnutzen
+  _playersCache.inflight = (async () => {
+    try {
+      const r = await fetch(`${PANEL_BASE_URL}/players`, {
+        headers: { Authorization: `Bearer ${PANEL_ADMIN_TOKEN}` },
+        signal: AbortSignal.timeout(8000),
+      });
+      if (!r.ok) throw new Error(`Game-Server HTTP ${r.status}`);
+      const arr = (await r.json()).Players ?? [];
+      _playersCache = { ts: Date.now(), data: arr, inflight: null };
+      return arr;
+    } catch (e) { _playersCache.inflight = null; throw e; }
+  })();
+  return _playersCache.inflight;
 }
 
 // ── Admin-Verwaltung (NUR Admin): User-Info, Lightning, Beschenken ───────────
