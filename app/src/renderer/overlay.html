@@ -865,10 +865,10 @@
       <!-- Spalte 3: Karte, TP & AI -->
       <div class="settings-col">
         <div class="col-head">🗺️ Karte, TP & AI</div>
-        <div class="set-block">
+        <div class="set-block admin-only">
           <button id="adminCalibBtn" style="width:100%">🔧 Karte kalibrieren (global)</button>
         </div>
-        <div class="set-block">
+        <div class="set-block admin-only">
           <div class="set-label">📍 TP-Punkt an aktueller Position</div>
           <input id="tpName" placeholder="Name" maxlength="40" class="bf-select" style="cursor:text;margin-bottom:6px">
           <div style="display:flex;gap:6px;margin-bottom:8px">
@@ -889,13 +889,16 @@
             <button id="aiStartBtn" style="flex:1;background:#16a34a">▶️ Start</button>
             <button id="aiStopBtn" class="secondary" style="flex:1">⏹️ Stop</button>
           </div>
-          <div style="display:flex;gap:6px;margin-bottom:6px">
-            <button id="aiDespawnBtn" class="secondary" style="flex:1">🧹 Despawn</button>
-            <button id="aiKillBtn" style="flex:1;background:#b91c1c">💀 Kill</button>
-          </div>
-          <div style="display:flex;gap:6px">
-            <button id="aiPanicBtn" style="flex:1;background:#dc2626">🆘 PANIC</button>
-            <button id="aiDisableBtn" class="secondary" style="flex:1">🛑 DLL aus</button>
+          <!-- Gefährliche AI-Aktionen: nur Admins (Owner/Admin), nicht Moderatoren -->
+          <div class="admin-only">
+            <div style="display:flex;gap:6px;margin-bottom:6px">
+              <button id="aiDespawnBtn" class="secondary" style="flex:1">🧹 Despawn</button>
+              <button id="aiKillBtn" style="flex:1;background:#b91c1c">💀 Kill</button>
+            </div>
+            <div style="display:flex;gap:6px">
+              <button id="aiPanicBtn" style="flex:1;background:#dc2626">🆘 PANIC</button>
+              <button id="aiDisableBtn" class="secondary" style="flex:1">🛑 DLL aus</button>
+            </div>
           </div>
           <div id="aiStatus" style="margin-top:8px;font-size:11px;color:var(--muted)"></div>
         </div>

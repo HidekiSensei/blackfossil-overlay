@@ -436,7 +436,7 @@ app.post('/calibration', express.json(), (req, res) => {
   let payload;
   try { payload = jwt.verify(sessionToken, SESSION_SECRET); }
   catch { return res.status(401).json({ error: 'Session ungültig' }); }
-  if (!isIngameMember(payload)) return res.status(403).json({ error: 'Nur für Moderatoren+' });
+  if (!isAdminMember(payload)) return res.status(403).json({ error: 'Nur für Admins' });
 
   const affine = req.body?.affine;
   if (!affine || typeof affine.a !== 'number') return res.status(400).json({ error: 'Ungültige Kalibrierung' });
@@ -628,9 +628,13 @@ app.get('/admin/ai/status', async (req, res) => {
   try { const r = await controlFetch('/ai/status', 'GET'); return res.status(r.status).json(r.data); }
   catch (e) { return res.status(502).json({ error: e.message }); }
 });
+// Gefährliche AI-Aktionen NUR für Admins (Owner/Admin); spawn/start/stop/enable = Moderator+
+const AI_ADMIN_ONLY = new Set(['despawnall', 'killall', 'panic', 'disable']);
 app.post('/admin/ai/:action', express.json(), async (req, res) => {
   const s = sessionFrom(req);
-  if (!isIngameMember(s)) return res.status(403).json({ error: 'Nur für Moderatoren+' });
+  const needAdmin = AI_ADMIN_ONLY.has(req.params.action);
+  if (needAdmin ? !isAdminMember(s) : !isIngameMember(s))
+    return res.status(403).json({ error: needAdmin ? 'Nur für Admins' : 'Nur für Moderatoren+' });
   const path = AI_ACTION_PATHS[req.params.action];
   if (!path) return res.status(400).json({ error: 'Unbekannte Aktion' });
   try {
@@ -1468,6 +1472,7 @@ app.post('/garage/swap', express.json(), async (req, res) => {
 app.post('/player/teleport', express.json(), async (req, res) => {
   const s = sessionFrom(req);
   if (!s) return res.status(401).json({ error: 'Keine Session' });
+  if (!isAdminMember(s)) return res.status(403).json({ error: 'Nur für Admins' });   // Kalibrier-Teleport = Admin
   const x = Number(req.body?.x), y = Number(req.body?.y);
   const z = Number.isFinite(Number(req.body?.z)) ? Number(req.body.z) : undefined;
   if (!Number.isFinite(x) || !Number.isFinite(y)) return res.status(400).json({ error: 'x/y fehlen' });
@@ -1527,11 +1532,11 @@ app.get('/teleports', (req, res) => {
   });
 });
 
-// TP-Punkt an aktueller Position erstellen (Team)
+// TP-Punkt an aktueller Position erstellen (nur Admin)
 app.post('/teleports', express.json(), async (req, res) => {
   const s = sessionFrom(req);
   if (!s) return res.status(401).json({ error: 'Keine Session' });
-  if (!isIngameMember(s)) return res.status(403).json({ error: 'Nur für Moderatoren+' });
+  if (!isAdminMember(s)) return res.status(403).json({ error: 'Nur für Admins' });
   const name = String(req.body?.name ?? '').trim().slice(0, 40);
   const price = Math.max(0, Math.round(Number(req.body?.price) || 0));
   const cooldownMin = Math.max(0, Math.round(Number(req.body?.cooldownMin) || 0));
@@ -1548,11 +1553,11 @@ app.post('/teleports', express.json(), async (req, res) => {
   } catch (err) { res.status(502).json({ error: err.message }); }
 });
 
-// TP-Punkt löschen (Team)
+// TP-Punkt löschen (nur Admin)
 app.delete('/teleports/:id', (req, res) => {
   const s = sessionFrom(req);
   if (!s) return res.status(401).json({ error: 'Keine Session' });
-  if (!isIngameMember(s)) return res.status(403).json({ error: 'Nur für Moderatoren+' });
+  if (!isAdminMember(s)) return res.status(403).json({ error: 'Nur für Admins' });
   const tps = readJson(TELEPORTS_FILE, []);
   const next = tps.filter((t) => t.id !== req.params.id);
   if (next.length === tps.length) return res.status(404).json({ error: 'Nicht gefunden' });
