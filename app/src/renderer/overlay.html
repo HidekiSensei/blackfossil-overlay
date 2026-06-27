@@ -471,6 +471,18 @@
       filter: drop-shadow(0 3px 10px rgba(0,0,0,0.55)) drop-shadow(0 0 14px rgba(var(--accent-rgb),0.45)); }
     body.dock-on #logoFx { opacity: 1; transform: none; }
     body.bf-noblitz #logoFx { filter: drop-shadow(0 3px 9px rgba(0,0,0,0.55)); }
+
+    /* Lebensanzeige (Herz) — permanent sichtbar, skalierbar via --info-scale */
+    #hudHeart { position: fixed; top: 96px; left: 16px; width: 84px; z-index: 55;
+      display: flex; flex-direction: column; align-items: center;
+      transform-origin: top left; transform: scale(var(--info-scale, 1)); --heart-color: #ef4444; }
+    #hudHeart svg { width: 100%; height: auto; overflow: visible;
+      filter: drop-shadow(0 2px 6px rgba(0,0,0,0.55)) drop-shadow(0 0 9px var(--heart-color));
+      animation: heartBeat 1.5s ease-in-out infinite; }
+    #hudHeart #heartPath { fill: var(--heart-color); transition: fill .4s; }
+    #heartVal { margin-top: -7px; font-size: 14px; font-weight: 800; color: #fff; text-shadow: 0 1px 3px #000, 0 0 6px var(--heart-color); }
+    @keyframes heartBeat { 0%,100% { transform: scale(1); } 14% { transform: scale(1.13); } 28% { transform: scale(1); } 42% { transform: scale(1.07); } 56% { transform: scale(1); } }
+    body.bf-noblitz #hudHeart svg { animation: none; }
     @keyframes bfFrameFlick { 0%,100% { opacity: .42; } 18% { opacity: .72; } 37% { opacity: .48; } 55% { opacity: .78; } 78% { opacity: .52; } }
 
     /* ═══════════ Modernes Redesign: Profil · Dino-Info · Detailansicht ═══════════ */
@@ -559,6 +571,12 @@
 
   <!-- Logo oben links (transparentes PNG), nur wenn Dock offen -->
   <img id="logoFx" src="assets/logo.png" alt="Black Fossil">
+
+  <!-- Part 3b: Lebensanzeige als Herz — permanent sichtbar, verschiebbar + skalierbar -->
+  <div id="hudHeart" title="Lebensanzeige">
+    <svg viewBox="0 0 32 29.6" aria-hidden="true"><path id="heartPath" d="M23.6,0c-3.4,0-6.3,2.7-7.6,5.6C14.7,2.7,11.8,0,8.4,0C3.8,0,0,3.8,0,8.4c0,9.4,9.5,11.9,16,21.2c6.1-9.3,16-12.1,16-21.2C32,3.8,28.2,0,23.6,0z"/></svg>
+    <span id="heartVal">—</span>
+  </div>
 
   <!-- Edit-Mode-Banner -->
   <div id="editBanner">🎨 Edit-Mode aktiv — Panels ziehen, Position wird gespeichert <button id="editResetBtn">Reset</button><button id="editDoneBtn">Fertig</button></div>

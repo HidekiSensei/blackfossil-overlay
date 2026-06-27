@@ -253,6 +253,16 @@ function updateHud(d) {
   if (typeof d.points === 'number') document.getElementById('hudPoints').textContent = `${d.points.toLocaleString('de-DE')} Pkt.`;
   if (d.tier) setTier(d.tier);
   checkPrimes(d.primes, d.dino);   // immer aufrufen → Offline/Dino-Wechsel resettet die Basis
+  updateHeart(d);                   // permanente Lebensanzeige
+}
+// Herz-Lebensanzeige (Part 3b): Farbe + % nach Health; grau wenn offline
+function updateHeart(d) {
+  const path = document.getElementById('heartPath'); const val = document.getElementById('heartVal'); const wrap = document.getElementById('hudHeart');
+  if (!path || !val || !wrap) return;
+  if (!d || !d.online || typeof d.health !== 'number') { wrap.style.setProperty('--heart-color', '#666'); val.textContent = '—'; return; }
+  const pct = Math.max(0, Math.min(100, Math.round(d.health * 100)));
+  wrap.style.setProperty('--heart-color', pct > 50 ? '#22c55e' : pct > 25 ? '#f59e0b' : '#ef4444');
+  val.textContent = pct + '%';
 }
 async function pollHud() {
   if (!sessionToken) return;
@@ -3276,6 +3286,7 @@ async function aiSpawnAt(x, y) {
 // HUD-Pille (oben mittig), Quest & Große Karte sind bewusst NICHT enthalten = nicht verschiebbar.
 const MOVABLE = [
   { id: 'minimapWrap', label: 'Minimap', resize: 'mini' },     // Part 3: verschiebbar + skalierbar
+  { id: 'hudHeart',    label: 'Lebensanzeige', resize: 'scale' }, // Part 3b: Herz, verschiebbar + skalierbar
   { id: 'hudInfo',     label: 'Info-Boxen', resize: 'scale' }, // Part 4: entkoppelt verschiebbar + skalierbar
   { id: 'settings',    label: 'Einstellungen' },
   { id: 'dinoInfo',    label: 'Dino-Info (F5)' },
@@ -3296,7 +3307,7 @@ function applySavedPositions() {
     if (pos.scale) e.style.setProperty('--info-scale', pos.scale);        // Info-Boxen-Skalierung (vor transform setzen)
     if (pos.left) {
       e.style.left = pos.left; e.style.top = pos.top; e.style.right = 'auto'; e.style.bottom = 'auto';
-      e.style.transform = (m.id === 'hudInfo') ? 'scale(var(--info-scale,1))' : 'none';
+      e.style.transform = (m.id === 'hudInfo' || m.id === 'hudHeart') ? 'scale(var(--info-scale,1))' : 'none';
     }
     if (pos.width) e.style.width = pos.width;
     if (pos.height) { e.style.height = pos.height; e.style.maxHeight = 'none'; }
@@ -3364,8 +3375,8 @@ function makeDraggable(elm, id) {
     const y = Math.max(0, Math.min(window.innerHeight - 40, e.clientY - oy));
     elm.style.left = x + 'px'; elm.style.top = y + 'px';
     elm.style.right = 'auto'; elm.style.bottom = 'auto';
-    // Info-Boxen behalten ihren Skalierungs-Transform; zentrierte Panels werden „entzentriert"
-    elm.style.transform = (id === 'hudInfo') ? 'scale(var(--info-scale,1))' : 'none';
+    // Skalierbare HUD-Elemente behalten ihren Transform; zentrierte Panels werden „entzentriert"
+    elm.style.transform = (id === 'hudInfo' || id === 'hudHeart') ? 'scale(var(--info-scale,1))' : 'none';
     syncLightningFrames();   // Blitz-Rahmen mitziehen
   });
   window.addEventListener('mouseup', () => {
