@@ -416,8 +416,8 @@ async function init() {
   // Einheitlicher Schließen-Button im Dock → alles zu + zurück ins Spiel
   { const c = el('dockClose'); if (c) { c.insertAdjacentHTML('afterbegin', DOCK_ICONS.close); c.onclick = () => closeOverlayAll(); } }
 
-  // Admin-Panel (eigenständiges Modal, nur Admins)
-  el('openAdminBtn').onclick = () => openAdminPanel();
+  // Admin-Panel (eigenständiges Modal, nur Admins) — Einstieg läuft übers Dock (Admin-Button)
+  { const oab = el('openAdminBtn'); if (oab) oab.onclick = () => openAdminPanel(); }
   el('adminCloseBtn').onclick = () => closeAdminPanel();
   el('admUserLoad').onclick = () => admLoadUserInfo();
   el('admLightningBtn').onclick = () => admLightning();
@@ -485,6 +485,10 @@ async function init() {
 
   // Render-Loops
   setInterval(renderMinimap, 200);
+  // Minimap per Mausrad zoomen (greift, wenn das Overlay interaktiv ist: Dock/Panel offen)
+  { const mm = el('minimap'); if (mm) mm.addEventListener('wheel', (e) => {
+      e.preventDefault(); setMiniZoom(miniZoom * (e.deltaY < 0 ? 1.18 : 1 / 1.18));
+    }, { passive: false }); }
 
   // Auto-Connect + Positions-Polling
   const session = await window.bf.getSession();
@@ -681,11 +685,17 @@ function fitCanvasDPR(cv, ctx) {
   return { w: cssW, h: cssH };
 }
 
+let miniZoom = parseFloat(localStorage.getItem('bf-mini-zoom')) || 1;   // Nutzer-Zoom der Minimap (Mausrad)
+function setMiniZoom(z) {
+  miniZoom = Math.min(6, Math.max(0.5, z));
+  localStorage.setItem('bf-mini-zoom', miniZoom.toFixed(2));
+  renderMinimap();
+}
 function renderMinimap() {
   const cv = el('minimap');
   const ctx = cv.getContext('2d');
   const { w, h } = fitCanvasDPR(cv, ctx);
-  drawMinimap({ ctx, w, h }, players, me, myRange * UNITS_PER_M, waypoints);
+  drawMinimap({ ctx, w, h }, players, me, myRange * UNITS_PER_M, waypoints, miniZoom);
   ctx.setTransform(1, 0, 0, 1, 0, 0);
 }
 function renderBigMap() {
@@ -2379,6 +2389,7 @@ function renderDinoInfo() {
     </div>`).join('');
   el('dinoInfo').classList.add('di-wide');
   el('dinoInfo').innerHTML = `
+    <button id="diSlayBtn" class="di-slay" title="Aktuellen Dino töten">💀 Slay</button>
     <div class="di-topbar">
       <div class="di-imgwrap"><img id="di-img" alt="" onerror="this.style.visibility='hidden'"></div>
       <div style="flex:1;min-width:0">
@@ -2401,9 +2412,38 @@ function renderDinoInfo() {
       </div>
     </div>`;
   tokenConfirmOpen = false; // frisch öffnen → keine hängende Bestätigungs-Sperre
+  { const sb = el('diSlayBtn'); if (sb) sb.onclick = () => bfConfirm({
+      title: '💀 Dino töten?', danger: true, confirmLabel: 'Ja, töten',
+      body: 'Dein <b>aktueller Dino</b> wird sofort getötet (Lightning Strike). Das kann nicht rückgängig gemacht werden.',
+      onConfirm: slayMyDino }); }
   updateDinoInfo();
   if (dinoTimer) clearInterval(dinoTimer);
   dinoTimer = setInterval(updateDinoInfo, 2000);
+}
+// Bestätigungs-Popup (generisch, zentriert) — auch für andere destruktive Aktionen nutzbar
+function bfConfirm(opts) {
+  const ov = document.createElement('div'); ov.className = 'bf-confirm-ov';
+  ov.innerHTML = `<div class="bf-confirm">
+    <div class="bf-confirm-t">${opts.title || 'Bestätigen?'}</div>
+    ${opts.body ? `<div class="bf-confirm-b">${opts.body}</div>` : ''}
+    <div class="bf-confirm-btns">
+      <button class="secondary bf-c-no">Abbrechen</button>
+      <button class="bf-c-yes${opts.danger ? ' bf-danger' : ''}">${opts.confirmLabel || 'Bestätigen'}</button>
+    </div></div>`;
+  document.body.appendChild(ov);
+  const close = () => ov.remove();
+  ov.querySelector('.bf-c-no').onclick = close;
+  ov.addEventListener('mousedown', (e) => { if (e.target === ov) close(); });
+  ov.querySelector('.bf-c-yes').onclick = () => { close(); opts.onConfirm && opts.onConfirm(); };
+}
+async function slayMyDino() {
+  try {
+    const res = await fetch(`${config.tokenBase}/me/slay`, {
+      method: 'POST', headers: { Authorization: `Bearer ${sessionToken}` },
+    });
+    const d = await res.json(); if (!res.ok) throw new Error(d.error || 'Fehler');
+    showToast('💀 Dein Dino wurde getötet.', 'success');
+  } catch (e) { showToast(e.message || 'Slay fehlgeschlagen', 'error'); }
 }
 
 // Token-Zellen rechts neben den passenden Vital-Balken füllen

@@ -176,6 +176,23 @@
     /* F5 Dino-Info: breit, Elder links + Vitals (mit Token rechts neben Balken) */
     /* ID-Selektor, damit er die ältere #dinoInfo-Breite überschreibt */
     #dinoInfo.di-wide { width: clamp(720px, 92vw, 1180px); max-width: 96vw; }
+    /* Slay-Button oben rechts im Dino-Info */
+    #dinoInfo { position: relative; }
+    .di-slay { position: absolute; top: 18px; right: 20px; width: auto; flex: none; z-index: 5;
+      padding: 7px 14px; font-size: 13px; font-weight: 700;
+      background: linear-gradient(135deg, #ef4444, #b91c1c); box-shadow: 0 4px 14px -4px rgba(239,68,68,0.8); }
+    .di-slay:hover { box-shadow: 0 6px 18px -4px rgba(239,68,68,0.95), 0 0 16px rgba(239,68,68,0.5); }
+    /* Generisches Bestätigungs-Popup */
+    .bf-confirm-ov { position: fixed; inset: 0; z-index: 100020; display: flex; align-items: center; justify-content: center;
+      background: rgba(5,3,12,0.62); backdrop-filter: blur(3px); -webkit-backdrop-filter: blur(3px); animation: bfPop .14s ease-out; }
+    .bf-confirm { width: clamp(300px, 34vw, 420px); background: var(--panel); border: 1px solid var(--border);
+      border-radius: 16px; padding: 22px; box-shadow: var(--glow-strong); text-align: center; }
+    .bf-confirm-t { font-size: 17px; font-weight: 800; margin-bottom: 10px; }
+    .bf-confirm-b { font-size: 13px; color: var(--muted); line-height: 1.45; margin-bottom: 18px; }
+    .bf-confirm-b b { color: #eee; }
+    .bf-confirm-btns { display: flex; gap: 10px; }
+    .bf-confirm-btns button { flex: 1; }
+    .bf-danger { background: linear-gradient(135deg, #ef4444, #b91c1c); }
     /* F1 Profil: breit, Events links + Profil mittig + Tickets rechts (wie Dino-Info/Settings) */
     #profile.pf-wide { width: clamp(760px, 88vw, 1120px); max-width: 96vw; }
     .pf-main { display: flex; gap: 22px; margin-top: 14px; align-items: flex-start; }
@@ -819,7 +836,6 @@
     </div>
     <div id="versionInfo" style="text-align:center;font-size:11px;color:var(--muted);margin:10px 0 4px">v…</div>
     <div class="btnrow">
-      <button id="openAdminBtn" style="display:none;background:#dc2626">🛡️ Admin-Panel</button>
       <button id="logoutBtn" class="secondary">Abmelden</button>
       <button id="closeBtn" class="secondary">Schließen</button>
     </div>

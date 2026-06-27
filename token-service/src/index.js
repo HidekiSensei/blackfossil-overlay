@@ -768,6 +768,21 @@ app.post('/admin/lightning', express.json(), async (req, res) => {
   } catch (e) { res.status(502).json({ error: e.message }); }
 });
 
+// Eigenen aktiven Dino töten (Slay) — jeder darf seinen EIGENEN Dino slayen (kein Admin nötig)
+app.post('/me/slay', async (req, res) => {
+  const s = sessionFrom(req);
+  if (!s) return res.status(401).json({ error: 'Keine Session' });
+  try {
+    const r = await fetch(`${PANEL_BASE_URL}/players/${encodeURIComponent(s.steamId)}/lightning`, {
+      method: 'POST', headers: { Authorization: `Bearer ${PANEL_ADMIN_TOKEN}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ slay: true }), signal: AbortSignal.timeout(8000),
+    });
+    const d = await r.json().catch(() => ({}));
+    if (!r.ok) return res.status(502).json({ error: d.Msg || d.error || `HTTP ${r.status}` });
+    res.json({ ok: true, slayed: !!d.slayed });
+  } catch (e) { res.status(502).json({ error: e.message }); }
+});
+
 // Beschenken: Punkte/Token an einen User, eine Rolle oder alle Online
 app.post('/admin/gift', express.json(), async (req, res) => {
   const s = sessionFrom(req);

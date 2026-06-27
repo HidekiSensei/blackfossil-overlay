@@ -227,7 +227,7 @@ export function drawHeatmap(view, players, me) {
 
 // ── Minimap (zentriert, Auto-Zoom auf den Sprechradius) ───────────────────────
 // speakRange = eigene Sprechreichweite in Welt-Einheiten (für Ring + Zoom-Stufe)
-export function drawMinimap(view, players, me, speakRange = 0, waypoints = []) {
+export function drawMinimap(view, players, me, speakRange = 0, waypoints = [], zoomMul = 1) {
   const { ctx, w, h } = view;
   ctx.clearRect(0, 0, w, h);
 
@@ -239,9 +239,9 @@ export function drawMinimap(view, players, me, speakRange = 0, waypoints = []) {
     const e = worldToNorm(me.x + speakRange, me.y);
     normSpeak = Math.hypot(e.nx - center.nx, e.ny - center.ny);
   }
-  // Zoom so wählen, dass der Sprechring ~30% des Minimap-Radius einnimmt
-  // (etwas weiter rausgezoomt für mehr Überblick)
-  const zoom = normSpeak > 0 ? Math.min(0.28, Math.max(0.03, normSpeak * 3.4)) : 0.10;
+  // Basis-Zoom (Sprechring ~30% des Minimap-Radius), dann Nutzer-Zoom (zoomMul>1 = rein).
+  const baseZoom = normSpeak > 0 ? Math.min(0.28, Math.max(0.03, normSpeak * 3.4)) : 0.10;
+  const zoom = Math.min(0.6, Math.max(0.015, baseZoom / zoomMul));
 
   ctx.save();
   ctx.beginPath(); ctx.arc(w/2, h/2, w/2, 0, Math.PI*2); ctx.clip();
