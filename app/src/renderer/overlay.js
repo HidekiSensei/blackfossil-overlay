@@ -3271,9 +3271,11 @@ async function aiSpawnAt(x, y) {
 }
 
 // ── Edit-Mode: Panels verschiebbar machen (Positionen in localStorage) ──────
+// resize:true → zusätzlich skalierbar. Sonst nur verschiebbar (einheitliches Verhalten).
+// HUD-Pille (oben mittig), Quest & Große Karte sind bewusst NICHT enthalten = nicht verschiebbar.
 const MOVABLE = [
-  { id: 'hud',         label: 'Top-HUD' },
-  { id: 'minimapWrap', label: 'Minimap & Mikro' },
+  { id: 'minimapWrap', label: 'Minimap', resize: 'mini' },     // Part 3: verschiebbar + skalierbar
+  { id: 'hudInfo',     label: 'Info-Boxen', resize: 'scale' }, // Part 4: entkoppelt verschiebbar + skalierbar
   { id: 'settings',    label: 'Einstellungen' },
   { id: 'dinoInfo',    label: 'Dino-Info (F5)' },
   { id: 'skinEditor',  label: 'Skin-Editor' },
@@ -3290,7 +3292,11 @@ function applySavedPositions() {
   const p = loadPositions();
   for (const m of MOVABLE) {
     const e = el(m.id), pos = p[m.id]; if (!e || !pos) continue;
-    if (pos.left) { e.style.left = pos.left; e.style.top = pos.top; e.style.right = 'auto'; e.style.bottom = 'auto'; e.style.transform = 'none'; }
+    if (pos.scale) e.style.setProperty('--info-scale', pos.scale);        // Info-Boxen-Skalierung (vor transform setzen)
+    if (pos.left) {
+      e.style.left = pos.left; e.style.top = pos.top; e.style.right = 'auto'; e.style.bottom = 'auto';
+      e.style.transform = (m.id === 'hudInfo') ? 'scale(var(--info-scale,1))' : 'none';
+    }
     if (pos.width) e.style.width = pos.width;
     if (pos.height) { e.style.height = pos.height; e.style.maxHeight = 'none'; }
     if (pos.miniSize) e.style.setProperty('--mini-size', pos.miniSize);   // Minimap-Größe
@@ -3303,6 +3309,7 @@ function resetPositions() {
     e.style.left = ''; e.style.top = ''; e.style.right = ''; e.style.bottom = ''; e.style.transform = '';
     e.style.width = ''; e.style.height = ''; e.style.maxHeight = '';
     e.style.removeProperty('--mini-size');
+    e.style.removeProperty('--info-scale');
   }
   showToast('Layout zurückgesetzt', 'success');
 }
@@ -3333,7 +3340,7 @@ function refreshEditAffordances() {
     if (visible) {
       e.classList.add('bf-movable');
       e.dataset.editLabel = m.label;
-      if (m.id !== 'hud') addResizeHandle(e, m.id);   // HUD (Pille) nicht resizebar
+      if (m.resize) addResizeHandle(e, m.id, m.resize); else removeResizeHandle(e);   // nur markierte Elemente skalierbar
     } else {
       e.classList.remove('bf-movable');
       removeResizeHandle(e);
@@ -3355,7 +3362,9 @@ function makeDraggable(elm, id) {
     const x = Math.max(0, Math.min(window.innerWidth - 40, e.clientX - ox));
     const y = Math.max(0, Math.min(window.innerHeight - 40, e.clientY - oy));
     elm.style.left = x + 'px'; elm.style.top = y + 'px';
-    elm.style.right = 'auto'; elm.style.bottom = 'auto'; elm.style.transform = 'none';
+    elm.style.right = 'auto'; elm.style.bottom = 'auto';
+    // Info-Boxen behalten ihren Skalierungs-Transform; zentrierte Panels werden „entzentriert"
+    elm.style.transform = (id === 'hudInfo') ? 'scale(var(--info-scale,1))' : 'none';
     syncLightningFrames();   // Blitz-Rahmen mitziehen
   });
   window.addEventListener('mouseup', () => {
@@ -3366,17 +3375,20 @@ function makeDraggable(elm, id) {
     savePositions(p);
   });
 }
-// Resize-Griff unten rechts (nur im Edit-Mode)
-function addResizeHandle(elm, id) {
+// Resize-Griff unten rechts (nur im Edit-Mode). mode: 'mini' (quadratisch via --mini-size),
+// 'scale' (Faktor via --info-scale, für die Info-Boxen), sonst Breite/Höhe.
+function addResizeHandle(elm, id, mode) {
   if (elm.querySelector('.bf-resize')) return;
   const h = document.createElement('div'); h.className = 'bf-resize';
-  const isMini = id === 'minimapWrap';   // Minimap: runder Canvas → quadratisch über --mini-size skalieren
   let rz = false, sx = 0, sy = 0, sw = 0, sh = 0, ss = 0;
   const mv = (ev) => {
     if (!rz) return;
-    if (isMini) {
+    if (mode === 'mini') {
       const d = Math.max(ev.clientX - sx, ev.clientY - sy);          // diagonal, bleibt quadratisch
       elm.style.setProperty('--mini-size', Math.max(140, Math.min(640, ss + d)) + 'px');
+    } else if (mode === 'scale') {
+      const d = Math.max(ev.clientX - sx, ev.clientY - sy);          // Faktor aus Diagonale
+      elm.style.setProperty('--info-scale', Math.max(0.7, Math.min(2.2, ss + d / 220)).toFixed(3));
     } else {
       elm.style.width = Math.max(220, sw + (ev.clientX - sx)) + 'px';
       elm.style.height = Math.max(140, sh + (ev.clientY - sy)) + 'px';
@@ -3388,7 +3400,8 @@ function addResizeHandle(elm, id) {
     if (!rz) return; rz = false;
     window.removeEventListener('mousemove', mv); window.removeEventListener('mouseup', up);
     const p = loadPositions();
-    if (isMini) p[id] = { ...(p[id] || {}), miniSize: elm.style.getPropertyValue('--mini-size') };
+    if (mode === 'mini') p[id] = { ...(p[id] || {}), miniSize: elm.style.getPropertyValue('--mini-size') };
+    else if (mode === 'scale') p[id] = { ...(p[id] || {}), scale: elm.style.getPropertyValue('--info-scale') };
     else p[id] = { ...(p[id] || {}), width: elm.style.width, height: elm.style.height };
     savePositions(p);
   };
@@ -3396,13 +3409,17 @@ function addResizeHandle(elm, id) {
     if (!editMode) return;
     e.preventDefault(); e.stopPropagation();
     rz = true; const r = elm.getBoundingClientRect(); sx = e.clientX; sy = e.clientY; sw = r.width; sh = r.height;
-    ss = parseInt(getComputedStyle(elm).getPropertyValue('--mini-size')) || el('minimap')?.getBoundingClientRect().width || r.width;
+    if (mode === 'mini') ss = parseInt(getComputedStyle(elm).getPropertyValue('--mini-size')) || el('minimap')?.getBoundingClientRect().width || r.width;
+    else if (mode === 'scale') ss = parseFloat(getComputedStyle(elm).getPropertyValue('--info-scale')) || 1;
     window.addEventListener('mousemove', mv); window.addEventListener('mouseup', up);
   });
   elm.appendChild(h);
 }
 function removeResizeHandle(elm) { const h = elm.querySelector('.bf-resize'); if (h) h.remove(); }
 function setupEditMode() {
+  // HUD ist nicht mehr verschiebbar → evtl. alte gespeicherte Position entfernen, fix zentriert lassen
+  { const p = loadPositions(); if (p.hud) { delete p.hud; savePositions(p); }
+    const hudEl = el('hud'); if (hudEl) { hudEl.style.left = ''; hudEl.style.top = ''; hudEl.style.right = ''; hudEl.style.bottom = ''; hudEl.style.transform = ''; hudEl.style.width = ''; } }
   for (const m of MOVABLE) { const e = el(m.id); if (e) makeDraggable(e, m.id); }
   applySavedPositions();
   el('editModeBtn').onclick = () => { setEditMode(true); toggleSettings(false); };

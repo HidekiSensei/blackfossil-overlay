@@ -58,13 +58,16 @@
     /* Minimap oben rechts */
     #minimapWrap { position: absolute; top: 20px; right: 20px; }
     #minimap { width: var(--mini-size); height: var(--mini-size); border-radius: 50%; border: 2px solid var(--border); background: rgba(15,10,30,0.55); box-shadow: var(--glow), inset 0 0 30px rgba(0,0,0,0.4); }
-    #micIndicator { margin-top: 10px; display: flex; align-items: center; gap: 9px; justify-content: center;
+    /* Part 4: Info-Boxen — eigener Container, von der Minimap entkoppelt, skalierbar via --info-scale */
+    #hudInfo { position: absolute; top: calc(20px + var(--mini-size) + 12px); right: 20px; width: var(--mini-size);
+      display: flex; flex-direction: column; gap: 8px; transform-origin: top right; transform: scale(var(--info-scale, 1)); }
+    #micIndicator { display: flex; align-items: center; gap: 9px; justify-content: center;
       background: var(--panel); border: 1px solid var(--border); border-radius: 10px; padding: 8px 12px; font-size: 13px; }
     #micIcon { display: inline-flex; width: 20px; height: 20px; transition: color 0.15s; }
     #micIcon svg { width: 20px; height: 20px; }
     .mic-idle { color: #eee; } .mic-connecting { color: var(--warn); }
     .mic-speaking { color: var(--on); } .mic-muted { color: var(--off); } .mic-disconnected { color: var(--off); }
-    #zoneBox { margin-top: 8px; text-align: center; background: var(--panel); border: 1px solid var(--border);
+    #zoneBox { text-align: center; background: var(--panel); border: 1px solid var(--border);
       border-radius: 10px; padding: 6px 10px; font-size: 12px; color: var(--muted); }
     #micIndicator, #zoneBox, #rangeBox { box-shadow: var(--glow); }
 
@@ -558,13 +561,17 @@
   <div id="toasts"></div>
 
   <!-- Minimap + Mikro -->
+  <!-- Part 3: Minimap (verschiebbar + skalierbar) -->
   <div id="minimapWrap">
     <canvas id="minimap" width="200" height="200"></canvas>
     <div id="minimapRing"></div>
+  </div>
+  <!-- Part 4: Info-Boxen unter der Minimap (entkoppelt verschiebbar + skalierbar) -->
+  <div id="hudInfo">
     <div id="micIndicator"><span id="micIcon" class="mic-connecting"></span><span id="micText">Verbinde…</span></div>
-    <div id="connInd" title="Voice-Verbindung. Gelb/Rot oder ⚠️ Relay = schlechte Verbindung → LAN statt WLAN, VPN aus." style="display:none;margin-top:6px;align-items:center;gap:7px;justify-content:center;background:var(--panel);border:1px solid var(--border);border-radius:10px;padding:6px 10px;font-size:12px;box-shadow:var(--glow)"><span id="connDot" style="width:9px;height:9px;border-radius:50%;background:#666;flex:none"></span><span id="connText" style="color:var(--muted)">—</span></div>
-    <div id="rangeBox" style="margin-top:8px;text-align:center;background:var(--panel);border:1px solid var(--border);border-radius:10px;padding:6px 10px;font-size:12px">🔊 Reichweite: 10 m</div>
-    <div id="zoneBox" style="margin-top:8px">Zone: —</div>
+    <div id="connInd" title="Voice-Verbindung. Gelb/Rot oder ⚠️ Relay = schlechte Verbindung → LAN statt WLAN, VPN aus." style="display:none;align-items:center;gap:7px;justify-content:center;background:var(--panel);border:1px solid var(--border);border-radius:10px;padding:6px 10px;font-size:12px;box-shadow:var(--glow)"><span id="connDot" style="width:9px;height:9px;border-radius:50%;background:#666;flex:none"></span><span id="connText" style="color:var(--muted)">—</span></div>
+    <div id="rangeBox" style="text-align:center;background:var(--panel);border:1px solid var(--border);border-radius:10px;padding:6px 10px;font-size:12px">🔊 Reichweite: 10 m</div>
+    <div id="zoneBox">Zone: —</div>
   </div>
 
   <!-- Große Map: Teleport-Panel links | Karte mittig | rechts Ansichten + Gruppe -->
