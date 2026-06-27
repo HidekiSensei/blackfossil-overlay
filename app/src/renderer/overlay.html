@@ -266,17 +266,32 @@
     .stat { margin-bottom: 11px; }
     .stat-top { display: flex; justify-content: space-between; font-size: 12px; margin-bottom: 4px; }
     .stat-top .val { color: var(--muted); font-variant-numeric: tabular-nums; }
-    /* Moderne Vitals-Balken: Pill-Form, Tiefe (inset), Glanz-Highlight oben, laufender Shimmer */
-    .stat-track { height: 12px; background: rgba(0,0,0,0.30); border-radius: 999px; overflow: hidden; position: relative;
-      box-shadow: inset 0 1px 2px rgba(0,0,0,0.45), inset 0 0 0 1px rgba(255,255,255,0.04); }
+    /* ⚗️ Vitals-Balken = Reagenzglas: pulsierende Energie + zuckende Blitze in der Flüssigkeit */
+    .stat-track { height: 13px; border-radius: 999px; overflow: hidden; position: relative;
+      background: linear-gradient(180deg, rgba(0,0,0,0.55), rgba(0,0,0,0.26));
+      box-shadow: inset 0 2px 3px rgba(0,0,0,0.6), inset 0 0 0 1px rgba(255,255,255,0.05); }
+    /* Glas-Reflexion über der oberen Hälfte (liegt über der Flüssigkeit) */
+    .stat-track::after { content: ''; position: absolute; left: 0; right: 0; top: 0; height: 52%; z-index: 4; pointer-events: none;
+      border-radius: 999px; background: linear-gradient(180deg, rgba(255,255,255,0.22), rgba(255,255,255,0.02)); }
     .stat-fill { height: 100%; border-radius: 999px; width: 0; position: relative;
-      transition: width 0.6s cubic-bezier(.22,1,.36,1); filter: saturate(1.15) brightness(1.05); }
-    .stat-fill::before { content: ''; position: absolute; inset: 0; border-radius: 999px; pointer-events: none;
-      background: linear-gradient(180deg, rgba(255,255,255,0.40) 0%, rgba(255,255,255,0.08) 48%, rgba(0,0,0,0.16) 100%); }
-    .stat-fill::after { content: ''; position: absolute; inset: 0; border-radius: 999px;
-      background: linear-gradient(100deg, transparent 20%, rgba(255,255,255,0.45) 50%, transparent 80%);
-      background-size: 200% 100%; animation: shimmer 2.2s linear infinite; }
-    @keyframes shimmer { from { background-position: 200% 0; } to { background-position: -200% 0; } }
+      transition: width 0.6s cubic-bezier(.22,1,.36,1);
+      box-shadow: inset 0 0 8px rgba(255,255,255,0.28), inset 0 -2px 4px rgba(0,0,0,0.3);
+      animation: vitalPulse 2.4s ease-in-out infinite; }
+    @keyframes vitalPulse { 0%,100% { filter: saturate(1.2) brightness(1.05); } 50% { filter: saturate(1.6) brightness(1.22); } }
+    /* Schicht 1: zuckende Blitz-Streifen, die durch die Flüssigkeit wandern */
+    .stat-fill::before { content: ''; position: absolute; inset: 0; border-radius: 999px; pointer-events: none; z-index: 2; mix-blend-mode: screen;
+      background: repeating-linear-gradient(74deg, transparent 0 8px, rgba(255,255,255,0) 8px 11px, rgba(255,255,255,0.78) 11px 12px, transparent 12px 20px);
+      background-size: 64px 100%; animation: vitalBolts 1.05s linear infinite, vitalFlicker .16s steps(2,end) infinite; }
+    @keyframes vitalBolts { to { background-position: 64px 0; } }
+    @keyframes vitalFlicker { 0% { opacity: .92; } 100% { opacity: .5; } }
+    /* Schicht 2: heller Energie-Sweep (Blitz, der durchzieht) */
+    .stat-fill::after { content: ''; position: absolute; inset: 0; border-radius: 999px; pointer-events: none; z-index: 3; mix-blend-mode: screen;
+      background: linear-gradient(100deg, transparent 32%, rgba(255,255,255,0.7) 50%, transparent 68%);
+      background-size: 220% 100%; animation: vitalSweep 1.7s linear infinite; }
+    @keyframes vitalSweep { from { background-position: 210% 0; } to { background-position: -130% 0; } }
+    /* Blitz-Effekte aus → ruhige Balken */
+    body.bf-noblitz .stat-fill, body.bf-noblitz .stat-fill::before, body.bf-noblitz .stat-fill::after { animation: none; }
+    body.bf-noblitz .stat-fill::before { opacity: .28; }
     @keyframes pulseGlow { 0%,100% { box-shadow: 0 0 0 rgba(245,158,11,0); } 50% { box-shadow: 0 0 14px rgba(245,158,11,0.6); } }
     .elder-glow { animation: pulseGlow 2s ease-in-out infinite; }
 
