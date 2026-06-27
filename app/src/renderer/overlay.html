@@ -458,14 +458,13 @@
     }
     .bf-bolt-frame.round { border-radius: 50%; }
 
-    /* Animiertes Logo oben links — nur sichtbar wenn Dock offen (.dock-on am body) */
-    #logoFx { position: fixed; top: 10px; left: 12px; width: 128px; height: auto; z-index: 56; pointer-events: none;
-      border-radius: 16px; border: 1px solid var(--border); object-fit: cover;
-      box-shadow: 0 6px 20px rgba(0,0,0,0.5), 0 0 18px rgba(var(--accent-rgb),0.30);
+    /* Logo (transparentes PNG) oben links — nur sichtbar wenn Dock offen (.dock-on am body) */
+    #logoFx { position: fixed; top: 6px; left: 10px; width: 168px; height: auto; z-index: 56; pointer-events: none;
       opacity: 0; transform: translateY(-6px) scale(.96);
-      transition: opacity .25s ease, transform .25s cubic-bezier(.22,1,.36,1); }
+      transition: opacity .25s ease, transform .25s cubic-bezier(.22,1,.36,1);
+      filter: drop-shadow(0 3px 10px rgba(0,0,0,0.55)) drop-shadow(0 0 14px rgba(var(--accent-rgb),0.45)); }
     body.dock-on #logoFx { opacity: 1; transform: none; }
-    body.bf-noblitz #logoFx { box-shadow: 0 6px 20px rgba(0,0,0,0.5); }
+    body.bf-noblitz #logoFx { filter: drop-shadow(0 3px 9px rgba(0,0,0,0.55)); }
     @keyframes bfFrameFlick { 0%,100% { opacity: .42; } 18% { opacity: .72; } 37% { opacity: .48; } 55% { opacity: .78; } 78% { opacity: .52; } }
 
     /* ═══════════ Modernes Redesign: Profil · Dino-Info · Detailansicht ═══════════ */
@@ -541,8 +540,8 @@
     </defs>
   </svg>
 
-  <!-- Animiertes Logo oben links (nur wenn Dock offen). mix-blend-mode: screen blendet den dunklen Hintergrund aus. -->
-  <video id="logoFx" src="assets/logo.mp4" autoplay loop muted playsinline></video>
+  <!-- Logo oben links (transparentes PNG), nur wenn Dock offen -->
+  <img id="logoFx" src="assets/logo.png" alt="Black Fossil">
 
   <!-- Edit-Mode-Banner -->
   <div id="editBanner">🎨 Edit-Mode aktiv — Panels ziehen, Position wird gespeichert <button id="editResetBtn">Reset</button><button id="editDoneBtn">Fertig</button></div>
