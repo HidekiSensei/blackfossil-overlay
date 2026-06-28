@@ -10,7 +10,7 @@
 
 import express from 'express';
 import jwt from 'jsonwebtoken';
-import { readFileSync, writeFileSync, renameSync } from 'node:fs';
+import { readFileSync, writeFileSync, renameSync, openSync, closeSync, unlinkSync, statSync } from 'node:fs';
 import { AccessToken } from 'livekit-server-sdk';
 import { randomBytes } from 'node:crypto';
 
@@ -63,6 +63,23 @@ const ADMIN_RANKS  = (process.env.ADMIN_RANKS  ?? 'Owner,Admin').split(',').map(
 const INGAME_RANKS = (process.env.INGAME_RANKS ?? 'Owner,Admin,Moderator').split(',').map((s) => s.trim());
 const TEAM_RANKS   = (process.env.TEAM_RANKS   ?? 'Owner,Admin,Moderator,Support').split(',').map((s) => s.trim());
 
+// ── PayPal-Abos (Subscriptions → Discord-Rolle) ─────────────────────────────
+const WEB_BASE            = process.env.WEB_BASE            ?? 'https://www.blackfossil.de';
+const PAYPAL_ENV          = process.env.PAYPAL_ENV          ?? 'live'; // 'live' | 'sandbox'
+const PAYPAL_API          = PAYPAL_ENV === 'sandbox' ? 'https://api-m.sandbox.paypal.com' : 'https://api-m.paypal.com';
+const PAYPAL_CLIENT_ID    = process.env.PAYPAL_CLIENT_ID    ?? '';
+const PAYPAL_CLIENT_SECRET= process.env.PAYPAL_CLIENT_SECRET?? '';
+const PAYPAL_WEBHOOK_ID   = process.env.PAYPAL_WEBHOOK_ID   ?? '';
+// Plan-ID → Discord-Rollenname. IDs nach dem paypal-setup.mjs-Lauf in die ENV eintragen.
+const PAYPAL_PLANS = {};
+for (const [plan, role] of [
+  [process.env.PAYPAL_PLAN_KNOCHEN,   'Knochen'],
+  [process.env.PAYPAL_PLAN_BERNSTEIN, 'Bernstein'],
+  [process.env.PAYPAL_PLAN_OBSIDIAN,  'Obsidian'],
+]) { if (plan) PAYPAL_PLANS[plan] = role; }
+// Alle Abo-Rollen (für sauberes Entziehen/Upgrade)
+const ALL_TIER_ROLES = ['Knochen', 'Bernstein', 'Obsidian'];
+
 // ── Discord-Rollen-Check (Admin + Tier + Staff-Rang) ────────────────────────
 async function getDiscordStatus(discordId) {
   const result = { admin: false, ingame: false, team: false, rank: 'Fossil', tier: 'Fossil', staff: null };
@@ -93,13 +110,13 @@ async function getDiscordStatus(discordId) {
 }
 
 // ── OAuth State (kurzlebig, in-memory) ─────────────────────────────────────
-const stateStore = new Map(); // state -> timestamp
-function newState() {
+const stateStore = new Map(); // state -> { ts, mode, ret }
+function newState(meta = {}) {
   const s = randomBytes(16).toString('hex');
-  stateStore.set(s, Date.now());
+  stateStore.set(s, { ts: Date.now(), mode: 'app', ...meta });
   // Alte States (>10 min) aufräumen
   const cutoff = Date.now() - 10 * 60_000;
-  for (const [k, t] of stateStore) if (t < cutoff) stateStore.delete(k);
+  for (const [k, v] of stateStore) if ((v?.ts ?? 0) < cutoff) stateStore.delete(k);
   return s;
 }
 
@@ -117,10 +134,29 @@ app.get('/auth/login', (_req, res) => {
   res.redirect(url.toString());
 });
 
+// ── 1b) Web-Login (für die Website / Abo-Kauf) ─────────────────────────────
+// Gleiche Discord-App + Redirect-URI wie der App-Login; nur der State markiert
+// "web", damit der Callback zur Website zurückleitet statt in die App.
+app.get('/auth/web/login', (req, res) => {
+  let ret = String(req.query.return ?? `${WEB_BASE}/abo.html`);
+  // Nur Rücksprünge auf die eigene Website erlauben (offene Redirects vermeiden)
+  try { if (new URL(ret).origin !== new URL(WEB_BASE).origin) ret = `${WEB_BASE}/abo.html`; }
+  catch { ret = `${WEB_BASE}/abo.html`; }
+  const state = newState({ mode: 'web', ret });
+  const url = new URL('https://discord.com/oauth2/authorize');
+  url.searchParams.set('client_id', DISCORD_CLIENT_ID);
+  url.searchParams.set('redirect_uri', REDIRECT_URI);
+  url.searchParams.set('response_type', 'code');
+  url.searchParams.set('scope', 'identify');
+  url.searchParams.set('state', state);
+  res.redirect(url.toString());
+});
+
 // ── 2) Discord-Callback ──────────────────────────────────────────────────
 app.get('/auth/callback', async (req, res) => {
   const { code, state } = req.query;
-  if (!code || !state || !stateStore.has(state)) {
+  const st = state ? stateStore.get(state) : null;
+  if (!code || !state || !st) {
     return res.status(400).send(htmlPage('❌ Login fehlgeschlagen', 'Ungültige oder abgelaufene Anfrage. Bitte versuche es erneut.'));
   }
   stateStore.delete(state);
@@ -148,17 +184,27 @@ app.get('/auth/callback', async (req, res) => {
     if (!userRes.ok) throw new Error('Discord-User konnte nicht geladen werden');
     const user = await userRes.json();
 
-    // Steam-ID nachschlagen
+    // Steam-ID nachschlagen + Rang/Rechte (Rang braucht kein Steam)
     const steamId = lookupSteamId(user.id);
+    const { admin, ingame, team, rank, tier, staff } = await getDiscordStatus(user.id);
+
+    // Web-Login (Abo-Kauf): zurück zur Website mit Discord-ID. Steam ist hier
+    // NICHT Pflicht — die Abo-Rolle wird über die Discord-ID vergeben.
+    if (st.mode === 'web') {
+      const back = new URL(st.ret || `${WEB_BASE}/abo.html`);
+      back.searchParams.set('discord_id', user.id);
+      back.searchParams.set('name', user.global_name || user.username);
+      back.searchParams.set('tier', tier || 'Fossil');
+      return res.redirect(back.toString());
+    }
+
+    // App-Login braucht eine Steam-Verknüpfung
     if (!steamId) {
       return res.status(403).send(htmlPage(
         '⚠️ Account nicht verknüpft',
         'Dein Discord-Account ist noch nicht mit Steam verknüpft. Bitte verknüpfe ihn zuerst im Discord über den ACCOUNT-LINK-Button.'
       ));
     }
-
-    // Höchster Rang + abgeleitete Rechte anhand Discord-Rollen
-    const { admin, ingame, team, rank, tier, staff } = await getDiscordStatus(user.id);
 
     // App-Session ausstellen (30 Tage)
     const session = jwt.sign(
@@ -320,6 +366,23 @@ app.get('/group/chat', async (req, res) => {
     .map((m) => ({ id: m.id, name: m.name, text: m.text, ts: m.ts, me: m.steamId === s.steamId }));
   res.json({ messages, group: key });
 });
+
+// ── Speicher-Janitor: hält die In-Memory-Stores beschränkt ─────────────────
+// Ohne das wachsen chatStore (stille Gruppen), chatGroupCache und overlayActivity
+// über Tage/Wochen unbegrenzt. Läuft alle 10 Min und räumt Veraltetes weg.
+setInterval(() => {
+  const now = Date.now();
+  for (const key of Object.keys(chatStore)) {
+    const kept = chatStore[key].filter((m) => now - m.ts < CHAT_TTL);
+    if (kept.length) chatStore[key] = kept; else delete chatStore[key];
+  }
+  for (const sid of Object.keys(chatGroupCache)) {
+    if (now - (chatGroupCache[sid]?.ts || 0) > 60 * 60_000) delete chatGroupCache[sid];
+  }
+  for (const sid of Object.keys(overlayActivity)) {
+    if (now - overlayActivity[sid] > 6 * 60 * 60_000) delete overlayActivity[sid];
+  }
+}, 10 * 60_000).unref?.();
 
 // ── 4b) Eigene Dino-Stats ──────────────────────────────────────────────────
 app.get('/me', async (req, res) => {
@@ -515,12 +578,14 @@ function getInventory(steamId) {
   return inv;
 }
 function removeOneToken(steamId, type) {
-  const all = readJson(INVENTORY_FILE, {});
-  const have = all[steamId]?.[type] ?? 0;
-  if (have < 1) return false;
-  all[steamId][type] = have - 1;
-  writeJsonFile(INVENTORY_FILE, all);
-  return true;
+  return withFileLock(INVENTORY_FILE, () => {
+    const all = readJson(INVENTORY_FILE, {});
+    const have = all[steamId]?.[type] ?? 0;
+    if (have < 1) return false;
+    all[steamId][type] = have - 1;
+    writeJsonFile(INVENTORY_FILE, all);
+    return true;
+  });
 }
 // Punkt-Pfad ("nutrients.proteins") → verschachteltes Objekt mit Wert
 function vitalsBody(steamId, apiField, val) {
@@ -544,11 +609,13 @@ function cooldownRemaining(steamId, action) {
   return Math.max(0, until - Date.now());
 }
 function startCooldown(steamId, action) {
-  const store = readJson(COOLDOWNS_FILE, {});
-  if (!store[steamId]) store[steamId] = {};
-  const dur = action === 'park' ? PARK_COOLDOWN_MS : action === 'swap' ? SWAP_COOLDOWN_MS : UNPACK_COOLDOWN_MS;
-  store[steamId][action] = Date.now() + dur;
-  writeJsonFile(COOLDOWNS_FILE, store);
+  withFileLock(COOLDOWNS_FILE, () => {
+    const store = readJson(COOLDOWNS_FILE, {});
+    if (!store[steamId]) store[steamId] = {};
+    const dur = action === 'park' ? PARK_COOLDOWN_MS : action === 'swap' ? SWAP_COOLDOWN_MS : UNPACK_COOLDOWN_MS;
+    store[steamId][action] = Date.now() + dur;
+    writeJsonFile(COOLDOWNS_FILE, store);
+  });
 }
 function fmtCooldown(ms) {
   const total = Math.ceil(ms / 1000);
@@ -582,6 +649,34 @@ function writeJsonFile(file, data) {
   const tmp = `${file}.tmp-${process.pid}-${Date.now()}`;
   writeFileSync(tmp, JSON.stringify(data, null, 2));
   renameSync(tmp, file);
+}
+
+// ── Cross-Process-File-Lock ────────────────────────────────────────────────
+// Bot UND token-service schreiben dieselben Files. Ein temp+rename verhindert nur
+// halb geschriebene Dateien, NICHT verlorene Updates (read→ändern→write von 2
+// Prozessen). withFileLock kapselt die GANZE read-modify-write-Transaktion über ein
+// O_EXCL-Lockfile, das beide Prozesse identisch benutzen. Nur für KURZE, rein lokale
+// Transaktionen — NIE über einen await/Netzwerk-Call halten.
+function sleepSync(ms) { try { Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms); } catch {} }
+function withFileLock(file, fn) {
+  const lock = `${file}.lock`;
+  const start = Date.now();
+  const TIMEOUT_MS = 5000, STALE_MS = 15000;
+  let fd = null;
+  while (true) {
+    try { fd = openSync(lock, 'wx'); break; }            // exklusiv anlegen = Lock erhalten
+    catch (e) {
+      if (e.code !== 'EEXIST') throw e;
+      try { if (Date.now() - statSync(lock).mtimeMs > STALE_MS) { unlinkSync(lock); continue; } } catch {}
+      if (Date.now() - start > TIMEOUT_MS) {              // Notfall: lieber ohne Lock weiter als Operation verlieren
+        console.warn(`⚠️ withFileLock Timeout für ${lock} — fahre ohne Lock fort`);
+        break;
+      }
+      sleepSync(12);
+    }
+  }
+  try { return fn(); }
+  finally { if (fd !== null) { try { closeSync(fd); } catch {} try { unlinkSync(lock); } catch {} } }
 }
 
 // Overlay-Aktivität alle 5s in die geteilte Datei flushen (Bot liest sie für die Overlay-Pflicht)
@@ -683,12 +778,34 @@ async function fetchPlayers(maxAge = PLAYERS_TTL) {
 }
 
 // ── Admin-Verwaltung (NUR Admin): User-Info, Lightning, Beschenken ───────────
-function addPoints(steamId, n) { setPointsVal(steamId, getPoints(steamId) + n); }
+function addPoints(steamId, n) {
+  return withFileLock(POINTS_FILE, () => {
+    const p = readJson(POINTS_FILE, {});
+    p[steamId] = Math.max(0, Math.round((p[steamId] ?? 0) + n));
+    writeJsonFile(POINTS_FILE, p);
+    return p[steamId];
+  });
+}
+// Atomar abbuchen: prüft Guthaben UND zieht ab innerhalb EINES Locks (kein TOCTOU).
+// Gibt false zurück, wenn nicht genug Punkte — dann wird nichts geändert.
+function spendPoints(steamId, cost) {
+  return withFileLock(POINTS_FILE, () => {
+    const p = readJson(POINTS_FILE, {});
+    const have = p[steamId] ?? 0;
+    if (have < cost) return false;
+    p[steamId] = Math.max(0, Math.round(have - cost));
+    writeJsonFile(POINTS_FILE, p);
+    return true;
+  });
+}
 function addToken(steamId, type, n) {
-  const all = readJson(INVENTORY_FILE, {});
-  if (!all[steamId]) all[steamId] = {};
-  all[steamId][type] = (all[steamId][type] ?? 0) + n;
-  writeJsonFile(INVENTORY_FILE, all);
+  return withFileLock(INVENTORY_FILE, () => {
+    const all = readJson(INVENTORY_FILE, {});
+    if (!all[steamId]) all[steamId] = {};
+    all[steamId][type] = (all[steamId][type] ?? 0) + n;
+    writeJsonFile(INVENTORY_FILE, all);
+    return all[steamId][type];
+  });
 }
 async function discordApi(path) {
   const r = await fetch(`https://discord.com/api${path}`, {
@@ -704,6 +821,51 @@ async function guildMembers() {
   const list = await discordApi(`/guilds/${DISCORD_GUILD_ID}/members?limit=1000`);
   _membersCache = { at: Date.now(), list };
   return list;
+}
+
+// ── PayPal-Helfer ────────────────────────────────────────────────────────────
+async function paypalToken() {
+  const auth = Buffer.from(`${PAYPAL_CLIENT_ID}:${PAYPAL_CLIENT_SECRET}`).toString('base64');
+  const r = await fetch(`${PAYPAL_API}/v1/oauth2/token`, {
+    method: 'POST',
+    headers: { Authorization: `Basic ${auth}`, 'Content-Type': 'application/x-www-form-urlencoded' },
+    body: 'grant_type=client_credentials',
+    signal: AbortSignal.timeout(8000),
+  });
+  if (!r.ok) throw new Error(`PayPal-Token ${r.status}`);
+  return (await r.json()).access_token;
+}
+// Prüft die Echtheit eines Webhook-Events bei PayPal (gegen Fälschung)
+async function verifyPaypalWebhook(headers, event) {
+  const token = await paypalToken();
+  const r = await fetch(`${PAYPAL_API}/v1/notifications/verify-webhook-signature`, {
+    method: 'POST',
+    headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      auth_algo: headers['paypal-auth-algo'],
+      cert_url: headers['paypal-cert-url'],
+      transmission_id: headers['paypal-transmission-id'],
+      transmission_sig: headers['paypal-transmission-sig'],
+      transmission_time: headers['paypal-transmission-time'],
+      webhook_id: PAYPAL_WEBHOOK_ID,
+      webhook_event: event,
+    }),
+    signal: AbortSignal.timeout(8000),
+  });
+  if (!r.ok) return false;
+  return (await r.json()).verification_status === 'SUCCESS';
+}
+// Discord-Rolle (per Name) vergeben/entziehen. Bot braucht "Rollen verwalten" + höher als die Rolle.
+async function setMemberRole(discordId, roleName, add) {
+  const roles = await discordApi(`/guilds/${DISCORD_GUILD_ID}/roles`);
+  const role = roles.find((r) => r.name === roleName);
+  if (!role) throw new Error(`Rolle nicht gefunden: ${roleName}`);
+  const r = await fetch(`https://discord.com/api/guilds/${DISCORD_GUILD_ID}/members/${discordId}/roles/${role.id}`, {
+    method: add ? 'PUT' : 'DELETE',
+    headers: { Authorization: `Bot ${DISCORD_BOT_TOKEN}`, 'X-Audit-Log-Reason': 'BlackFossil PayPal-Abo' },
+    signal: AbortSignal.timeout(8000),
+  });
+  if (!r.ok && r.status !== 204) throw new Error(`Discord Rolle ${add ? 'add' : 'remove'} ${r.status}`);
 }
 
 // Liste aller verknüpften Discord-User (für das Such-Dropdown)
@@ -1616,7 +1778,7 @@ app.post('/teleports/:id/use', async (req, res) => {
       body: JSON.stringify({ where }), signal: AbortSignal.timeout(8000),
     });
     if (!r.ok) throw new Error(`Teleport fehlgeschlagen (${r.status})`);
-    if (tp.price > 0) setPointsVal(s.steamId, pts - tp.price);
+    if (tp.price > 0) spendPoints(s.steamId, tp.price);   // atomar abbuchen (nach erfolgreichem TP)
     if (tp.cooldownMin > 0) tpStartCooldown(s.steamId, tp.id, tp.cooldownMin);
     res.json({ ok: true, name: tp.name, points: getPoints(s.steamId), cooldownRemaining: tpCooldownRemaining(s.steamId, tp.id) });
   } catch (err) { res.status(502).json({ error: err.message }); }
@@ -1638,7 +1800,13 @@ const SELL_SPECIES_TIER = {
 const serverSellPrice = (dinoClass) => SELL_TIER_PRICES[SELL_SPECIES_TIER[baseClass(dinoClass)] ?? 'small'];
 
 function getPoints(steamId) { return readJson(POINTS_FILE, {})[steamId] ?? 0; }
-function setPointsVal(steamId, v) { const p = readJson(POINTS_FILE, {}); p[steamId] = Math.max(0, Math.round(v)); writeJsonFile(POINTS_FILE, p); }
+function setPointsVal(steamId, v) {
+  withFileLock(POINTS_FILE, () => {
+    const p = readJson(POINTS_FILE, {});
+    p[steamId] = Math.max(0, Math.round(v));
+    writeJsonFile(POINTS_FILE, p);
+  });
+}
 
 // Marktplatz + eigener Kontostand
 app.get('/market', (req, res) => {
@@ -1664,7 +1832,7 @@ app.post('/market/sell-server', express.json(), (req, res) => {
     return res.status(409).json({ error: `Verkauf erst ab ${Math.round(SELL_MIN_GROW * 100)}% Wachstum möglich.` });
   }
   const earned = serverSellPrice(slot.snapshot?.dinoClass);
-  setPointsVal(s.steamId, getPoints(s.steamId) + earned);
+  addPoints(s.steamId, earned);
   garage[s.steamId] = slots.filter((x) => x.id !== slotId);
   writeJsonFile(GARAGE_FILE, garage);
   res.json({ ok: true, earned, points: getPoints(s.steamId) });
@@ -1711,12 +1879,9 @@ app.post('/market/buy', express.json(), (req, res) => {
   const offer = market.find((o) => o.id === offerId);
   if (!offer) return res.status(404).json({ error: 'Angebot nicht gefunden' });
   if (offer.sellerSteamId === s.steamId) return res.status(400).json({ error: 'Eigenes Angebot' });
-  const buyerPoints = getPoints(s.steamId);
-  if (buyerPoints < offer.price) return res.status(402).json({ error: 'Nicht genug Punkte' });
-
-  // Punkte verschieben
-  setPointsVal(s.steamId, buyerPoints - offer.price);
-  setPointsVal(offer.sellerSteamId, getPoints(offer.sellerSteamId) + offer.price);
+  // Punkte atomar abbuchen (prüft Guthaben innerhalb des Locks → kein TOCTOU/Doppel-Kauf der Punkte)
+  if (!spendPoints(s.steamId, offer.price)) return res.status(402).json({ error: 'Nicht genug Punkte' });
+  addPoints(offer.sellerSteamId, offer.price);   // Verkäufer atomar gutschreiben
   // Token in Käufer-Garage
   const garage = readJson(GARAGE_FILE, {});
   if (!garage[s.steamId]) garage[s.steamId] = [];
@@ -1838,6 +2003,48 @@ function htmlPage(title, msg, redirect, fallbackSession) {
   h1{font-size:22px;margin:0 0 12px}p{color:#b3a9cc;line-height:1.5}</style></head>
   <body><div class="card"><h1>${title}</h1><p>${msg}</p>${fallback}</div>${autoRedirect}</body></html>`;
 }
+
+// ── PayPal-Webhook: Abo-Status → Discord-Rolle ─────────────────────────────
+// PayPal ruft diesen Endpoint bei Subscription-Events auf. custom_id = Discord-ID
+// (von der Website beim Kauf gesetzt), plan_id → Rolle (Knochen/Bernstein/Obsidian).
+app.post('/paypal/webhook', express.json({ type: '*/*', limit: '1mb' }), async (req, res) => {
+  const event = req.body || {};
+  try {
+    if (!PAYPAL_WEBHOOK_ID || !PAYPAL_CLIENT_ID) {
+      console.error('PayPal-Webhook: nicht konfiguriert (PAYPAL_WEBHOOK_ID/CLIENT_ID fehlen)');
+      return res.sendStatus(503);
+    }
+    if (!(await verifyPaypalWebhook(req.headers, event))) {
+      console.warn('PayPal-Webhook: ungültige Signatur — verworfen');
+      return res.sendStatus(400);
+    }
+    const type = event.event_type || '';
+    const rsc = event.resource || {};
+    const discordId = String(rsc.custom_id || '').trim();
+    const roleName = PAYPAL_PLANS[rsc.plan_id || ''];
+    if (!/^\d{5,25}$/.test(discordId) || !roleName) {
+      console.warn(`PayPal-Webhook: ${type} ohne gültige discordId/plan_id — ignoriert`);
+      return res.sendStatus(200);
+    }
+
+    if (type === 'BILLING.SUBSCRIPTION.ACTIVATED') {
+      // Genau EINEN Tier halten: andere Abo-Rollen entziehen, neue vergeben
+      for (const other of ALL_TIER_ROLES) {
+        if (other !== roleName) { try { await setMemberRole(discordId, other, false); } catch {} }
+      }
+      await setMemberRole(discordId, roleName, true);
+      console.log(`✅ Abo aktiv: ${discordId} → ${roleName}`);
+    } else if (['BILLING.SUBSCRIPTION.CANCELLED', 'BILLING.SUBSCRIPTION.EXPIRED', 'BILLING.SUBSCRIPTION.SUSPENDED'].includes(type)) {
+      await setMemberRole(discordId, roleName, false);
+      console.log(`⛔ Abo beendet (${type}): ${discordId} → ${roleName} entzogen`);
+    }
+    res.sendStatus(200);
+  } catch (e) {
+    // Nicht-2xx → PayPal wiederholt das Event (gut bei transienten Discord-Fehlern)
+    console.error('PayPal-Webhook-Fehler:', e.message);
+    res.sendStatus(500);
+  }
+});
 
 app.listen(PORT, '127.0.0.1', () => {
   console.log(`✅ Token-Service läuft auf 127.0.0.1:${PORT}`);
