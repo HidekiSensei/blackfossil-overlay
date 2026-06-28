@@ -3453,7 +3453,7 @@ const MOVABLE = [
   { id: 'group',       label: 'Gruppe (F2)', resize: true },
   { id: 'profile',     label: 'Profil (F1)', resize: true },
   { id: 'lexikon',     label: 'Dino-Lexikon', resize: true },
-  { id: 'quests',      label: 'Quests', resize: true, noMove: true },  // skalierbar, aber nicht verschiebbar
+  { id: 'quests',      label: 'Quests', resize: true },  // verschiebbar + skalierbar
 ];
 let editMode = false;
 function loadPositions() { try { return JSON.parse(localStorage.getItem('bf-layout')) || {}; } catch { return {}; } }
