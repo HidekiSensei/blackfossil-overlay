@@ -3439,18 +3439,21 @@ async function aiSpawnAt(x, y) {
 // ── Edit-Mode: Panels verschiebbar machen (Positionen in localStorage) ──────
 // resize:true → zusätzlich skalierbar. Sonst nur verschiebbar (einheitliches Verhalten).
 // HUD-Pille (oben mittig), Quest & Große Karte sind bewusst NICHT enthalten = nicht verschiebbar.
+// resize: 'mini'|'scale'|true (true = Breite/Höhe). noMove: true → nur skalierbar, nicht verschiebbar.
+// Große Karte (bigMap) ist bewusst NICHT enthalten = weder verschiebbar noch skalierbar.
 const MOVABLE = [
   { id: 'minimapWrap', label: 'Minimap', resize: 'mini' },     // Part 3: verschiebbar + skalierbar
   { id: 'hudHeart',    label: 'Lebensanzeige', resize: 'scale' }, // Part 3b: Herz, verschiebbar + skalierbar
   { id: 'hudInfo',     label: 'Info-Boxen', resize: 'scale' }, // Part 4: entkoppelt verschiebbar + skalierbar
-  { id: 'settings',    label: 'Einstellungen' },
-  { id: 'dinoInfo',    label: 'Dino-Info (F5)' },
-  { id: 'skinEditor',  label: 'Skin-Editor' },
-  { id: 'garage',      label: 'Garage' },
-  { id: 'market',      label: 'Markt' },
-  { id: 'group',       label: 'Gruppe (F2)' },
-  { id: 'profile',     label: 'Profil (F1)' },
-  { id: 'lexikon',     label: 'Dino-Lexikon' },
+  { id: 'settings',    label: 'Einstellungen', resize: true },
+  { id: 'dinoInfo',    label: 'Dino-Info (F5)', resize: true },
+  { id: 'skinEditor',  label: 'Skin-Editor', resize: true },
+  { id: 'garage',      label: 'Garage', resize: true },
+  { id: 'market',      label: 'Markt', resize: true },
+  { id: 'group',       label: 'Gruppe (F2)', resize: true },
+  { id: 'profile',     label: 'Profil (F1)', resize: true },
+  { id: 'lexikon',     label: 'Dino-Lexikon', resize: true },
+  { id: 'quests',      label: 'Quests', resize: true, noMove: true },  // skalierbar, aber nicht verschiebbar
 ];
 let editMode = false;
 function loadPositions() { try { return JSON.parse(localStorage.getItem('bf-layout')) || {}; } catch { return {}; } }
@@ -3587,7 +3590,7 @@ function setupEditMode() {
   // HUD ist nicht mehr verschiebbar → evtl. alte gespeicherte Position entfernen, fix zentriert lassen
   { const p = loadPositions(); if (p.hud) { delete p.hud; savePositions(p); }
     const hudEl = el('hud'); if (hudEl) { hudEl.style.left = ''; hudEl.style.top = ''; hudEl.style.right = ''; hudEl.style.bottom = ''; hudEl.style.transform = ''; hudEl.style.width = ''; } }
-  for (const m of MOVABLE) { const e = el(m.id); if (e) makeDraggable(e, m.id); }
+  for (const m of MOVABLE) { const e = el(m.id); if (e && !m.noMove) makeDraggable(e, m.id); }
   applySavedPositions();
   el('editModeBtn').onclick = () => { setEditMode(true); toggleSettings(false); };
   el('editDoneBtn').onclick = () => { toggleSettings(true); setEditMode(false); };   // „Fertig" → zurück in die Einstellungen (Settings zuerst → kein Dock-Flackern)
