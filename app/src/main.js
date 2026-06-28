@@ -288,6 +288,20 @@ function saveSession(token) { try { fs.writeFileSync(SESSION_FILE, JSON.stringif
 function loadSession() { try { return JSON.parse(fs.readFileSync(SESSION_FILE, 'utf8')).token; } catch { return null; } }
 function clearSession() { try { fs.unlinkSync(SESSION_FILE); } catch {} }
 
+// Nach einem Update alle Spieler ausloggen → sie müssen sich neu anmelden
+// (frische Discord-Rollen/Ränge in der Session). Vergleicht die zuletzt gelaufene
+// Version mit der aktuellen; bei Änderung wird die gespeicherte Session verworfen.
+const VERSION_FILE = path.join(app.getPath('userData'), 'last-version.json');
+function enforceVersionLogout() {
+  let last = null;
+  try { last = JSON.parse(fs.readFileSync(VERSION_FILE, 'utf8')).version; } catch {}
+  const cur = app.getVersion();
+  if (last !== cur) {
+    clearSession();
+    try { fs.writeFileSync(VERSION_FILE, JSON.stringify({ version: cur }), 'utf8'); } catch {}
+  }
+}
+
 function onSessionObtained(token) {
   saveSession(token);
   startGameWatch();
@@ -507,6 +521,7 @@ ipcMain.on('set-interactive', (_e, interactive) => {
 
 // ── App-Start ─────────────────────────────────────────────────────────────
 app.whenReady().then(() => {
+  enforceVersionLogout();   // nach Update: Session verwerfen → Neu-Anmeldung
   setupAutoUpdate();
   try { createTray(); } catch (err) { console.error('Tray fehlgeschlagen:', err?.message || err); }
   startLoopbackServer();
