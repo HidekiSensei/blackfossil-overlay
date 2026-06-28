@@ -3044,6 +3044,16 @@ function bfScheduleFrameSync() {
 // Pro sichtbarem Ziel ein body-Element (#overflow-sicher) das exakt über dem Rand liegt;
 // der SVG-Filter #bf-lightning verzerrt die Rahmenlinie zu flackernden Blitzen.
 const bfFrames = new Map();
+// Panel-Größe ändert sich (Inhalt lädt / Dino-Info/Gruppe/Profil aktualisiert sich) → Rahmen neu vermessen,
+// sonst sitzt er auf der alten Größe (wirkt „mitten drin"). Debounced über rAF.
+let bfRO = null, bfROqueued = false;
+function bfEnsureRO() {
+  if (bfRO || typeof ResizeObserver === 'undefined') return;
+  bfRO = new ResizeObserver(() => {
+    if (bfROqueued) return; bfROqueued = true;
+    requestAnimationFrame(() => { bfROqueued = false; syncLightningFrames(); });
+  });
+}
 function bfLightningTargets() {
   const out = [];
   document.querySelectorAll('.feature-panel').forEach((e) => out.push({ el: e, round: false }));
@@ -3053,11 +3063,13 @@ function bfLightningTargets() {
   return out;
 }
 function syncLightningFrames() {
+  bfEnsureRO();
   for (const t of bfLightningTargets()) {
     let f = bfFrames.get(t.el);
     const shown = getComputedStyle(t.el).display !== 'none';
     const r = shown ? t.el.getBoundingClientRect() : null;
     if (!shown || !r || r.width < 6 || r.height < 6) { if (f) f.style.display = 'none'; continue; }
+    if (bfRO) bfRO.observe(t.el);   // bei Größenänderung automatisch neu vermessen (idempotent)
     if (!f) {
       f = document.createElement('div');
       f.className = 'bf-bolt-frame' + (t.round ? ' round' : '');
