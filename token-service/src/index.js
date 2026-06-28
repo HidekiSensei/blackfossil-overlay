@@ -376,6 +376,18 @@ app.get('/me', async (req, res) => {
   }
 });
 
+// ── Live-Vitals (HP & Co.) — eigener, schneller Endpoint für das Herz/HUD.
+// Combat-relevant → frischer Cache (VITALS_MAX_AGE). Sehr leicht: nur eigener Eintrag. ──
+app.get('/me/vitals', async (req, res) => {
+  const s = sessionFrom(req);
+  if (!s) return res.status(401).json({ error: 'Keine Session' });
+  try {
+    const p = (await fetchPlayers(VITALS_MAX_AGE)).find((x) => x.steamId === s.steamId);
+    if (!p) return res.json({ online: false });
+    res.json({ online: true, health: p.health ?? null, blood: p.blood ?? null, stamina: p.stamina ?? null });
+  } catch (e) { res.status(502).json({ error: e.message }); }
+});
+
 // ── 4c) Token einlösen (Overlay) ────────────────────────────────────────────
 app.post('/tokens/redeem', express.json(), async (req, res) => {
   const auth = req.headers.authorization ?? '';
@@ -647,10 +659,13 @@ app.post('/admin/ai/:action', express.json(), async (req, res) => {
 // So kollabieren ALLE gleichzeitigen /positions-, /me- und Chat-Polls auf
 // höchstens ~1 Game-API-Call pro Sekunde, unabhängig von der Nutzerzahl.
 const PLAYERS_TTL = Number(process.env.PLAYERS_CACHE_MS ?? 750);
+// Vitals/HP wollen frischer sein (Combat-Stat) → kürzeres Max-Alter beim Abruf.
+const VITALS_MAX_AGE = Number(process.env.VITALS_CACHE_MS ?? 300);
 let _playersCache = { ts: 0, data: null, inflight: null };
-async function fetchPlayers() {
+// maxAge = wie alt der Cache höchstens sein darf, sonst frisch holen (In-Flight-Dedup bleibt).
+async function fetchPlayers(maxAge = PLAYERS_TTL) {
   const now = Date.now();
-  if (_playersCache.data && now - _playersCache.ts < PLAYERS_TTL) return _playersCache.data;
+  if (_playersCache.data && now - _playersCache.ts < maxAge) return _playersCache.data;
   if (_playersCache.inflight) return _playersCache.inflight;   // laufenden Abruf mitnutzen
   _playersCache.inflight = (async () => {
     try {

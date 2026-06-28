@@ -269,6 +269,14 @@ function updateHeart(d) {
   wrap.style.setProperty('--heart-color', col);
   val.textContent = online ? pct + '%' : '—';
 }
+// HP/Vitals separat & schnell pollen (Combat-Stat → möglichst live). Eigener leichter Endpoint.
+async function pollVitals() {
+  if (!sessionToken) return;
+  try {
+    const res = await fetch(`${config.tokenBase}/me/vitals`, { headers: { Authorization: `Bearer ${sessionToken}` } });
+    if (res.ok) updateHeart(await res.json());
+  } catch {}
+}
 async function pollHud() {
   if (!sessionToken) return;
   try {
@@ -540,9 +548,7 @@ function startPositionPolling() {
         const data = await res.json();
         players = data.players || [];
         me = players.find((p) => p.isYou) || null;
-        // Lebensanzeige live aus dem Positions-Poll (alle 1,5s) — nicht erst bei F5
-        if (!me) updateHeart(null);
-        else if (typeof me.health === 'number') updateHeart({ online: true, health: me.health });
+        // Health läuft separat über pollVitals() (0,5s, Combat-Stat) — nicht über Positionen
         computeMoveAngles();   // Pfeil-Richtung aus tatsächlicher Karten-Bewegung
         if (Array.isArray(data.toasts)) for (const t of data.toasts) showToast(t, 'success');
         applyServerState();
@@ -3284,6 +3290,7 @@ async function connectWithSession(session) {
     pollHud();
     if (!pollHud._timer) pollHud._timer = setInterval(pollHud, 6000);
     if (!pollGroupChat._timer) pollGroupChat._timer = setInterval(pollGroupChat, 4000);
+    if (!pollVitals._timer) { pollVitals(); pollVitals._timer = setInterval(pollVitals, 500); }   // HP live (0,5s)
     loadTeleports();
     if (!loadTeleports._timer) loadTeleports._timer = setInterval(() => { if (mapOpen) loadTeleports(); }, 4000);
     await connect(data);
