@@ -294,19 +294,19 @@
     .stat-fill { height: 100%; border-radius: 999px; width: 0; position: relative;
       transition: width 0.6s cubic-bezier(.22,1,.36,1);
       box-shadow: inset 0 0 8px rgba(255,255,255,0.28), inset 0 -2px 4px rgba(0,0,0,0.3);
-      animation: vitalPulse 2.4s ease-in-out infinite; }
-    @keyframes vitalPulse { 0%,100% { filter: saturate(1.2) brightness(1.05); } 50% { filter: saturate(1.6) brightness(1.22); } }
-    /* Schicht 1: zuckende Blitz-Streifen, die durch die Flüssigkeit wandern */
+      animation: vitalPulse 3.2s ease-in-out infinite; }
+    @keyframes vitalPulse { 0%,100% { filter: saturate(1.15) brightness(1.04); } 50% { filter: saturate(1.35) brightness(1.13); } }
+    /* Schicht 1: weiche, langsam wandernde Energie-Glints (sanft, nicht zuckend) */
     .stat-fill::before { content: ''; position: absolute; inset: 0; border-radius: 999px; pointer-events: none; z-index: 2; mix-blend-mode: screen;
-      background: repeating-linear-gradient(74deg, transparent 0 8px, rgba(255,255,255,0) 8px 11px, rgba(255,255,255,0.78) 11px 12px, transparent 12px 20px);
-      background-size: 64px 100%; animation: vitalBolts 1.05s linear infinite, vitalFlicker .16s steps(2,end) infinite; }
-    @keyframes vitalBolts { to { background-position: 64px 0; } }
-    @keyframes vitalFlicker { 0% { opacity: .92; } 100% { opacity: .5; } }
-    /* Schicht 2: heller Energie-Sweep (Blitz, der durchzieht) */
+      background: repeating-linear-gradient(72deg, transparent 0 20px, rgba(255,255,255,0) 20px 25px, rgba(255,255,255,0.38) 26px 27.5px, rgba(255,255,255,0) 29px 36px);
+      background-size: 104px 100%; animation: vitalDrift 4s linear infinite, vitalBreathe 3.2s ease-in-out infinite; }
+    @keyframes vitalDrift { to { background-position: 104px 0; } }
+    @keyframes vitalBreathe { 0%,100% { opacity: .45; } 50% { opacity: .8; } }
+    /* Schicht 2: seltener, weicher Glanz-Zug mit Pause (kein Dauer-Rauschen) */
     .stat-fill::after { content: ''; position: absolute; inset: 0; border-radius: 999px; pointer-events: none; z-index: 3; mix-blend-mode: screen;
-      background: linear-gradient(100deg, transparent 32%, rgba(255,255,255,0.7) 50%, transparent 68%);
-      background-size: 220% 100%; animation: vitalSweep 1.7s linear infinite; }
-    @keyframes vitalSweep { from { background-position: 210% 0; } to { background-position: -130% 0; } }
+      background: linear-gradient(105deg, transparent 40%, rgba(255,255,255,0.4) 50%, transparent 60%);
+      background-size: 300% 100%; animation: vitalSweep 5.5s ease-in-out infinite; }
+    @keyframes vitalSweep { 0% { background-position: 240% 0; } 50%,100% { background-position: -150% 0; } }
     /* Blitz-Effekte aus → ruhige Balken */
     body.bf-noblitz .stat-fill, body.bf-noblitz .stat-fill::before, body.bf-noblitz .stat-fill::after { animation: none; }
     body.bf-noblitz .stat-fill::before { opacity: .28; }
