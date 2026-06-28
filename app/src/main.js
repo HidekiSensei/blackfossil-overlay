@@ -467,6 +467,9 @@ ipcMain.handle('get-session', () => loadSession());
 ipcMain.handle('get-config', () => ({ tokenBase: TOKEN_BASE, hotkeys: HOTKEYS }));
 ipcMain.handle('get-hotkeys', () => HOTKEYS);
 ipcMain.handle('set-hotkey', (_e, action, key) => {
+  // Nur bekannte Actions zulassen (sonst könnte der Renderer beliebige Keys in die Datei schreiben)
+  if (!Object.prototype.hasOwnProperty.call(DEFAULT_HOTKEYS, action)) return HOTKEYS;
+  if (typeof key !== 'string') return HOTKEYS;
   HOTKEYS[action] = key;            // key kann '' sein = unbelegt
   saveHotkeys();
   registerHotkeys();

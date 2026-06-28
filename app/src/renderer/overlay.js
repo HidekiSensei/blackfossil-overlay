@@ -24,6 +24,7 @@ function applyTheme(key) {
   r.setProperty('--accent-rgb', t.rgb); r.setProperty('--panel', t.panel);
   r.setProperty('--input-bg', t.inputBg);
   localStorage.setItem('bf-theme', currentTheme);
+  minimapDirty = true;   // Theme-Farben geändert → Minimap neu zeichnen
 }
 function renderThemePicker() {
   const box = el('themePicker'); if (!box) return;
@@ -41,7 +42,7 @@ let fxOff = localStorage.getItem('bf-noblitz') === '1';
 function applyFx() {
   document.body.classList.toggle('bf-noblitz', fxOff);
   const b = document.getElementById('fxToggleBtn');
-  if (b) { b.textContent = fxOff ? '⚡ Blitz-Effekte: Aus' : '⚡ Blitz-Effekte: An'; b.classList.toggle('secondary', fxOff); }
+  if (b) { b.textContent = fxOff ? '⚡ Effekte: Aus' : '⚡ Effekte: An'; b.classList.toggle('secondary', fxOff); }
 }
 function toggleFx() { fxOff = !fxOff; localStorage.setItem('bf-noblitz', fxOff ? '1' : '0'); applyFx(); }
 document.addEventListener('DOMContentLoaded', applyFx);
@@ -491,8 +492,16 @@ async function init() {
   el('resetHkBtn').onclick = async () => { await window.bf.resetHotkeys(); await renderHotkeys(); };
   window.addEventListener('keydown', onRebindKey);
 
-  // Render-Loops
-  setInterval(renderMinimap, 200);
+  // Render-Loops — Minimap nur neu zeichnen, wenn sichtbar UND etwas geändert.
+  // Spart bei vielen Spielern hunderte identische Redraws/Min; der 1,5s-Positions-Poll
+  // markiert ohnehin dirty → die Minimap ist nie länger als ~1,5s veraltet.
+  setInterval(() => {
+    if (!minimapDirty || !me) return;                 // off-server (!me) → Minimap ausgeblendet
+    const mw = el('minimapWrap');
+    if (mw && mw.style.display === 'none') return;
+    minimapDirty = false;
+    renderMinimap();
+  }, 200);
   // Minimap per Mausrad zoomen (greift, wenn das Overlay interaktiv ist: Dock/Panel offen)
   { const mm = el('minimap'); if (mm) mm.addEventListener('wheel', (e) => {
       e.preventDefault(); setMiniZoom(miniZoom * (e.deltaY < 0 ? 1.18 : 1 / 1.18));
@@ -550,6 +559,7 @@ function startPositionPolling() {
         me = players.find((p) => p.isYou) || null;
         // Health läuft separat über pollVitals() (0,5s, Combat-Stat) — nicht über Positionen
         computeMoveAngles();   // Pfeil-Richtung aus tatsächlicher Karten-Bewegung
+        minimapDirty = true;   // neue Positionen → Minimap neu zeichnen
         if (Array.isArray(data.toasts)) for (const t of data.toasts) showToast(t, 'success');
         applyServerState();
         updateZoneBox();
@@ -695,6 +705,7 @@ function fitCanvasDPR(cv, ctx) {
 }
 
 let miniZoom = parseFloat(localStorage.getItem('bf-mini-zoom')) || 1;   // Nutzer-Zoom der Minimap (Mausrad)
+let minimapDirty = true;   // Minimap nur neu zeichnen, wenn sich etwas geändert hat (Daten/Zoom/Theme)
 function setMiniZoom(z) {
   miniZoom = Math.min(6, Math.max(0.5, z));
   localStorage.setItem('bf-mini-zoom', miniZoom.toFixed(2));
@@ -3329,8 +3340,22 @@ async function connect({ token, url }) {
         document.body.appendChild(a);
         updateProximityVolumes();
       }
+    })
+    .on(RoomEvent.TrackUnsubscribed, (track) => {
+      // Audio-Elemente beim Verlassen wieder aus dem DOM nehmen (sonst Memory-Leak)
+      if (track.kind === Track.Kind.Audio) {
+        track.detach().forEach((el) => el.remove());
+        updateProximityVolumes();
+      }
     });
-  await room.connect(url, token);
+  try {
+    await room.connect(url, token);
+  } catch (e) {
+    // Fehlversuch sauber zurückrollen, sonst bleibt ein toter Room hängen
+    try { room.disconnect(); } catch {}
+    room = null; voiceConnected = false;
+    throw e;   // connectWithSession zeigt den Fehler-Toast
+  }
   // Gewählte Audio-Geräte anwenden (falls gesetzt)
   try { if (micDeviceId) await room.switchActiveDevice('audioinput', micDeviceId); } catch {}
   try { if (spkDeviceId) await room.switchActiveDevice('audiooutput', spkDeviceId); } catch {}
