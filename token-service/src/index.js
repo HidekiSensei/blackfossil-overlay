@@ -268,6 +268,7 @@ app.get('/positions', async (req, res) => {
       isYou: p.steamId === payload.steamId,
       groupId: p.groupId ?? null,
       grow: p.grow ?? null,
+      health: p.health ?? null,
       partnerSteamId: p.partnerSteamId ?? null,
       ovgroup: ovMembers.has(p.steamId) && p.steamId !== payload.steamId,
     }));

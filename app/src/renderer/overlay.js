@@ -540,6 +540,9 @@ function startPositionPolling() {
         const data = await res.json();
         players = data.players || [];
         me = players.find((p) => p.isYou) || null;
+        // Lebensanzeige live aus dem Positions-Poll (alle 1,5s) — nicht erst bei F5
+        if (!me) updateHeart(null);
+        else if (typeof me.health === 'number') updateHeart({ online: true, health: me.health });
         computeMoveAngles();   // Pfeil-Richtung aus tatsächlicher Karten-Bewegung
         if (Array.isArray(data.toasts)) for (const t of data.toasts) showToast(t, 'success');
         applyServerState();
@@ -548,7 +551,7 @@ function startPositionPolling() {
         updateProximityVolumes();
         if (settingsOpen) renderVoiceUsers();
         if (mapOpen) renderBigMap();
-        if (featureOpen === 'group') renderGroup();
+        if (featureOpen === 'group') updateGroupLive();   // nur Mitglieder/Chat updaten, NICHT das Eingabefeld neu bauen
       }
     } catch {}
   };
@@ -1713,11 +1716,9 @@ async function sendGroupChat(text) {
 let ovInviteOpen = false;
 const ovInviteSeen = new Set();
 
-function renderGroup() {
-  const panel = el('group');
-  // Chat-Eingabefeld über das Re-Render retten (Polling baut das Panel sonst neu → Reset)
-  const _ci = el('grpChatInput');
-  const _chat = _ci ? { val: _ci.value, focused: document.activeElement === _ci, s: _ci.selectionStart, e: _ci.selectionEnd } : null;
+// Mitglieder-Liste als HTML (+ Anzahl) — getrennt, damit der Live-Update (Polling)
+// nur diesen Teil neu zeichnet und das Chat-Eingabefeld unberührt lässt.
+function groupMembersHtml() {
   const myG = me && me.groupId;
   let members = players.filter((p) => p.isYou || (myG && p.groupId === myG) || p.ovgroup);
   if (!members.length && me) members = [me];
@@ -1726,14 +1727,13 @@ function renderGroup() {
     if (!me) return 0;
     return Math.hypot(a.x - me.x, a.y - me.y) - Math.hypot(b.x - me.x, b.y - me.y);
   });
-
-  let body;
+  let html;
   if (!me) {
-    body = '<p>Du bist gerade nicht auf dem Server.</p>';
+    html = '<p>Du bist gerade nicht auf dem Server.</p>';
   } else if (members.length <= 1) {
-    body = '<p style="color:var(--muted)">Noch keine Gruppe. Bilde eine im Spiel — oder lade unten Spieler <b>gleicher Diät</b> in eine Overlay-Gruppe ein (auch andere Spezies).</p>';
+    html = '<p style="color:var(--muted)">Noch keine Gruppe. Bilde eine im Spiel — oder lade unten Spieler <b>gleicher Diät</b> in eine Overlay-Gruppe ein (auch andere Spezies).</p>';
   } else {
-    body = members.map((p) => {
+    html = members.map((p) => {
       const you = !!p.isYou;
       const partner = me.partnerSteamId && p.steamId === me.partnerSteamId;
       const grow = p.grow != null ? `${Math.round(p.grow * 100)}%` : '';
@@ -1746,6 +1746,24 @@ function renderGroup() {
       </div>`;
     }).join('');
   }
+  return { html, count: members.length };
+}
+// Live-Update (Positions-Poll): NUR Mitglieder-Liste + Chat-Nachrichten, NICHT das Panel/Eingabefeld neu bauen
+function updateGroupLive() {
+  const c = el('grpMembers'); if (!c) return;
+  const mem = groupMembersHtml();
+  c.innerHTML = mem.html;
+  const cnt = el('grpCount'); if (cnt) cnt.textContent = mem.count > 1 ? ` · ${mem.count} Mitglieder` : '';
+  renderGroupChat();
+}
+
+function renderGroup() {
+  const panel = el('group');
+  // Chat-Eingabefeld über das (seltene) volle Re-Render retten
+  const _ci = el('grpChatInput');
+  const _chat = _ci ? { val: _ci.value, focused: document.activeElement === _ci, s: _ci.selectionStart, e: _ci.selectionEnd } : null;
+  const mem = groupMembersHtml();
+  const body = mem.html;
 
   const inv = (ovGroupState.invites || []).map((i) => `<div style="display:flex;justify-content:space-between;align-items:center;gap:8px;padding:6px 8px;margin-bottom:5px;background:rgba(34,197,94,0.12);border:1px solid var(--border);border-radius:8px">
     <span style="font-size:12px">📨 Einladung von <b>${escapeHtml(i.fromName || '?')}</b></span>
@@ -1759,8 +1777,8 @@ function renderGroup() {
       : '<div style="color:var(--muted);font-size:12px">Keine einladbaren Spieler (gleiche Diät, online).</div>';
   }
 
-  panel.innerHTML = `<h2>👥 Gruppe ${members.length > 1 ? `<span style="font-size:13px;color:var(--muted);font-weight:400">· ${members.length} Mitglieder</span>` : ''}</h2>
-    <div style="max-height:36vh;overflow:auto">${body}</div>
+  panel.innerHTML = `<h2>👥 Gruppe <span id="grpCount" style="font-size:13px;color:var(--muted);font-weight:400">${mem.count > 1 ? ` · ${mem.count} Mitglieder` : ''}</span></h2>
+    <div id="grpMembers" style="max-height:36vh;overflow:auto">${body}</div>
     ${inv ? `<div class="sec-title" style="margin-top:12px">📨 Einladungen</div>${inv}` : ''}
     <div class="sec-title" style="margin-top:12px">🔗 Overlay-Gruppe <span style="color:var(--muted);font-weight:400;font-size:11px">(gleiche Diät, übers Overlay)</span></div>
     <button id="ovInviteToggle" style="width:100%;margin:6px 0">${ovInviteOpen ? '▲ Einladen schließen' : '➕ Spieler einladen'}</button>

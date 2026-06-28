@@ -82,7 +82,7 @@
     #bigMapCanvas { max-width: 76vh; max-height: 76vh; width: 76vh; height: 76vh; border-radius: 12px; border: 1px solid var(--border); background: rgba(15,10,30,0.6); flex: none; }
     #mapRight { display: flex; flex-direction: column; gap: 12px; width: 224px; flex: none; max-height: 76vh; }
     /* Map-Seitenpanels (liegen NEBEN der Karte, nicht darüber) */
-    .map-panel { background: rgba(15,10,30,0.92); border: 1px solid var(--border); border-radius: 12px; padding: 12px; font-size: 12px; backdrop-filter: var(--blur); -webkit-backdrop-filter: var(--blur); }
+    .map-panel { background: var(--panel); border: 1px solid var(--border); border-radius: 12px; padding: 12px; font-size: 12px; backdrop-filter: var(--blur); -webkit-backdrop-filter: var(--blur); }
     #tpList { width: 224px; flex: none; max-height: 76vh; overflow: auto; }
     #mapGroup { overflow: auto; }
     .map-viewbtn { display: block; width: 100%; text-align: left; padding: 8px 12px; margin: 0; background: var(--panel); border: 1px solid var(--border); color: #eee; border-radius: 8px; font-size: 13px; font-weight: 600; cursor: pointer; }
@@ -233,7 +233,8 @@
     .q-type .q-name { font-weight: 700; margin-top: 4px; font-size: 14px; }
     .q-type .q-sub { font-size: 11px; color: var(--muted); margin-top: 2px; }
     .q-soon-badge { display: inline-block; margin-top: 6px; font-size: 10px; padding: 1px 7px; border-radius: 5px; background: rgba(245,158,11,0.18); color: #fcd34d; }
-    .q-stage { margin-top: 16px; border: 1px solid var(--border); border-radius: 14px; padding: 18px; background: rgba(15,10,30,0.55);
+    .q-stage { margin-top: 16px; border: 1px solid var(--border); border-radius: 14px; padding: 18px;
+      background: linear-gradient(180deg, rgba(var(--accent-rgb),0.10), rgba(255,255,255,0.015));
       min-height: 188px; display: flex; flex-direction: column; justify-content: center; }
     .q-slot { text-align: center; font-size: 22px; font-weight: 800; min-height: 30px; }
     .q-slot.spin { animation: qFlick .09s steps(1) infinite; color: var(--accent-2); }
