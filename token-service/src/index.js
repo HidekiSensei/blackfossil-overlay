@@ -868,6 +868,32 @@ async function setMemberRole(discordId, roleName, add) {
   if (!r.ok && r.status !== 204) throw new Error(`Discord Rolle ${add ? 'add' : 'remove'} ${r.status}`);
 }
 
+// Willkommens-DM an den Abonnenten (per Bot-Token). Scheitert still, wenn DMs zu sind.
+async function sendDiscordDM(discordId, content) {
+  try {
+    const ch = await fetch('https://discord.com/api/users/@me/channels', {
+      method: 'POST', headers: { Authorization: `Bot ${DISCORD_BOT_TOKEN}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ recipient_id: discordId }), signal: AbortSignal.timeout(8000),
+    });
+    if (!ch.ok) return;
+    const dm = await ch.json();
+    await fetch(`https://discord.com/api/channels/${dm.id}/messages`, {
+      method: 'POST', headers: { Authorization: `Bot ${DISCORD_BOT_TOKEN}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ content }), signal: AbortSignal.timeout(8000),
+    });
+  } catch { /* DMs evtl. gesperrt — ignorieren */ }
+}
+
+// Status einer PayPal-Subscription abfragen (für den periodischen Abgleich).
+async function paypalGetSubscription(subId) {
+  const token = await paypalToken();
+  const r = await fetch(`${PAYPAL_API}/v1/billing/subscriptions/${encodeURIComponent(subId)}`, {
+    headers: { Authorization: `Bearer ${token}` }, signal: AbortSignal.timeout(8000),
+  });
+  if (!r.ok) return null;
+  return r.json();
+}
+
 // Liste aller verknüpften Discord-User (für das Such-Dropdown)
 app.get('/admin/users', async (req, res) => {
   const s = sessionFrom(req);
@@ -2007,6 +2033,20 @@ function htmlPage(title, msg, redirect, fallbackSession) {
 // ── PayPal-Webhook: Abo-Status → Discord-Rolle ─────────────────────────────
 // PayPal ruft diesen Endpoint bei Subscription-Events auf. custom_id = Discord-ID
 // (von der Website beim Kauf gesetzt), plan_id → Rolle (Knochen/Bernstein/Obsidian).
+// ── Abo-Buchhaltung (geteilte Daten-Files in BOT_DATA_DIR) ──────────────────
+const SUBSCRIPTIONS_FILE = `${BOT_DATA_DIR}/subscriptions.json`;   // subId → {discordId, creatorCode, planId, tier, startedAt}
+const LEDGER_FILE        = `${BOT_DATA_DIR}/revenue_ledger.json`;  // [{Zahlung}] für die Buchhaltung
+const CREATOR_CODES_FILE = `${BOT_DATA_DIR}/creator_codes.json`;   // { "code"(lowercase): {name, share 0..1} }
+// Creator-Code → {code, name, share}. Unbekannter/leerer Code → null.
+function creatorForCode(code) {
+  const c = String(code || '').trim();
+  if (!c) return null;
+  const cfg = readJson(CREATOR_CODES_FILE, {});
+  const e = cfg[c.toLowerCase()];
+  return e ? { code: c, name: e.name ?? c, share: Math.max(0, Math.min(1, Number(e.share) || 0)) } : { code: c, name: null, share: 0 };
+}
+const round2 = (n) => Math.round((Number(n) || 0) * 100) / 100;
+
 app.post('/paypal/webhook', express.json({ type: '*/*', limit: '1mb' }), async (req, res) => {
   const event = req.body || {};
   try {
@@ -2020,31 +2060,115 @@ app.post('/paypal/webhook', express.json({ type: '*/*', limit: '1mb' }), async (
     }
     const type = event.event_type || '';
     const rsc = event.resource || {};
-    const discordId = String(rsc.custom_id || '').trim();
-    const roleName = PAYPAL_PLANS[rsc.plan_id || ''];
-    if (!/^\d{5,25}$/.test(discordId) || !roleName) {
-      console.warn(`PayPal-Webhook: ${type} ohne gültige discordId/plan_id — ignoriert`);
-      return res.sendStatus(200);
-    }
 
     if (type === 'BILLING.SUBSCRIPTION.ACTIVATED') {
+      const [didRaw, codeRaw] = String(rsc.custom_id || '').split('|');
+      const discordId = (didRaw || '').trim();
+      const creatorCode = (codeRaw || '').trim();
+      const roleName = PAYPAL_PLANS[rsc.plan_id || ''];
+      if (!/^\d{5,25}$/.test(discordId) || !roleName) {
+        console.warn(`PayPal-Webhook: ACTIVATED ohne gültige discordId/plan_id — ignoriert`);
+        return res.sendStatus(200);
+      }
       // Genau EINEN Tier halten: andere Abo-Rollen entziehen, neue vergeben
       for (const other of ALL_TIER_ROLES) {
         if (other !== roleName) { try { await setMemberRole(discordId, other, false); } catch {} }
       }
       await setMemberRole(discordId, roleName, true);
-      console.log(`✅ Abo aktiv: ${discordId} → ${roleName}`);
+      // Subscription-Mapping merken → spätere Zahlungen dem Creator-Code zuordnen
+      withFileLock(SUBSCRIPTIONS_FILE, () => {
+        const subs = readJson(SUBSCRIPTIONS_FILE, {});
+        subs[rsc.id] = { discordId, creatorCode, planId: rsc.plan_id || '', tier: roleName, startedAt: Date.now() };
+        writeJsonFile(SUBSCRIPTIONS_FILE, subs);
+      });
+      // Willkommens-DM (fire-and-forget, blockiert die Webhook-Antwort nicht)
+      sendDiscordDM(discordId,
+        `🎉 Danke für deine Unterstützung! Dein Rang **${roleName}** ist jetzt aktiv — die Perks sind in Discord & im Overlay freigeschaltet. ❤️\n\n` +
+        `Kündigen kannst du jederzeit selbst in deinem PayPal-Konto unter „Einstellungen → Automatische Zahlungen".`
+      ).catch(() => {});
+      console.log(`✅ Abo aktiv: ${discordId} → ${roleName}${creatorCode ? ` (Code ${creatorCode})` : ''}`);
+
     } else if (['BILLING.SUBSCRIPTION.CANCELLED', 'BILLING.SUBSCRIPTION.EXPIRED', 'BILLING.SUBSCRIPTION.SUSPENDED'].includes(type)) {
-      await setMemberRole(discordId, roleName, false);
-      console.log(`⛔ Abo beendet (${type}): ${discordId} → ${roleName} entzogen`);
+      const discordId = String(rsc.custom_id || '').split('|')[0].trim();
+      const roleName = PAYPAL_PLANS[rsc.plan_id || ''];
+      if (/^\d{5,25}$/.test(discordId) && roleName) {
+        await setMemberRole(discordId, roleName, false);
+        console.log(`⛔ Abo beendet (${type}): ${discordId} → ${roleName} entzogen`);
+      }
+
+    } else if (type === 'PAYMENT.SALE.COMPLETED') {
+      // Jede (auch wiederkehrende) Abo-Zahlung → Einnahmen-Ledger
+      const subId = rsc.billing_agreement_id || '';   // = Subscription-ID bei Abos
+      const txId = rsc.id || '';
+      if (!subId || !txId) return res.sendStatus(200);   // Nicht-Abo-Zahlung → ignorieren
+      const gross = round2(rsc.amount?.total);
+      const fee = round2(rsc.transaction_fee?.value);
+      const net = round2(gross - fee);
+      const meta = readJson(SUBSCRIPTIONS_FILE, {})[subId] || {};
+      const creator = creatorForCode(meta.creatorCode);
+      const creatorShare = creator ? round2(net * creator.share) : 0;
+      const entry = {
+        txId, subId,
+        date: rsc.create_time || new Date().toISOString(),
+        discordId: meta.discordId || null,
+        tier: meta.tier || null,
+        currency: rsc.amount?.currency || 'EUR',
+        gross, fee, net,
+        creatorCode: creator?.code || '',
+        creatorName: creator?.name || null,
+        creatorSharePct: creator ? creator.share : 0,
+        creatorShare,
+        houseShare: round2(net - creatorShare),
+        payoutStatus: 'offen',
+      };
+      withFileLock(LEDGER_FILE, () => {
+        const ledger = readJson(LEDGER_FILE, []);
+        if (ledger.some((e) => e.txId === txId)) return;   // Dedup (PayPal sendet Events ggf. mehrfach)
+        ledger.push(entry);
+        writeJsonFile(LEDGER_FILE, ledger);
+      });
+      console.log(`💶 Zahlung gebucht: ${gross} ${entry.currency} (netto ${net})${entry.creatorCode ? ` → ${entry.creatorCode} ${creatorShare}` : ''}`);
     }
+
     res.sendStatus(200);
   } catch (e) {
-    // Nicht-2xx → PayPal wiederholt das Event (gut bei transienten Discord-Fehlern)
+    // Nicht-2xx → PayPal wiederholt das Event (gut bei transienten Fehlern)
     console.error('PayPal-Webhook-Fehler:', e.message);
     res.sendStatus(500);
   }
 });
+
+// ── Periodischer Abgleich: aktive PayPal-Abos ↔ Discord-Rollen ──────────────
+// Fängt Fälle ab, in denen ein Webhook verloren ging (Rolle nicht vergeben, oder
+// Kündigung verpasst). Geht NUR über die uns bekannten Subscriptions (subscriptions.json).
+async function reconcileSubscriptions() {
+  if (!PAYPAL_CLIENT_ID || !PAYPAL_CLIENT_SECRET || !DISCORD_BOT_TOKEN) return;
+  const subs = readJson(SUBSCRIPTIONS_FILE, {});
+  const ids = Object.keys(subs);
+  if (!ids.length) return;
+  let synced = 0, ended = 0;
+  for (const subId of ids) {
+    try {
+      const meta = subs[subId] || {};
+      const roleName = meta.tier;
+      const did = String(meta.discordId || '');
+      if (!roleName || !/^\d{5,25}$/.test(did)) continue;
+      const sub = await paypalGetSubscription(subId);
+      if (!sub || !sub.status) continue;
+      if (sub.status === 'ACTIVE') {
+        await setMemberRole(did, roleName, true).catch(() => {}); synced++;
+      } else if (['CANCELLED', 'EXPIRED', 'SUSPENDED'].includes(sub.status)) {
+        await setMemberRole(did, roleName, false).catch(() => {});
+        withFileLock(SUBSCRIPTIONS_FILE, () => { const s = readJson(SUBSCRIPTIONS_FILE, {}); delete s[subId]; writeJsonFile(SUBSCRIPTIONS_FILE, s); });
+        ended++;
+      }
+      await new Promise((r) => setTimeout(r, 400));   // Drossel gegen Rate-Limits
+    } catch { /* einzelnes Abo überspringen */ }
+  }
+  if (synced || ended) console.log(`🔄 Abo-Abgleich: ${synced} aktiv bestätigt, ${ended} beendet/entfernt`);
+}
+setInterval(() => { reconcileSubscriptions().catch(() => {}); }, 60 * 60_000).unref?.();   // stündlich
+setTimeout(() => { reconcileSubscriptions().catch(() => {}); }, 90_000).unref?.();           // einmal ~90s nach Start
 
 app.listen(PORT, '127.0.0.1', () => {
   console.log(`✅ Token-Service läuft auf 127.0.0.1:${PORT}`);
