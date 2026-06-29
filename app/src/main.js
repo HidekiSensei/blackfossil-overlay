@@ -82,12 +82,18 @@ function ensureFgProbe() {
     'while($true){ try{ [Console]::Out.WriteLine([BFFg]::Name()) }catch{ [Console]::Out.WriteLine("") }; Start-Sleep -Milliseconds 1000 }';
   try { fs.writeFileSync(FG_PS1, script); } catch { FG_PS1 = null; }
 }
+// Absoluter Pfad zu Windows PowerShell — bloßes 'powershell' scheitert mit
+// spawn ENOENT, wenn der PATH des Users eingeschränkt/kaputt ist (verursachte
+// den Crash-Dialog beim Dock-Hotkey F5).
+const POWERSHELL = (process.platform === 'win32' && process.env.SystemRoot)
+  ? path.join(process.env.SystemRoot, 'System32', 'WindowsPowerShell', 'v1.0', 'powershell.exe')
+  : 'powershell';
 function startForegroundWatch() {
   if (process.platform !== 'win32' || fgChild) return;
   ensureFgProbe();
   if (!FG_PS1) return;
   try {
-    fgChild = spawn('powershell', ['-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', FG_PS1], { windowsHide: true });
+    fgChild = spawn(POWERSHELL, ['-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', FG_PS1], { windowsHide: true });
     fgChild.stdout.on('data', (d) => {
       const line = d.toString().split(/\r?\n/).map((s) => s.trim()).filter((s) => s.length > 0).pop();
       if (line !== undefined) { fgName = line.toLowerCase(); fgUpdatedAt = Date.now(); }
@@ -137,7 +143,8 @@ function bringOverlayToFront() {
         '[BFFront]::Front([IntPtr]([int64]$h))';
       fs.writeFileSync(FRONT_PS1, script);
     }
-    spawn('powershell', ['-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', FRONT_PS1, hwnd], { windowsHide: true });
+    const ch = spawn(POWERSHELL, ['-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', FRONT_PS1, hwnd], { windowsHide: true });
+    ch.on('error', () => {});   // ENOENT u.a. asynchron abfangen → kein Crash des Main-Prozesses
   } catch (e) { /* Foreground-Steal fehlgeschlagen → Electron-Fallback greift weiter */ }
 }
 function isGameForeground() {
@@ -291,17 +298,6 @@ function clearSession() { try { fs.unlinkSync(SESSION_FILE); } catch {} }
 // Nach einem Update alle Spieler ausloggen → sie müssen sich neu anmelden
 // (frische Discord-Rollen/Ränge in der Session). Vergleicht die zuletzt gelaufene
 // Version mit der aktuellen; bei Änderung wird die gespeicherte Session verworfen.
-const VERSION_FILE = path.join(app.getPath('userData'), 'last-version.json');
-function enforceVersionLogout() {
-  let last = null;
-  try { last = JSON.parse(fs.readFileSync(VERSION_FILE, 'utf8')).version; } catch {}
-  const cur = app.getVersion();
-  if (last !== cur) {
-    clearSession();
-    try { fs.writeFileSync(VERSION_FILE, JSON.stringify({ version: cur }), 'utf8'); } catch {}
-  }
-}
-
 function onSessionObtained(token) {
   saveSession(token);
   startGameWatch();
@@ -524,7 +520,6 @@ ipcMain.on('set-interactive', (_e, interactive) => {
 
 // ── App-Start ─────────────────────────────────────────────────────────────
 app.whenReady().then(() => {
-  enforceVersionLogout();   // nach Update: Session verwerfen → Neu-Anmeldung
   setupAutoUpdate();
   try { createTray(); } catch (err) { console.error('Tray fehlgeschlagen:', err?.message || err); }
   startLoopbackServer();
