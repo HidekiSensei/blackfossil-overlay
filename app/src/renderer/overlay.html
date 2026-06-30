@@ -199,6 +199,9 @@
     .pf-side { width: 290px; flex: none; min-width: 0; }
     .pf-center { flex: 1; min-width: 0; }
     .pf-col-head { font-size: 13px; font-weight: 700; color: var(--accent); letter-spacing: .3px; padding-bottom: 8px; margin-bottom: 12px; border-bottom: 1px solid var(--border); }
+    .pf-dino-list { max-height: 60vh; overflow: auto; padding-right: 2px; }
+    .pf-dino-row { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 5px 9px; margin-bottom: 4px; background: rgba(255,255,255,0.04); border-radius: 7px; font-size: 12px; }
+    .pf-dino-nm { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
     .pf-stats { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-top: 6px; }
     .pf-stat { background: rgba(255,255,255,0.04); border: 1px solid var(--border); border-radius: 10px; padding: 9px 11px; min-width: 0; }
     .pf-stat-l { font-size: 11px; color: var(--muted); margin-bottom: 2px; }
@@ -215,12 +218,52 @@
     .mk-chip.on { background: color-mix(in srgb, var(--c) 24%, transparent); border-color: var(--c); color: #fff; }
     .mk-group-head { font-weight: 700; font-size: 13px; margin: 14px 0 8px; padding-bottom: 5px; border-bottom: 1px solid var(--border); }
     .mk-group-head:first-child { margin-top: 0; }
+    /* Token-Markt: Listen-Zeilen + Formulare */
+    .tm-row { display: flex; align-items: center; justify-content: space-between; gap: 10px; padding: 9px 11px; margin-bottom: 7px; border: 1px solid var(--border); border-radius: 10px; background: rgba(255,255,255,0.03); }
+    .tm-info { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+    .tm-info b { font-size: 13px; }
+    .tm-sec { font-weight: 700; font-size: 13px; margin: 14px 0 8px; padding-bottom: 5px; border-bottom: 1px solid var(--border); }
+    .tm-sec:first-child { margin-top: 0; }
+    .tm-form { display: flex; flex-direction: column; gap: 5px; }
+    .tm-form label { font-size: 11px; color: var(--muted); margin-top: 4px; }
+    .tm-input { padding: 9px; border-radius: 8px; border: 1px solid var(--border); background: var(--input-bg); color: #eee; font-size: 13px; }
+    /* Admin-Panel: Tab-Leiste + Panes */
+    .admin-tabs { display: flex; gap: 6px; flex-wrap: wrap; margin-bottom: 14px; }
+    .admin-pane { max-height: 66vh; overflow: auto; padding-right: 4px; }
+    .admin-pane[hidden] { display: none; }
+    .dt-muted { color: var(--muted); font-size: 12px; }
+    .dt-form { display: flex; flex-direction: column; gap: 6px; }
+    .dt-form label { font-size: 11px; color: var(--muted); margin-top: 6px; }
+    .dt-row { display: flex; gap: 8px; flex-wrap: wrap; }
+    .dt-chips { display: flex; flex-wrap: wrap; gap: 5px; max-height: 150px; overflow: auto; padding: 6px; border: 1px solid var(--border); border-radius: 8px; background: rgba(0,0,0,.2); }
+    .dt-chip { font-size: 11px; padding: 4px 9px; border-radius: 999px; border: 1px solid var(--border); background: rgba(255,255,255,.04); color: #ddd; cursor: pointer; user-select: none; }
+    .dt-chip.on { background: color-mix(in srgb, var(--accent) 30%, transparent); border-color: var(--accent); color: #fff; }
+    .dt-chip.dim { opacity: .35; pointer-events: none; }
+    .dt-sec { font-weight: 700; font-size: 12px; margin: 12px 0 5px; color: var(--accent2); }
+    .dt-slot { display: flex; justify-content: space-between; align-items: center; gap: 8px; padding: 8px 10px; margin-bottom: 6px; border: 1px solid var(--border); border-radius: 9px; background: rgba(255,255,255,.03); font-size: 12px; }
     /* Dino-Lexikon: 3 Spalten nach Diät */
     #lexikon.lex-wide { width: clamp(720px, 86vw, 1080px); max-width: 96vw; }
     .lex-cols { display: flex; gap: 14px; margin-top: 12px; }
     .lex-col { flex: 1; min-width: 0; display: flex; flex-direction: column; }
     .lex-col-head { font-weight: 700; font-size: 13px; padding-bottom: 7px; margin-bottom: 8px; border-bottom: 1px solid var(--border); }
     .lex-col-list { max-height: 56vh; overflow: auto; padding-right: 2px; }
+    /* 🆘 Support-Panel (Ticket-Liste links + Chat rechts) */
+    #support.sup-wide { width: clamp(740px, 86vw, 1100px); max-width: 96vw; }
+    .sup-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 14px; }
+    .sup-body { display: flex; gap: 16px; height: 64vh; }
+    .sup-list { width: 32%; min-width: 220px; flex: none; overflow: auto; padding-right: 4px; display: flex; flex-direction: column; }
+    .sup-chat { flex: 1; min-width: 0; display: flex; flex-direction: column; border-left: 1px solid var(--border); padding-left: 16px; }
+    .sup-trow { padding: 9px 11px; margin-bottom: 7px; border: 1px solid var(--border); border-radius: 10px; background: rgba(255,255,255,0.03); cursor: pointer; transition: background .12s; }
+    .sup-trow:hover { background: rgba(var(--accent-rgb),0.12); }
+    .sup-trow.sel { background: rgba(var(--accent-rgb),0.22); border-color: rgba(var(--accent-rgb),0.6); }
+    .sup-trow-top { font-size: 13px; display: flex; align-items: center; gap: 6px; }
+    .sup-trow-sub { font-size: 11px; margin-top: 3px; }
+    .sup-dot { width: 8px; height: 8px; border-radius: 50%; background: #22c55e; display: inline-block; box-shadow: 0 0 6px #22c55e; margin-left: auto; }
+    .sup-chat-head { display: flex; align-items: center; justify-content: space-between; gap: 10px; padding-bottom: 10px; margin-bottom: 10px; border-bottom: 1px solid var(--border); }
+    .sup-scroll { flex: 1; overflow: auto; padding-right: 4px; }
+    .sup-compose { display: flex; gap: 8px; margin-top: 10px; }
+    .sup-empty { color: var(--muted); font-size: 13px; text-align: center; margin: auto; padding: 20px; line-height: 1.5; }
+    .sup-cat.on, button.secondary.on { background: rgba(var(--accent-rgb),0.3) !important; color: #fff !important; border-color: rgba(var(--accent-rgb),0.6) !important; }
     /* Quests (F? / Dock) */
     #quests.q-wide { width: clamp(620px, 60vw, 860px); max-width: 96vw; }
     .q-types { display: flex; gap: 12px; margin: 6px 0 4px; }
@@ -845,7 +888,16 @@
   <!-- Admin-Panel (eigenständiges Modal, NUR Admins — kein Support) -->
   <div id="adminPanel">
     <button id="adminCloseBtn" class="secondary" style="position:absolute;top:16px;right:18px;flex:none;width:auto;padding:6px 12px">✕</button>
-    <h2>🛡️ Admin-Panel</h2>
+    <h2>🛡️ Admin / Support</h2>
+    <div class="admin-tabs" id="adminTabs">
+      <button data-atab="tools">🛠️ Tools</button>
+      <button data-atab="dtoken" class="secondary">🦕 Dino-Token</button>
+      <button data-atab="pvp" class="secondary">🏆 PvP / Prime</button>
+      <button data-atab="account" class="secondary admin-only">🔗 Accounts</button>
+      <button data-atab="server" class="secondary">📢 Server</button>
+    </div>
+    <div class="admin-panes">
+    <div class="admin-pane" data-pane="tools">
     <div class="settings-cols">
 
       <!-- Spalte 1: Spieler-Verwaltung -->
@@ -864,7 +916,7 @@
       </div>
 
       <!-- Spalte 2: Beschenken (ab Moderator) -->
-      <div class="settings-col">
+      <div class="settings-col ingame-only">
         <div class="col-head">🎁 Beschenken</div>
         <div class="set-block">
           <div class="set-label">Ziel</div>
@@ -895,7 +947,7 @@
       </div>
 
       <!-- Spalte 3: Karte, TP & AI -->
-      <div class="settings-col">
+      <div class="settings-col ingame-only">
         <div class="col-head">🗺️ Karte, TP & AI</div>
         <div class="set-block admin-only">
           <button id="adminCalibBtn" style="width:100%">🔧 Karte kalibrieren (global)</button>
@@ -946,6 +998,34 @@
       </div>
 
     </div>
+    </div><!-- /pane tools -->
+
+    <!-- Dino-Token-Verwaltung (Staff: geben/bearbeiten/löschen) -->
+    <div class="admin-pane" data-pane="dtoken" hidden>
+      <div style="display:flex;gap:6px;margin-bottom:14px">
+        <button id="dtTabGive" style="flex:1">🎁 Geben</button>
+        <button id="dtTabEdit" class="secondary" style="flex:1">✏️ Bearbeiten</button>
+        <button id="dtTabDel" class="secondary" style="flex:1">🗑️ Löschen</button>
+      </div>
+      <div id="dtBody"><div class="dt-muted">Lade…</div></div>
+    </div>
+
+    <!-- PvP-Builds + Prime auf aktiven Dino -->
+    <div class="admin-pane" data-pane="pvp" hidden>
+      <div id="ppBody"><div class="dt-muted">Lade…</div></div>
+    </div>
+
+    <!-- Account-Verwaltung (nur Admin) -->
+    <div class="admin-pane admin-only" data-pane="account" hidden>
+      <div id="acBody"><div class="dt-muted">Lade…</div></div>
+    </div>
+
+    <!-- Announce + Server-Steuerung -->
+    <div class="admin-pane" data-pane="server" hidden>
+      <div id="svBody"><div class="dt-muted">Lade…</div></div>
+    </div>
+
+    </div><!-- /admin-panes -->
   </div>
 
   <!-- Server-Banner (oben mittig) -->
@@ -973,6 +1053,7 @@
   <div id="profile" class="feature-panel"></div>
   <div id="quests" class="feature-panel"></div>
   <div id="lexikon" class="feature-panel"></div>
+  <div id="support" class="feature-panel"></div>
 
   <!-- Dock (Overlay-Modus / Alt): klickbare Schnellzugriffe. Icons werden per JS injiziert. -->
   <div id="dock">
@@ -992,6 +1073,7 @@
     </svg>
     <div id="dockInner">
       <button class="dock-btn" data-act="profile" aria-label="Profil"><span>Profil</span></button>
+      <button class="dock-btn" data-act="support" aria-label="Support"><span>Support</span></button>
       <button class="dock-btn" data-act="dino" aria-label="Dino"><span>Dino</span></button>
       <button class="dock-btn" data-act="group" aria-label="Gruppe"><span>Gruppe</span></button>
       <button class="dock-btn" data-act="lexikon" aria-label="Lexikon"><span>Lexikon</span></button>

@@ -13,6 +13,7 @@ import jwt from 'jsonwebtoken';
 import { readFileSync, writeFileSync, renameSync, openSync, closeSync, unlinkSync, statSync } from 'node:fs';
 import { AccessToken } from 'livekit-server-sdk';
 import { randomBytes } from 'node:crypto';
+import { MUTATIONS, PRIME_LABELS, DINOS, getDiet, activeSpecies, mutationsFor, PVP_BUILDS, PVP_LABEL_PREFIX, getPvpBuild } from './staffConfig.js';
 
 // ── Konfiguration ──────────────────────────────────────────────────────────
 const PORT             = process.env.PORT             ?? 8090;
@@ -82,7 +83,7 @@ const ALL_TIER_ROLES = ['Knochen', 'Bernstein', 'Obsidian'];
 
 // ── Discord-Rollen-Check (Admin + Tier + Staff-Rang) ────────────────────────
 async function getDiscordStatus(discordId) {
-  const result = { admin: false, ingame: false, team: false, rank: 'Fossil', tier: 'Fossil', staff: null };
+  const result = { admin: false, ingame: false, team: false, rank: 'Fossil', tier: 'Fossil', aboTier: null, staff: null };
   if (!DISCORD_BOT_TOKEN || !DISCORD_GUILD_ID) return result;
   try {
     const headers = { Authorization: `Bot ${DISCORD_BOT_TOKEN}` };
@@ -99,6 +100,9 @@ async function getDiscordStatus(discordId) {
     const rank = RANK_ROLES.find((n) => myRoleNames.has(n)) ?? RANK_ROLES[RANK_ROLES.length - 1];
     result.rank = rank;
     result.tier = rank;          // HUD zeigt nur diesen einen Rang
+    // Abo-Rang (Knochen/Bernstein/Obsidian) separat ermitteln — steht NICHT in RANK_ROLES.
+    // Höchsten gehaltenen Abo-Rang nehmen (ALL_TIER_ROLES ist aufsteigend sortiert).
+    result.aboTier = [...ALL_TIER_ROLES].reverse().find((n) => myRoleNames.has(n)) || null;
     result.staff = null;         // kein zweites Badge mehr
     result.admin = ADMIN_RANKS.includes(rank);
     result.ingame = INGAME_RANKS.includes(rank);
@@ -186,7 +190,7 @@ app.get('/auth/callback', async (req, res) => {
 
     // Steam-ID nachschlagen + Rang/Rechte (Rang braucht kein Steam)
     const steamId = lookupSteamId(user.id);
-    const { admin, ingame, team, rank, tier, staff } = await getDiscordStatus(user.id);
+    const { admin, ingame, team, rank, tier, aboTier, staff } = await getDiscordStatus(user.id);
 
     // Web-Login (Abo-Kauf): zurück zur Website mit Discord-ID. Steam ist hier
     // NICHT Pflicht — die Abo-Rolle wird über die Discord-ID vergeben.
@@ -195,6 +199,7 @@ app.get('/auth/callback', async (req, res) => {
       back.searchParams.set('discord_id', user.id);
       back.searchParams.set('name', user.global_name || user.username);
       back.searchParams.set('tier', tier || 'Fossil');
+      back.searchParams.set('abo', aboTier || '');   // aktueller Abo-Rang für die Website (leer = keiner)
       return res.redirect(back.toString());
     }
 
@@ -894,6 +899,20 @@ async function paypalGetSubscription(subId) {
   return r.json();
 }
 
+// PayPal-Subscription kündigen (für Upgrades: alte Subscription beenden, damit nicht doppelt abgebucht wird).
+async function paypalCancelSubscription(subId, reason = 'Upgrade auf höheren Rang') {
+  try {
+    const token = await paypalToken();
+    const r = await fetch(`${PAYPAL_API}/v1/billing/subscriptions/${encodeURIComponent(subId)}/cancel`, {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ reason }),
+      signal: AbortSignal.timeout(8000),
+    });
+    return r.ok || r.status === 204;
+  } catch { return false; }
+}
+
 // Liste aller verknüpften Discord-User (für das Such-Dropdown)
 app.get('/admin/users', async (req, res) => {
   const s = sessionFrom(req);
@@ -1046,13 +1065,328 @@ app.post('/admin/dino-limits', express.json(), (req, res) => {
   res.json({ ok: true, limits });
 });
 
+// ── STAFF: DINO-TOKEN-TOOLS (geben/bearbeiten/löschen) — Owner/Admin/Support/Moderator ──
+// Staff = Team (Owner/Admin/Support) ODER Ingame (Owner/Admin/Moderator).
+function isStaffMember(s) { return !!(s && (s.team || s.admin || s.ingame || s.staff || FORCE_TEAM_STEAMIDS.includes(s.steamId))); }
+const ZERO = [0, 0, 0];
+// Vollständigen Garage-Snapshot bauen (gleiches Format wie der Bot-Support-Builder).
+function buildDinoSnapshot(steamId, dinoClass, grow, gender, elderStacks, primes, mutations, label) {
+  const snap = {
+    steamId, playerName: label || 'Token', dinoClass, gender,
+    isDead: false, isBleeding: false, isHatchling: grow < 0.1, isElder: elderStacks > 0, isPrime: (primes || []).length >= 5,
+    elderReplicationStacks: elderStacks, location: { x: 0, y: 0, z: 0 },
+    health: 100, hunger: 100, thirst: 100, stamina: 100, blood: 100, grow,
+    carbs: 100, protein: 100, lipid: 100,
+    skinVariation: 0, patternIndex: 0, themeIndex: 0,
+    maleDisplayColor: ZERO, markingsColor: ZERO, bodyColor: ZERO, flankColor: ZERO, underbellyColor: ZERO,
+    teethColor: ZERO, mouthColor: ZERO, clawsColor: ZERO, detailColor: ZERO, eyesColor: ZERO,
+    mutations: { base: mutations?.base || [], parent: mutations?.parent || [], elder: mutations?.elder || [] },
+    playerPing: 0, groupId: null, timeOnMenu: 0,
+  };
+  for (let i = 1; i <= 10; i++) snap[`primeCondition${i}`] = (primes || []).includes(i);
+  return snap;
+}
+function addGarageSlot(steamId, snapshot, label) {
+  return withFileLock(GARAGE_FILE, () => {
+    const g = readJson(GARAGE_FILE, {});
+    const slot = { id: genId(), savedAt: Date.now(), snapshot, ...(label ? { label } : {}) };
+    (g[steamId] = g[steamId] || []).push(slot);
+    writeJsonFile(GARAGE_FILE, g);
+    return slot;
+  });
+}
+// Mutationen defensiv deduplizieren (keine Doppelvergabe über base/parent/elder) + Slot-Caps.
+function dedupMutations(m) {
+  const seen = new Set();
+  const clean = (arr, max) => { const out = []; for (const v of (arr || [])) { if (v && !seen.has(v) && out.length < max) { seen.add(v); out.push(v); } } return out; };
+  return { base: clean(m?.base, 4), parent: clean(m?.parent, 4), elder: clean(m?.elder, 8) };
+}
+const cleanPrimes = (arr) => [...new Set((arr || []).map(Number).filter((n) => n >= 1 && n <= 10))];
+// Ziel(e) auflösen: einzelner User (Steam/Discord), Rolle (alle verknüpften Member) oder alle Online.
+async function resolveDinoTargets(body) {
+  const kind = body?.targetKind || 'user';
+  if (kind === 'online') { try { return (await fetchPlayers()).map((p) => p.steamId).filter(Boolean); } catch { return []; } }
+  if (kind === 'role') {
+    const roleId = String(body?.roleId || ''); if (!roleId) return [];
+    try {
+      const members = await guildMembers();
+      const acc = readJson(ACCOUNTS_PATH, {});
+      return members.filter((m) => (m.roles || []).includes(roleId) && m.user && acc[m.user.id]).map((m) => String(acc[m.user.id]));
+    } catch { return []; }
+  }
+  if (body?.targetSteamId) return [String(body.targetSteamId)];
+  if (body?.targetDiscordId) { const sid = lookupSteamId(String(body.targetDiscordId)); return sid ? [String(sid)] : []; }
+  return [];
+}
+
+// Config für den Overlay-Builder (Spezies, Diäten, Prime-Labels, Mutationen)
+app.get('/admin/dino-token/config', (req, res) => {
+  const s = sessionFrom(req);
+  if (!isStaffMember(s)) return res.status(403).json({ error: 'Nur für Staff' });
+  res.json({ species: activeSpecies(), dietBySpecies: DINOS, primeLabels: PRIME_LABELS, mutations: MUTATIONS });
+});
+
+// Garage eines Ziels auflisten (für Bearbeiten/Löschen)
+app.get('/admin/dino-token/garage', (req, res) => {
+  const s = sessionFrom(req);
+  if (!isStaffMember(s)) return res.status(403).json({ error: 'Nur für Staff' });
+  let steamId = req.query.steamId ? String(req.query.steamId) : null;
+  if (!steamId && req.query.discordId) steamId = lookupSteamId(String(req.query.discordId));
+  if (!steamId) return res.status(400).json({ error: 'Kein Ziel (steamId/discordId).' });
+  const slots = (readJson(GARAGE_FILE, {})[steamId] || []).map((sl) => {
+    const sn = sl.snapshot || {};
+    const primes = []; for (let i = 1; i <= 10; i++) if (sn[`primeCondition${i}`]) primes.push(i);
+    return { ...slotCard(sl), label: sl.label ?? null, elderStacks: sn.elderReplicationStacks ?? 0, primes, mutations: sn.mutations ?? { base: [], parent: [], elder: [] } };
+  });
+  res.json({ steamId, slots });
+});
+
+// Dino-Token geben (an User / Rolle→alle / Online→alle)
+app.post('/admin/dino-token/create', express.json(), async (req, res) => {
+  const s = sessionFrom(req);
+  if (!isStaffMember(s)) return res.status(403).json({ error: 'Nur für Staff' });
+  const b = req.body || {};
+  const dino = baseClass(String(b.dino || ''));
+  if (!dino) return res.status(400).json({ error: 'Keine Spezies.' });
+  const gender = b.gender === 'Female' ? 'Female' : 'Male';
+  const grow = Math.max(0.01, Math.min(1, Number(b.grow) || 0.25));
+  const elderStacks = Math.max(0, Math.min(3, parseInt(b.elderStacks, 10) || 0));
+  const primes = cleanPrimes(b.primes);
+  const mutations = dedupMutations(b.mutations);
+  const targets = await resolveDinoTargets(b);
+  if (!targets.length) return res.status(404).json({ error: 'Kein gültiges Ziel gefunden.' });
+  const label = b.label ? String(b.label).slice(0, 60) : `🎁 ${dino}`;
+  for (const sid of targets) {
+    try { addGarageSlot(sid, buildDinoSnapshot(sid, dino, grow, gender, elderStacks, primes, mutations, label), label); } catch {}
+  }
+  res.json({ ok: true, count: targets.length, dino });
+});
+
+// Dino-Token bearbeiten (vorhandenen Garage-Slot anpassen)
+app.post('/admin/dino-token/edit', express.json(), (req, res) => {
+  const s = sessionFrom(req);
+  if (!isStaffMember(s)) return res.status(403).json({ error: 'Nur für Staff' });
+  const b = req.body || {};
+  const steamId = b.targetSteamId ? String(b.targetSteamId) : (b.targetDiscordId ? lookupSteamId(String(b.targetDiscordId)) : null);
+  if (!steamId) return res.status(400).json({ error: 'Kein Ziel.' });
+  const upd = withFileLock(GARAGE_FILE, () => {
+    const g = readJson(GARAGE_FILE, {});
+    const slots = g[steamId] || [];
+    const slot = slots.find((x) => x.id === b.slotId);
+    if (!slot) return { err: 'Slot nicht gefunden.' };
+    const sn = slot.snapshot || {};
+    if (b.grow != null) { sn.grow = Math.max(0.01, Math.min(1, Number(b.grow))); sn.isHatchling = sn.grow < 0.1; }
+    if (b.gender === 'Male' || b.gender === 'Female') sn.gender = b.gender;
+    if (b.elderStacks != null) { sn.elderReplicationStacks = Math.max(0, Math.min(3, parseInt(b.elderStacks, 10) || 0)); sn.isElder = sn.elderReplicationStacks > 0; }
+    if (b.primes != null) { const pr = cleanPrimes(b.primes); for (let i = 1; i <= 10; i++) sn[`primeCondition${i}`] = pr.includes(i); sn.isPrime = pr.length >= 5; }
+    if (b.mutations != null) sn.mutations = dedupMutations(b.mutations);
+    slot.snapshot = sn;
+    writeJsonFile(GARAGE_FILE, g);
+    return { ok: true };
+  });
+  if (upd.err) return res.status(404).json({ error: upd.err });
+  res.json({ ok: true });
+});
+
+// Dino-Token löschen
+app.post('/admin/dino-token/delete', express.json(), (req, res) => {
+  const s = sessionFrom(req);
+  if (!isStaffMember(s)) return res.status(403).json({ error: 'Nur für Staff' });
+  const b = req.body || {};
+  const steamId = b.targetSteamId ? String(b.targetSteamId) : (b.targetDiscordId ? lookupSteamId(String(b.targetDiscordId)) : null);
+  if (!steamId) return res.status(400).json({ error: 'Kein Ziel.' });
+  const upd = withFileLock(GARAGE_FILE, () => {
+    const g = readJson(GARAGE_FILE, {});
+    const slots = g[steamId] || [];
+    if (!slots.find((x) => x.id === b.slotId)) return { err: 'Slot nicht gefunden.' };
+    g[steamId] = slots.filter((x) => x.id !== b.slotId);
+    writeJsonFile(GARAGE_FILE, g);
+    return { ok: true };
+  });
+  if (upd.err) return res.status(404).json({ error: upd.err });
+  res.json({ ok: true });
+});
+
+// ── ADMIN: ACCOUNT-VERWALTUNG (Discord↔Steam Link / Find / Dupes) ────────────
+async function discordNameMap() {
+  try { const m = await guildMembers(); const map = {}; for (const x of m) if (x.user) map[x.user.id] = x.nick || x.user.global_name || x.user.username; return map; } catch { return {}; }
+}
+// Duplikate: SteamIDs an >1 Discord-Account
+app.get('/admin/accounts/dups', async (req, res) => {
+  const s = sessionFrom(req);
+  if (!isAdminMember(s)) return res.status(403).json({ error: 'Nur für Admins' });
+  const acc = readJson(ACCOUNTS_PATH, {});
+  const bySteam = {};
+  for (const [d, sid] of Object.entries(acc)) (bySteam[String(sid)] = bySteam[String(sid)] || []).push(d);
+  const names = await discordNameMap();
+  const dups = Object.entries(bySteam).filter(([, ds]) => ds.length > 1).map(([sid, ds]) => ({ steamId: sid, accounts: ds.map((d) => ({ discordId: d, name: names[d] || null })) }));
+  res.json({ dups });
+});
+// Verknüpfung suchen (per Discord- oder Steam-ID)
+app.get('/admin/accounts/find', async (req, res) => {
+  const s = sessionFrom(req);
+  if (!isAdminMember(s)) return res.status(403).json({ error: 'Nur für Admins' });
+  const acc = readJson(ACCOUNTS_PATH, {});
+  const names = await discordNameMap();
+  const did = req.query.discordId ? String(req.query.discordId).trim() : null;
+  const sid = req.query.steamId ? String(req.query.steamId).trim() : null;
+  if (did) return res.json({ query: 'discord', results: acc[did] ? [{ discordId: did, steamId: String(acc[did]), name: names[did] || null }] : [] });
+  if (sid) return res.json({ query: 'steam', results: Object.keys(acc).filter((d) => String(acc[d]) === sid).map((d) => ({ discordId: d, steamId: sid, name: names[d] || null })) });
+  res.status(400).json({ error: 'Discord- oder Steam-ID angeben.' });
+});
+// Verknüpfung setzen/überschreiben
+app.post('/admin/accounts/link', express.json(), (req, res) => {
+  const s = sessionFrom(req);
+  if (!isAdminMember(s)) return res.status(403).json({ error: 'Nur für Admins' });
+  const did = String(req.body?.discordId || '').trim(), sid = String(req.body?.steamId || '').trim();
+  if (!/^\d{5,25}$/.test(did)) return res.status(400).json({ error: 'Ungültige Discord-ID.' });
+  if (!/^7656119\d{10}$/.test(sid)) return res.status(400).json({ error: 'Ungültige SteamID64 (muss mit 7656119 beginnen, 17 Ziffern).' });
+  const out = withFileLock(ACCOUNTS_PATH, () => {
+    const acc = readJson(ACCOUNTS_PATH, {});
+    const prev = acc[did] ? String(acc[did]) : null;
+    const dupOf = Object.keys(acc).filter((d) => d !== did && String(acc[d]) === sid);
+    acc[did] = sid; writeJsonFile(ACCOUNTS_PATH, acc);
+    return { prev, dupOf };
+  });
+  res.json({ ok: true, previous: out.prev, alsoLinkedTo: out.dupOf });
+});
+// Verknüpfung löschen
+app.post('/admin/accounts/unlink', express.json(), (req, res) => {
+  const s = sessionFrom(req);
+  if (!isAdminMember(s)) return res.status(403).json({ error: 'Nur für Admins' });
+  const did = String(req.body?.discordId || '').trim();
+  if (!did) return res.status(400).json({ error: 'Keine Discord-ID.' });
+  const existed = withFileLock(ACCOUNTS_PATH, () => {
+    const acc = readJson(ACCOUNTS_PATH, {});
+    if (!(did in acc)) return false;
+    delete acc[did]; writeJsonFile(ACCOUNTS_PATH, acc);
+    return true;
+  });
+  if (!existed) return res.status(404).json({ error: 'Keine Verknüpfung für diese Discord-ID.' });
+  res.json({ ok: true });
+});
+
+// ── STAFF: PvP-BUILDS verteilen/einsammeln + PRIME auf aktiven Dino ──────────
+app.get('/admin/pvp/config', (req, res) => {
+  const s = sessionFrom(req);
+  if (!isStaffMember(s)) return res.status(403).json({ error: 'Nur für Staff' });
+  res.json({ builds: PVP_BUILDS.map((b) => ({ key: b.key, label: b.label, dinoClass: b.dinoClass, blurb: b.blurb })), primeLabels: PRIME_LABELS });
+});
+
+// PvP-Build verteilen (an User / Rolle→alle / Online→alle)
+app.post('/admin/pvp/grant', express.json(), async (req, res) => {
+  const s = sessionFrom(req);
+  if (!isStaffMember(s)) return res.status(403).json({ error: 'Nur für Staff' });
+  const build = getPvpBuild(String(req.body?.buildKey || ''));
+  if (!build) return res.status(400).json({ error: 'Unbekannter Build.' });
+  const targets = await resolveDinoTargets(req.body || {});
+  if (!targets.length) return res.status(404).json({ error: 'Kein gültiges Ziel gefunden.' });
+  const label = `${PVP_LABEL_PREFIX} · ${build.dinoClass}`;
+  const allPrimes = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10];
+  for (const sid of targets) {
+    try { addGarageSlot(sid, buildDinoSnapshot(sid, build.dinoClass, 1, 'Male', 3, allPrimes, build.mutations, label), label); } catch {}
+  }
+  res.json({ ok: true, count: targets.length, dino: build.dinoClass });
+});
+
+// PvP-Builds wieder einsammeln (alle Slots mit dem PvP-Label-Marker entfernen)
+app.post('/admin/pvp/remove', express.json(), async (req, res) => {
+  const s = sessionFrom(req);
+  if (!isStaffMember(s)) return res.status(403).json({ error: 'Nur für Staff' });
+  const targets = await resolveDinoTargets(req.body || {});
+  if (!targets.length) return res.status(404).json({ error: 'Kein gültiges Ziel gefunden.' });
+  let removed = 0;
+  for (const sid of targets) {
+    try {
+      withFileLock(GARAGE_FILE, () => {
+        const g = readJson(GARAGE_FILE, {});
+        const slots = g[sid] || [];
+        const keep = slots.filter((x) => !String(x.label || '').startsWith(PVP_LABEL_PREFIX));
+        removed += slots.length - keep.length;
+        g[sid] = keep;
+        writeJsonFile(GARAGE_FILE, g);
+      });
+    } catch {}
+  }
+  res.json({ ok: true, removed });
+});
+
+// Prime Conditions LIVE auf den aktiven Ingame-Dino setzen (Nyors /elder)
+app.post('/admin/prime', express.json(), async (req, res) => {
+  const s = sessionFrom(req);
+  if (!isStaffMember(s)) return res.status(403).json({ error: 'Nur für Staff' });
+  const b = req.body || {};
+  const steamId = b.targetSteamId ? String(b.targetSteamId) : (b.targetDiscordId ? lookupSteamId(String(b.targetDiscordId)) : null);
+  if (!steamId) return res.status(400).json({ error: 'Kein Ziel.' });
+  const primes = cleanPrimes(b.primes);
+  // Muss ingame sein — wirkt auf den aktiven Dino, nicht auf einen Token.
+  let cur; try { cur = (await fetchPlayers()).find((p) => p.steamId === steamId); } catch (e) { return res.status(502).json({ error: e.message }); }
+  if (!cur || cur.isDead) return res.status(409).json({ error: 'Spieler ist nicht (lebend) ingame — Prime geht nur auf den aktiven Dino.' });
+  const body = {};
+  for (let i = 1; i <= 10; i++) body[`primeCondition${i}`] = primes.includes(i);
+  try {
+    const r = await fetch(`${PANEL_BASE_URL}/players/${encodeURIComponent(steamId)}/elder`, {
+      method: 'POST', headers: { Authorization: `Bearer ${PANEL_ADMIN_TOKEN}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify(body), signal: AbortSignal.timeout(8000),
+    });
+    const d = await r.json().catch(() => ({}));
+    if (!r.ok) return res.status(502).json({ error: d.Msg || d.error || `HTTP ${r.status}` });
+    res.json({ ok: true, dino: cur.dinoClass, count: primes.length });
+  } catch (e) { res.status(502).json({ error: e.message }); }
+});
+
+// ── STAFF/ADMIN: Announce + Server-Steuerung (über control-server) ───────────
+app.post('/admin/server/announce', express.json(), async (req, res) => {
+  const s = sessionFrom(req);
+  if (!isStaffMember(s)) return res.status(403).json({ error: 'Nur für Staff' });
+  const message = String(req.body?.message || '').trim();
+  if (!message) return res.status(400).json({ error: 'Nachricht fehlt.' });
+  try { const r = await controlFetch('/announce', 'POST', { message }); return res.status(r.status).json(r.data); }
+  catch (e) { return res.status(502).json({ error: e.message }); }
+});
+app.get('/admin/server/status', async (req, res) => {
+  const s = sessionFrom(req);
+  if (!isStaffMember(s)) return res.status(403).json({ error: 'Nur für Staff' });
+  try { const r = await controlFetch('/status', 'GET'); return res.status(r.status).json(r.data); }
+  catch (e) { return res.status(502).json({ error: e.message }); }
+});
+app.post('/admin/server/wipecorpses', express.json(), async (req, res) => {
+  const s = sessionFrom(req);
+  if (!isIngameMember(s)) return res.status(403).json({ error: 'Nur für Moderatoren+' });
+  try { const r = await controlFetch('/wipecorpses', 'POST', {}); return res.status(r.status).json(r.data); }
+  catch (e) { return res.status(502).json({ error: e.message }); }
+});
+const SERVER_CTL_ACTIONS = new Set(['start', 'stop', 'restart']);
+app.post('/admin/server/control', express.json(), async (req, res) => {
+  const s = sessionFrom(req);
+  if (!isAdminMember(s)) return res.status(403).json({ error: 'Nur für Admins' });   // Start/Stop/Restart = gefährlich
+  const action = String(req.body?.action || '');
+  if (!SERVER_CTL_ACTIONS.has(action)) return res.status(400).json({ error: 'Unbekannte Aktion.' });
+  try { const r = await controlFetch('/' + action, 'POST', {}); return res.status(r.status).json(r.data); }
+  catch (e) { return res.status(502).json({ error: e.message }); }
+});
+
+// Darf ein Staff-Mitglied ein OFFENES (noch nicht angenommenes) Ticket in seiner
+// Liste sehen?  Regel (Hideki): nicht an eine Rolle übergeben → alle im Team sehen es;
+// an eine Rolle übergeben → nur, wenn die Rolle dem eigenen Rang oder niedriger entspricht.
+// (Zugewiesene Tickets laufen separat über claimedBy === discordId.)
+function staffCanSeeOpenTicket(s, m) {
+  if (!m.forwardedRole) return true;                       // nicht an eine Rolle übergeben → alle
+  const tIdx = RANK_ROLES.indexOf(m.forwardedRole);
+  if (tIdx === -1) return true;                            // Rolle außerhalb der Rang-Leiter (z.B. Joe) → nicht gaten
+  const myIdx = RANK_ROLES.indexOf(s.rank);
+  if (myIdx === -1) return false;                          // kein bekannter Rang → keine offenen Rollen-Tickets
+  return tIdx >= myIdx;                                    // Ticket-Rang = eigener Rang oder niedriger
+}
+
 // Eigene Support-Tickets (Status, Bearbeiter, neue-Nachricht-Flag) fürs Overlay
 app.get('/me/tickets', async (req, res) => {
   const s = sessionFrom(req);
   if (!s) return res.status(401).json({ error: 'Keine Session' });
   const all = readJson(`${BOT_DATA_DIR}/tickets.json`, {});
-  // Eigene Tickets (als Ersteller) + Tickets, die man als Team-Mitglied bearbeitet (claimedBy)
-  const mine = Object.entries(all).filter(([, m]) => m && (m.openerId === s.discordId || m.claimedBy === s.discordId));
+  const staff = isStaffMember(s);
+  // Eigene (Ersteller) + von mir bearbeitete + (für Staff) offene Tickets meines Rangs/niedriger bzw. nicht an Rolle übergeben
+  const mine = Object.entries(all).filter(([, m]) => m && (m.openerId === s.discordId || m.claimedBy === s.discordId || (staff && !m.claimedBy && staffCanSeeOpenTicket(s, m))));
   let nameOf = () => null;
   try {
     if (DISCORD_BOT_TOKEN && DISCORD_GUILD_ID && mine.some(([, m]) => m.claimedBy)) {
@@ -1067,8 +1401,9 @@ app.get('/me/tickets', async (req, res) => {
     category: m.category,
     status: m.claimedBy ? 'in_bearbeitung' : 'offen',
     handler: m.claimedBy ? nameOf(m.claimedBy) : null,
-    // 'handler' = ich bearbeite das Ticket (nicht selbst eröffnet), sonst 'opener'
-    role: m.openerId === s.discordId ? 'opener' : 'handler',
+    // Rolle aus meiner Sicht: opener (selbst eröffnet) · handler (ich bearbeite) · available (offen, übernehmbar)
+    role: m.openerId === s.discordId ? 'opener' : (m.claimedBy === s.discordId ? 'handler' : 'available'),
+    openerName: m.openerTag || null,
     createdAt: m.createdAt,
     lastMessageAt: m.lastMessageAt || m.createdAt || 0,
     lastFromOther: m.lastMessageBy ? m.lastMessageBy !== s.discordId : false,
@@ -1096,18 +1431,119 @@ app.get('/me/ticket-messages', async (req, res) => {
       .reverse()                                                   // Discord liefert neueste zuerst → chronologisch
       .map((x) => {
         const embedTxt = (Array.isArray(x.embeds) ? x.embeds : []).map((e) => [e.title, e.description].filter(Boolean).join(' — ')).filter(Boolean).join(' · ');
+        let content = (x.content || embedTxt) || '';
+        let author = x.author.bot ? (x.author.global_name || x.author.username || 'Bot') : ((x.member && x.member.nick) || x.author.global_name || x.author.username || '?');
+        let fromBot = !!x.author.bot;
+        let fromMe = x.author.id === s.discordId;
+        // Overlay-relayte Nachrichten kommen als Bot-Message „**Name:** Text" → als menschliche Nachricht darstellen
+        const rel = fromBot ? content.match(/^\*\*(.+?):\*\*\s([\s\S]*)$/) : null;
+        if (rel) { author = rel[1]; content = rel[2]; fromBot = false; fromMe = rel[1] === (s.name || ''); }
         return {
-          id: x.id,
-          author: x.author.bot ? (x.author.global_name || x.author.username || 'Bot') : ((x.member && x.member.nick) || x.author.global_name || x.author.username || '?'),
-          fromMe: x.author.id === s.discordId,
-          fromBot: !!x.author.bot,
-          content: ((x.content || embedTxt) || '').slice(0, 600),
+          id: x.id, author, fromMe, fromBot,
+          content: content.slice(0, 600),
           hasAttachment: Array.isArray(x.attachments) && x.attachments.length > 0,
           at: x.timestamp ? Date.parse(x.timestamp) : 0,
         };
       });
     res.json({ ticketId: m.ticketId, category: m.category, messages });
   } catch (e) { res.status(502).json({ error: e.message }); }
+});
+
+// ── Ticket: Schreiben / Öffnen / Team-Aktionen (Overlay-Support-Panel) ───────
+const TICKET_REQ_FILE = `${BOT_DATA_DIR}/ticket_requests.json`;
+const TICKETS_PATH = `${BOT_DATA_DIR}/tickets.json`;
+const TICKET_OPEN_CATS = [
+  { id: 'help',   label: 'Frage / Hilfe',  emoji: '❓' },
+  { id: 'report', label: 'Spieler melden', emoji: '🚨' },
+];
+function queueTicketRequest(req) {
+  withFileLock(TICKET_REQ_FILE, () => { const all = readJson(TICKET_REQ_FILE, []); all.push({ id: genId(), ts: Date.now(), ...req }); writeJsonFile(TICKET_REQ_FILE, all); });
+}
+const ticketAccess = (s, m) => !!(m && (m.openerId === s.discordId || m.claimedBy === s.discordId || isStaffMember(s)));
+
+// Config fürs Support-Panel (öffenbare Kategorien, Staff-Flag, Weiterleit-Ziele)
+app.get('/me/ticket-config', async (req, res) => {
+  const s = sessionFrom(req); if (!s) return res.status(401).json({ error: 'Keine Session' });
+  const staff = isStaffMember(s);
+  const out = { categories: TICKET_OPEN_CATS, isStaff: staff };
+  if (staff) {
+    try { const roles = await discordApi(`/guilds/${DISCORD_GUILD_ID}/roles`); out.roles = roles.filter((r) => r.name !== '@everyone' && !r.managed).sort((a, b) => b.position - a.position).map((r) => ({ id: r.id, name: r.name })); } catch { out.roles = []; }
+    try { const acc = readJson(ACCOUNTS_PATH, {}); const names = await discordNameMap(); out.users = Object.keys(acc).map((d) => ({ discordId: d, name: names[d] || d })).sort((a, b) => String(a.name).localeCompare(String(b.name))); } catch { out.users = []; }
+  }
+  res.json(out);
+});
+
+// Nachricht in ein Ticket schreiben → postet „**Name:** Text" in den Discord-Channel
+app.post('/me/ticket-send', express.json(), async (req, res) => {
+  const s = sessionFrom(req); if (!s) return res.status(401).json({ error: 'Keine Session' });
+  const channelId = String(req.body?.channelId || '').trim();
+  const message = String(req.body?.message || '').trim();
+  if (!channelId || !message) return res.status(400).json({ error: 'channelId/message fehlt' });
+  const m = readJson(TICKETS_PATH, {})[channelId];
+  if (!m) return res.status(404).json({ error: 'Ticket nicht gefunden' });
+  if (!ticketAccess(s, m)) return res.status(403).json({ error: 'Kein Zugriff' });
+  if (!DISCORD_BOT_TOKEN) return res.status(503).json({ error: 'Discord nicht konfiguriert' });
+  try {
+    const r = await fetch(`https://discord.com/api/channels/${channelId}/messages`, {
+      method: 'POST', headers: { Authorization: `Bot ${DISCORD_BOT_TOKEN}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ content: `**${(s.name || 'Spieler').slice(0, 40)}:** ${message.slice(0, 1500)}`, allowed_mentions: { parse: [] } }),
+      signal: AbortSignal.timeout(8000),
+    });
+    if (!r.ok) throw new Error(`Discord ${r.status}`);
+    withFileLock(TICKETS_PATH, () => { const t = readJson(TICKETS_PATH, {}); if (t[channelId]) { t[channelId].lastMessageAt = Date.now(); t[channelId].lastMessageBy = s.discordId; writeJsonFile(TICKETS_PATH, t); } });
+    res.json({ ok: true });
+  } catch (e) { res.status(502).json({ error: e.message }); }
+});
+
+// Neues Ticket öffnen (help / report) — Channel-Erstellung macht der Bot-Job
+app.post('/me/ticket-open', express.json(), (req, res) => {
+  const s = sessionFrom(req); if (!s) return res.status(401).json({ error: 'Keine Session' });
+  const category = String(req.body?.category || '');
+  if (!TICKET_OPEN_CATS.some((c) => c.id === category)) return res.status(400).json({ error: 'Ungültige Kategorie.' });
+  const desc = String(req.body?.message || '').trim().slice(0, 1500);
+  if (!desc) return res.status(400).json({ error: 'Bitte beschreibe dein Anliegen.' });
+  let message = desc;
+  if (category === 'report') {
+    const known = !!req.body?.reportKnown;
+    const target = String(req.body?.reportTarget || '').trim().slice(0, 100);
+    message = known ? `🚨 **Spieler melden** — Gemeldeter Spieler: **${target || '—'}**\n\n${desc}`
+                    : `🚨 **Spieler melden** — Spieler **unbekannt**\n\n${desc}`;
+  }
+  const all = readJson(TICKETS_PATH, {});
+  if (Object.values(all).some((m) => m.openerId === s.discordId && m.category === category)) {
+    return res.status(409).json({ error: `Du hast bereits ein offenes ${category === 'help' ? 'Hilfe' : 'Melde'}-Ticket.` });
+  }
+  queueTicketRequest({ type: 'open', discordId: s.discordId, openerTag: s.name || 'Spieler', category, message });
+  res.json({ ok: true, queued: true });
+});
+
+// Team: annehmen / weiterleiten / schließen — verarbeitet der Bot-Job
+app.post('/me/ticket-claim', express.json(), (req, res) => {
+  const s = sessionFrom(req); if (!s) return res.status(401).json({ error: 'Keine Session' });
+  if (!isStaffMember(s)) return res.status(403).json({ error: 'Nur für Staff' });
+  const channelId = String(req.body?.channelId || '').trim();
+  if (!channelId) return res.status(400).json({ error: 'channelId fehlt' });
+  queueTicketRequest({ type: 'claim', discordId: s.discordId, channelId });
+  res.json({ ok: true, queued: true });
+});
+app.post('/me/ticket-forward', express.json(), (req, res) => {
+  const s = sessionFrom(req); if (!s) return res.status(401).json({ error: 'Keine Session' });
+  if (!isStaffMember(s)) return res.status(403).json({ error: 'Nur für Staff' });
+  const channelId = String(req.body?.channelId || '').trim();
+  const targetType = req.body?.targetType === 'user' ? 'user' : 'role';
+  const targetId = String(req.body?.targetId || '').trim();
+  if (!channelId || !targetId) return res.status(400).json({ error: 'channelId/targetId fehlt' });
+  queueTicketRequest({ type: 'forward', discordId: s.discordId, channelId, targetType, targetId });
+  res.json({ ok: true, queued: true });
+});
+app.post('/me/ticket-close', express.json(), (req, res) => {
+  const s = sessionFrom(req); if (!s) return res.status(401).json({ error: 'Keine Session' });
+  if (!isStaffMember(s)) return res.status(403).json({ error: 'Nur für Staff' });
+  const channelId = String(req.body?.channelId || '').trim();
+  const reason = String(req.body?.reason || '').trim().slice(0, 500);
+  if (!channelId || !reason) return res.status(400).json({ error: 'channelId/Grund fehlt' });
+  queueTicketRequest({ type: 'close', discordId: s.discordId, channelId, reason });
+  res.json({ ok: true, queued: true });
 });
 
 // ── RP-Quests (BF-Challenge): Dino + Handicap + Kleinigkeit + RP-Rolle ───────
@@ -1306,9 +1742,14 @@ app.post('/me/quest/start', express.json(), async (req, res) => {
   try {
     // Vollständigen Snapshot (sonst „health missing"): aktuellen Spieler spreaden,
     // dann Klasse/Geschlecht/Wachstum überschreiben + Vitals auf voll (frischer Juvi).
+    // WICHTIG (Anti-Dupe): die Genetik des geparkten Dinos NICHT übernehmen — sonst bekäme
+    // der Quest-Juvi dessen Mutationen + Prime/Elder-Bedingungen und man könnte Dinos duplizieren.
+    const cleanGenes = { mutations: { base: [], parent: [], elder: [] }, isPrime: false, isElder: false, elderReplicationStacks: 0 };
+    for (let i = 1; i <= 10; i++) cleanGenes[`primeCondition${i}`] = false;
     const swapBody = {
       ...current, class: q.active.dino, dinoClass: q.active.dino, gender,
       grow: 0.25, growth: 0.25, health: 1, stamina: 1, hunger: 1, thirst: 1, blood: 1, keepLocation: true,
+      ...cleanGenes,
     };
     const sr = await fetch(`${PANEL_BASE_URL}/players/${sid}/swap`, {
       method: 'POST', headers: { Authorization: `Bearer ${PANEL_ADMIN_TOKEN}`, 'Content-Type': 'application/json' },
@@ -1838,10 +2279,15 @@ function setPointsVal(steamId, v) {
 app.get('/market', (req, res) => {
   const s = sessionFrom(req);
   if (!s) return res.status(401).json({ error: 'Keine Session' });
-  const market = readJson(MARKETPLACE_FILE, []);
+  const market = sweepMarketplace();
+  const wants = sweepWants().filter((w) => w.wantKind === 'dino');
   res.json({
     points: getPoints(s.steamId),
-    offers: market.map((o) => ({ ...slotCard(o), price: o.price, mine: o.sellerSteamId === s.steamId })),
+    inventory: getInventory(s.steamId),
+    tokenDefs: TOKEN_ORDER.map((id) => ({ id, label: TOKEN_DEFS[id].label, emoji: TOKEN_DEFS[id].emoji })),
+    offerHours: AUCTION_HOURS,
+    offers: market.map((o) => ({ ...slotCard(o), price: o.price, mine: o.sellerSteamId === s.steamId, expiresAt: o.expiresAt })),
+    wants: wants.map((w) => ({ ...w, mine: w.requesterSteamId === s.steamId, offerText: wantOfferText(w) })),
   });
 });
 
@@ -1888,8 +2334,9 @@ app.post('/market/sell-player', express.json(), (req, res) => {
   const slots = garage[s.steamId] ?? [];
   const slot = slots.find((x) => x.id === slotId);
   if (!slot) return res.status(404).json({ error: 'Slot nicht gefunden' });
+  const now = Date.now();
   const market = readJson(MARKETPLACE_FILE, []);
-  market.push({ ...slot, sellerSteamId: s.steamId, price: p });
+  market.push({ ...slot, sellerSteamId: s.steamId, sellerName: s.name || 'Spieler', price: p, listedAt: now, expiresAt: now + OFFER_TTL_MS });
   writeJsonFile(MARKETPLACE_FILE, market);
   garage[s.steamId] = slots.filter((x) => x.id !== slotId);
   writeJsonFile(GARAGE_FILE, garage);
@@ -1916,6 +2363,377 @@ app.post('/market/buy', express.json(), (req, res) => {
   // Vom Markt nehmen
   writeJsonFile(MARKETPLACE_FILE, market.filter((o) => o.id !== offerId));
   res.json({ ok: true, points: getPoints(s.steamId), dino: offer.snapshot?.dinoClass });
+});
+
+// ── 8b) TOKEN-MARKT (Auktionshaus + Direkt-Tausch) — geteilt mit dem Discord-Bot ──
+// Auktionen liegen in der GLEICHEN auctions.json wie der Bot (gemeinsamer Markt).
+// Direkt-Tausch nutzt eine eigene token_trades.json (Overlay-nativ, mit Discord-DM-Hinweis).
+const AUCTIONS_FILE   = `${BOT_DATA_DIR}/auctions.json`;
+const TOKEN_TRADES_FILE = `${BOT_DATA_DIR}/token_trades.json`;
+const AUCTION_HOURS   = parseInt(process.env.AUCTION_HOURS ?? '72', 10);   // ALLE Angebote sind 72h befristet
+const OFFER_TTL_MS    = AUCTION_HOURS * 3_600_000;
+const TRADE_TTL_MS    = OFFER_TTL_MS;   // Direkt-Tausch-Angebote ebenfalls 72h
+
+// Discord-ID zu einer SteamID finden (Reverse von accounts.json)
+function lookupDiscordId(steamId) {
+  try { const acc = readJson(ACCOUNTS_PATH, {}); return Object.keys(acc).find((d) => String(acc[d]) === String(steamId)) || null; }
+  catch { return null; }
+}
+// Mehrere Token atomar abbuchen (prüft Bestand im selben Lock → kein TOCTOU).
+function removeTokens(steamId, type, n) {
+  return withFileLock(INVENTORY_FILE, () => {
+    const all = readJson(INVENTORY_FILE, {});
+    const have = all[steamId]?.[type] ?? 0;
+    if (have < n) return false;
+    if (!all[steamId]) all[steamId] = {};
+    all[steamId][type] = have - n;
+    writeJsonFile(INVENTORY_FILE, all);
+    return true;
+  });
+}
+const tokenLabel = (t) => { const d = TOKEN_DEFS[t]; return d ? `${d.emoji} ${d.label}` : t; };
+function auctionPriceLabel(a) {
+  return a.priceKind === 'points' ? `${(a.priceAmount || 0).toLocaleString('de-DE')} Punkte`
+                                  : `${a.priceAmount}× ${tokenLabel(a.priceTokenType)}`;
+}
+// Abgelaufene Auktionen entfernen + Escrow-Token an Verkäufer zurück. Gibt aktive zurück.
+function sweepAuctions() {
+  const r = withFileLock(AUCTIONS_FILE, () => {
+    const now = Date.now();
+    const all = readJson(AUCTIONS_FILE, []);
+    const active = [], expired = [];
+    for (const a of all) (((a.expiresAt ?? 0) <= now) ? expired : active).push(a);
+    if (expired.length) writeJsonFile(AUCTIONS_FILE, active);
+    return { active, expired };
+  });
+  for (const a of r.expired) { try { addToken(a.sellerSteamId, a.tokenType, a.qty); } catch {} }
+  return r.active;
+}
+// Abgelaufene Direkt-Tausch-Angebote entfernen + Geber-Escrow zurück. Gibt aktive zurück.
+function sweepTrades() {
+  const r = withFileLock(TOKEN_TRADES_FILE, () => {
+    const now = Date.now();
+    const all = readJson(TOKEN_TRADES_FILE, []);
+    const active = [], expired = [];
+    for (const t of all) (((t.expiresAt ?? 0) <= now) ? expired : active).push(t);
+    if (expired.length) writeJsonFile(TOKEN_TRADES_FILE, active);
+    return { active, expired };
+  });
+  for (const t of r.expired) { try { addToken(t.fromSteamId, t.giveType, t.giveQty); } catch {} }
+  return r.active;
+}
+
+// Konsolidierter Token-Markt-State fürs Overlay (Auktionen + eigene Tausch-Angebote + Online-Spieler)
+app.get('/tokenmarket', async (req, res) => {
+  const s = sessionFrom(req);
+  if (!s) return res.status(401).json({ error: 'Keine Session' });
+  const auctions = sweepAuctions();
+  const trades = sweepTrades();
+  // Online-Spieler als Tauschpartner (best-effort — Token-Markt funktioniert auch, wenn der Game-Server aus ist)
+  let players = [];
+  try {
+    players = (await fetchPlayers())
+      .filter((p) => p.steamId && p.steamId !== s.steamId)
+      .map((p) => ({ steamId: p.steamId, name: p.playerName || 'Spieler' }));
+  } catch { players = []; }
+  res.json({
+    points: getPoints(s.steamId),
+    inventory: getInventory(s.steamId),
+    tokenDefs: TOKEN_ORDER.map((id) => ({ id, label: TOKEN_DEFS[id].label, emoji: TOKEN_DEFS[id].emoji })),
+    auctionHours: AUCTION_HOURS,
+    auctions: auctions.map((a) => ({ ...a, mine: a.sellerSteamId === s.steamId, priceText: auctionPriceLabel(a) })),
+    wants: sweepWants().filter((w) => w.wantKind === 'token').map((w) => ({ ...w, mine: w.requesterSteamId === s.steamId, offerText: wantOfferText(w) })),
+    players,
+    trades: {
+      incoming: trades.filter((t) => t.toSteamId === s.steamId),
+      outgoing: trades.filter((t) => t.fromSteamId === s.steamId),
+    },
+  });
+});
+
+// Auktion erstellen (Escrow: Token aus dem Inventar sperren)
+app.post('/tokenmarket/auction/create', express.json(), (req, res) => {
+  const s = sessionFrom(req);
+  if (!s) return res.status(401).json({ error: 'Keine Session' });
+  const { tokenType, priceKind, priceTokenType } = req.body ?? {};
+  const qty = parseInt(req.body?.qty), priceAmount = parseInt(req.body?.priceAmount);
+  if (!TOKEN_DEFS[tokenType]) return res.status(400).json({ error: 'Unbekannter Token' });
+  if (!Number.isFinite(qty) || qty < 1 || qty > 25) return res.status(400).json({ error: 'Ungültige Menge (1–25)' });
+  if (!Number.isFinite(priceAmount) || priceAmount < 1) return res.status(400).json({ error: 'Ungültiger Preis' });
+  if (priceKind === 'token') { if (!TOKEN_DEFS[priceTokenType]) return res.status(400).json({ error: 'Unbekannter Preis-Token' }); }
+  else if (priceKind !== 'points') return res.status(400).json({ error: 'Ungültige Preis-Art' });
+  if (!removeTokens(s.steamId, tokenType, qty)) return res.status(400).json({ error: `Du hast nicht genug ${TOKEN_DEFS[tokenType].label}.` });
+  const now = Date.now();
+  const a = {
+    id: genId(), sellerSteamId: s.steamId, sellerDiscordId: s.discordId || lookupDiscordId(s.steamId) || '', sellerName: s.name || 'Spieler',
+    tokenType, qty, priceKind, priceAmount, ...(priceKind === 'token' ? { priceTokenType } : {}),
+    createdAt: now, expiresAt: now + AUCTION_HOURS * 3_600_000,
+  };
+  withFileLock(AUCTIONS_FILE, () => { const all = readJson(AUCTIONS_FILE, []); all.push(a); writeJsonFile(AUCTIONS_FILE, all); });
+  res.json({ ok: true, auction: a });
+});
+
+// Eigene Auktion abbrechen (Escrow zurück)
+app.post('/tokenmarket/auction/cancel', express.json(), (req, res) => {
+  const s = sessionFrom(req);
+  if (!s) return res.status(401).json({ error: 'Keine Session' });
+  const id = req.body?.auctionId;
+  const claim = withFileLock(AUCTIONS_FILE, () => {
+    const all = readJson(AUCTIONS_FILE, []);
+    const a = all.find((x) => x.id === id);
+    if (!a) return { err: 'Auktion nicht gefunden.' };
+    if (a.sellerSteamId !== s.steamId) return { err: 'Nicht deine Auktion.' };
+    writeJsonFile(AUCTIONS_FILE, all.filter((x) => x.id !== id));
+    return { a };
+  });
+  if (claim.err) return res.status(409).json({ error: claim.err });
+  addToken(s.steamId, claim.a.tokenType, claim.a.qty);
+  res.json({ ok: true });
+});
+
+// Auktion kaufen (atomar: erst unter Lock „claimen" = entfernen, dann bezahlen; bei Fehler zurück)
+app.post('/tokenmarket/auction/buy', express.json(), (req, res) => {
+  const s = sessionFrom(req);
+  if (!s) return res.status(401).json({ error: 'Keine Session' });
+  sweepAuctions();
+  const id = req.body?.auctionId;
+  const claim = withFileLock(AUCTIONS_FILE, () => {
+    const all = readJson(AUCTIONS_FILE, []);
+    const a = all.find((x) => x.id === id);
+    if (!a) return { err: 'Angebot nicht mehr verfügbar.' };
+    if (a.sellerSteamId === s.steamId) return { err: 'Das ist dein eigenes Angebot.' };
+    writeJsonFile(AUCTIONS_FILE, all.filter((x) => x.id !== id));   // claim
+    return { a };
+  });
+  if (claim.err) return res.status(409).json({ error: claim.err });
+  const a = claim.a;
+  let paid = false;
+  if (a.priceKind === 'points') { paid = spendPoints(s.steamId, a.priceAmount); if (paid) addPoints(a.sellerSteamId, a.priceAmount); }
+  else { paid = removeTokens(s.steamId, a.priceTokenType, a.priceAmount); if (paid) addToken(a.sellerSteamId, a.priceTokenType, a.priceAmount); }
+  if (!paid) {
+    withFileLock(AUCTIONS_FILE, () => { const all = readJson(AUCTIONS_FILE, []); all.push(a); writeJsonFile(AUCTIONS_FILE, all); });   // zurücklegen
+    return res.status(402).json({ error: a.priceKind === 'points' ? `Nicht genug Punkte (${a.priceAmount} nötig).` : `Nicht genug ${TOKEN_DEFS[a.priceTokenType].label}.` });
+  }
+  const have = addToken(s.steamId, a.tokenType, a.qty);
+  sendDiscordDM(a.sellerDiscordId,
+    `💰 **Auktion verkauft!** Dein Angebot **${a.qty}× ${tokenLabel(a.tokenType)}** wurde von **${s.name || 'einem Spieler'}** gekauft.\n` +
+    `Erlös: **${auctionPriceLabel(a)}** ${a.priceKind === 'points' ? '(gutgeschrieben)' : '(im Inventar)'}.`).catch(() => {});
+  res.json({ ok: true, have, points: getPoints(s.steamId) });
+});
+
+// Direkt-Tausch: Angebot erstellen (Geber-Token werden geescrowed; Partner per DM informiert)
+app.post('/tokenmarket/trade/offer', express.json(), (req, res) => {
+  const s = sessionFrom(req);
+  if (!s) return res.status(401).json({ error: 'Keine Session' });
+  const { toSteamId, giveType, wantType, toName } = req.body ?? {};
+  const giveQty = parseInt(req.body?.giveQty), wantQty = parseInt(req.body?.wantQty);
+  if (!toSteamId || String(toSteamId) === String(s.steamId)) return res.status(400).json({ error: 'Ungültiger Tauschpartner.' });
+  if (!TOKEN_DEFS[giveType] || !TOKEN_DEFS[wantType]) return res.status(400).json({ error: 'Unbekannter Token.' });
+  if (!Number.isFinite(giveQty) || giveQty < 1 || giveQty > 25) return res.status(400).json({ error: 'Ungültige Menge (geben).' });
+  if (!Number.isFinite(wantQty) || wantQty < 1 || wantQty > 25) return res.status(400).json({ error: 'Ungültige Menge (wollen).' });
+  const toDiscordId = lookupDiscordId(toSteamId);
+  if (!removeTokens(s.steamId, giveType, giveQty)) return res.status(400).json({ error: `Du hast nicht genug ${TOKEN_DEFS[giveType].label}.` });
+  const now = Date.now();
+  const t = {
+    id: genId(), fromSteamId: s.steamId, fromDiscordId: s.discordId || lookupDiscordId(s.steamId) || '', fromName: s.name || 'Spieler',
+    toSteamId: String(toSteamId), toDiscordId: toDiscordId || '', toName: String(toName || 'Spieler'),
+    giveType, giveQty, wantType, wantQty, createdAt: now, expiresAt: now + TRADE_TTL_MS,
+  };
+  withFileLock(TOKEN_TRADES_FILE, () => { const all = readJson(TOKEN_TRADES_FILE, []); all.push(t); writeJsonFile(TOKEN_TRADES_FILE, all); });
+  if (toDiscordId) sendDiscordDM(toDiscordId,
+    `🔄 **Tausch-Angebot** von **${t.fromName}** (im Overlay):\n> Du bekommst: **${giveQty}× ${tokenLabel(giveType)}**\n> Du gibst dafür: **${wantQty}× ${tokenLabel(wantType)}**\n` +
+    `Im Overlay unter **Markt → Token-Markt → Direkt-Tausch** annehmen/ablehnen. *(${Math.round(TRADE_TTL_MS / 60000)} Min)*`).catch(() => {});
+  res.json({ ok: true, trade: t });
+});
+
+// Direkt-Tausch: annehmen (nur Empfänger) — atomar prüfen + tauschen
+app.post('/tokenmarket/trade/accept', express.json(), (req, res) => {
+  const s = sessionFrom(req);
+  if (!s) return res.status(401).json({ error: 'Keine Session' });
+  sweepTrades();
+  const id = req.body?.tradeId;
+  const claim = withFileLock(TOKEN_TRADES_FILE, () => {
+    const all = readJson(TOKEN_TRADES_FILE, []);
+    const t = all.find((x) => x.id === id);
+    if (!t) return { err: 'Angebot nicht mehr verfügbar.' };
+    if (t.toSteamId !== s.steamId) return { err: 'Nicht für dich bestimmt.' };
+    writeJsonFile(TOKEN_TRADES_FILE, all.filter((x) => x.id !== id));   // claim
+    return { t };
+  });
+  if (claim.err) return res.status(409).json({ error: claim.err });
+  const t = claim.t;
+  // Empfänger zahlt die want-Token; Geber-Escrow geht an Empfänger; want-Token an Geber.
+  if (!removeTokens(s.steamId, t.wantType, t.wantQty)) {
+    addToken(t.fromSteamId, t.giveType, t.giveQty);   // Geber-Escrow zurück
+    return res.status(400).json({ error: `Du hast nicht genug ${TOKEN_DEFS[t.wantType].label}.` });
+  }
+  addToken(s.steamId, t.giveType, t.giveQty);
+  addToken(t.fromSteamId, t.wantType, t.wantQty);
+  sendDiscordDM(t.fromDiscordId,
+    `🤝 **Tausch abgeschlossen!** **${t.toName}** hat angenommen.\n> Gegeben: ${t.giveQty}× ${tokenLabel(t.giveType)}\n> Erhalten: ${t.wantQty}× ${tokenLabel(t.wantType)}`).catch(() => {});
+  res.json({ ok: true, inventory: getInventory(s.steamId) });
+});
+
+// Direkt-Tausch: ablehnen (Empfänger) oder abbrechen (Sender) — Geber-Escrow zurück
+app.post('/tokenmarket/trade/cancel', express.json(), (req, res) => {
+  const s = sessionFrom(req);
+  if (!s) return res.status(401).json({ error: 'Keine Session' });
+  const id = req.body?.tradeId;
+  const claim = withFileLock(TOKEN_TRADES_FILE, () => {
+    const all = readJson(TOKEN_TRADES_FILE, []);
+    const t = all.find((x) => x.id === id);
+    if (!t) return { err: 'Angebot nicht gefunden.' };
+    if (t.fromSteamId !== s.steamId && t.toSteamId !== s.steamId) return { err: 'Nicht beteiligt.' };
+    writeJsonFile(TOKEN_TRADES_FILE, all.filter((x) => x.id !== id));
+    return { t, bySender: t.fromSteamId === s.steamId };
+  });
+  if (claim.err) return res.status(409).json({ error: claim.err });
+  addToken(claim.t.fromSteamId, claim.t.giveType, claim.t.giveQty);   // Escrow zurück an Geber
+  const other = claim.bySender ? claim.t.toDiscordId : claim.t.fromDiscordId;
+  if (other) sendDiscordDM(other, `🔄 Ein Token-Tausch wurde ${claim.bySender ? 'vom Anbieter zurückgezogen' : 'abgelehnt'}.`).catch(() => {});
+  res.json({ ok: true });
+});
+
+// ── 8c) MARKTPLATZ-ABLAUF (72h) + ZURÜCKZIEHEN + GESUCHE (Want-to-buy) ────────
+const WANTS_FILE = `${BOT_DATA_DIR}/wants.json`;
+
+// Abgelaufene Dino-Marktangebote (72h) → Dino zurück in die Garage. Gibt aktive zurück.
+function sweepMarketplace() {
+  const r = withFileLock(MARKETPLACE_FILE, () => {
+    const now = Date.now();
+    const all = readJson(MARKETPLACE_FILE, []);
+    const active = [], expired = [];
+    for (const o of all) (((o.expiresAt ?? Infinity) <= now) ? expired : active).push(o);
+    if (expired.length) writeJsonFile(MARKETPLACE_FILE, active);
+    return { active, expired };
+  });
+  for (const o of r.expired) {
+    try { withFileLock(GARAGE_FILE, () => { const g = readJson(GARAGE_FILE, {}); (g[o.sellerSteamId] = g[o.sellerSteamId] || []).push({ id: genId(), savedAt: Date.now(), snapshot: o.snapshot, ...(o.label ? { label: o.label } : {}) }); writeJsonFile(GARAGE_FILE, g); }); } catch {}
+  }
+  return r.active;
+}
+
+// Eigenes Dino-Angebot zurückziehen → Dino zurück in die Garage
+app.post('/market/withdraw', express.json(), (req, res) => {
+  const s = sessionFrom(req);
+  if (!s) return res.status(401).json({ error: 'Keine Session' });
+  const id = req.body?.offerId;
+  const claim = withFileLock(MARKETPLACE_FILE, () => {
+    const all = readJson(MARKETPLACE_FILE, []);
+    const o = all.find((x) => x.id === id);
+    if (!o) return { err: 'Angebot nicht gefunden.' };
+    if (o.sellerSteamId !== s.steamId) return { err: 'Nicht dein Angebot.' };
+    writeJsonFile(MARKETPLACE_FILE, all.filter((x) => x.id !== id));
+    return { o };
+  });
+  if (claim.err) return res.status(409).json({ error: claim.err });
+  withFileLock(GARAGE_FILE, () => { const g = readJson(GARAGE_FILE, {}); (g[s.steamId] = g[s.steamId] || []).push({ id: genId(), savedAt: Date.now(), snapshot: claim.o.snapshot, ...(claim.o.label ? { label: claim.o.label } : {}) }); writeJsonFile(GARAGE_FILE, g); });
+  res.json({ ok: true });
+});
+
+// Text der Gesuch-Gegenleistung
+function wantOfferText(w) {
+  return w.offerKind === 'points' ? `${(w.offerAmount || 0).toLocaleString('de-DE')} Pkt.` : `${w.offerAmount}× ${tokenLabel(w.offerTokenType)}`;
+}
+// Abgelaufene Gesuche (72h) → Escrow (Punkte/Token) an den Suchenden zurück. Gibt aktive zurück.
+function sweepWants() {
+  const r = withFileLock(WANTS_FILE, () => {
+    const now = Date.now();
+    const all = readJson(WANTS_FILE, []);
+    const active = [], expired = [];
+    for (const w of all) (((w.expiresAt ?? 0) <= now) ? expired : active).push(w);
+    if (expired.length) writeJsonFile(WANTS_FILE, active);
+    return { active, expired };
+  });
+  for (const w of r.expired) {
+    try { if (w.offerKind === 'points') addPoints(w.requesterSteamId, w.offerAmount); else addToken(w.requesterSteamId, w.offerTokenType, w.offerAmount); } catch {}
+  }
+  return r.active;
+}
+
+// Gesuch erstellen (Escrow: Gegenleistung sofort sperren)
+app.post('/wants/create', express.json(), (req, res) => {
+  const s = sessionFrom(req);
+  if (!s) return res.status(401).json({ error: 'Keine Session' });
+  const { wantKind, wantDino, wantTokenType, offerKind, offerTokenType } = req.body ?? {};
+  const wantQty = parseInt(req.body?.wantQty), offerAmount = parseInt(req.body?.offerAmount);
+  if (wantKind !== 'dino' && wantKind !== 'token') return res.status(400).json({ error: 'Ungültige Gesuch-Art.' });
+  if (wantKind === 'dino') { if (!wantDino || typeof wantDino !== 'string') return res.status(400).json({ error: 'Welcher Dino wird gesucht?' }); }
+  else { if (!TOKEN_DEFS[wantTokenType]) return res.status(400).json({ error: 'Unbekannter Token.' }); if (!Number.isFinite(wantQty) || wantQty < 1 || wantQty > 25) return res.status(400).json({ error: 'Ungültige Menge (1–25).' }); }
+  if (!Number.isFinite(offerAmount) || offerAmount < 1) return res.status(400).json({ error: 'Ungültiges Gebot.' });
+  if (offerKind === 'token') { if (!TOKEN_DEFS[offerTokenType]) return res.status(400).json({ error: 'Unbekannter Gebot-Token.' }); }
+  else if (offerKind !== 'points') return res.status(400).json({ error: 'Ungültige Gebot-Art.' });
+  // Escrow der Gegenleistung
+  if (offerKind === 'points') { if (!spendPoints(s.steamId, offerAmount)) return res.status(402).json({ error: `Nicht genug Punkte (${offerAmount} nötig).` }); }
+  else { if (!removeTokens(s.steamId, offerTokenType, offerAmount)) return res.status(400).json({ error: `Du hast nicht genug ${TOKEN_DEFS[offerTokenType].label}.` }); }
+  const now = Date.now();
+  const w = {
+    id: genId(), requesterSteamId: s.steamId, requesterDiscordId: s.discordId || lookupDiscordId(s.steamId) || '', requesterName: s.name || 'Spieler',
+    wantKind, ...(wantKind === 'dino' ? { wantDino: baseClass(wantDino) } : { wantTokenType, wantQty }),
+    offerKind, offerAmount, ...(offerKind === 'token' ? { offerTokenType } : {}),
+    createdAt: now, expiresAt: now + OFFER_TTL_MS,
+  };
+  withFileLock(WANTS_FILE, () => { const all = readJson(WANTS_FILE, []); all.push(w); writeJsonFile(WANTS_FILE, all); });
+  res.json({ ok: true, want: w });
+});
+
+// Eigenes Gesuch zurückziehen → Escrow zurück
+app.post('/wants/cancel', express.json(), (req, res) => {
+  const s = sessionFrom(req);
+  if (!s) return res.status(401).json({ error: 'Keine Session' });
+  const id = req.body?.wantId;
+  const claim = withFileLock(WANTS_FILE, () => {
+    const all = readJson(WANTS_FILE, []);
+    const w = all.find((x) => x.id === id);
+    if (!w) return { err: 'Gesuch nicht gefunden.' };
+    if (w.requesterSteamId !== s.steamId) return { err: 'Nicht dein Gesuch.' };
+    writeJsonFile(WANTS_FILE, all.filter((x) => x.id !== id));
+    return { w };
+  });
+  if (claim.err) return res.status(409).json({ error: claim.err });
+  const w = claim.w;
+  if (w.offerKind === 'points') addPoints(s.steamId, w.offerAmount); else addToken(s.steamId, w.offerTokenType, w.offerAmount);
+  res.json({ ok: true });
+});
+
+// Gesuch erfüllen (claim → liefern → Escrow auszahlen; bei Fehler Gesuch zurücklegen)
+app.post('/wants/fulfill', express.json(), (req, res) => {
+  const s = sessionFrom(req);
+  if (!s) return res.status(401).json({ error: 'Keine Session' });
+  sweepWants();
+  const id = req.body?.wantId, slotId = req.body?.slotId;
+  const claim = withFileLock(WANTS_FILE, () => {
+    const all = readJson(WANTS_FILE, []);
+    const w = all.find((x) => x.id === id);
+    if (!w) return { err: 'Gesuch nicht mehr verfügbar.' };
+    if (w.requesterSteamId === s.steamId) return { err: 'Das ist dein eigenes Gesuch.' };
+    writeJsonFile(WANTS_FILE, all.filter((x) => x.id !== id));
+    return { w };
+  });
+  if (claim.err) return res.status(409).json({ error: claim.err });
+  const w = claim.w;
+  const restoreWant = () => withFileLock(WANTS_FILE, () => { const all = readJson(WANTS_FILE, []); all.push(w); writeJsonFile(WANTS_FILE, all); });
+  if (w.wantKind === 'token') {
+    if (!removeTokens(s.steamId, w.wantTokenType, w.wantQty)) { restoreWant(); return res.status(400).json({ error: `Du hast nicht genug ${TOKEN_DEFS[w.wantTokenType].label}.` }); }
+    addToken(w.requesterSteamId, w.wantTokenType, w.wantQty);
+  } else {
+    const moved = withFileLock(GARAGE_FILE, () => {
+      const g = readJson(GARAGE_FILE, {});
+      const slots = g[s.steamId] || [];
+      const slot = slots.find((x) => x.id === slotId);
+      if (!slot) return { err: 'Dino-Slot nicht gefunden.' };
+      if (baseClass(slot.snapshot?.dinoClass) !== w.wantDino) return { err: `Dieser Dino passt nicht (gesucht: ${w.wantDino}).` };
+      g[s.steamId] = slots.filter((x) => x.id !== slotId);
+      (g[w.requesterSteamId] = g[w.requesterSteamId] || []).push({ id: genId(), savedAt: Date.now(), snapshot: slot.snapshot, ...(slot.label ? { label: slot.label } : {}) });
+      writeJsonFile(GARAGE_FILE, g);
+      return { ok: true };
+    });
+    if (moved.err) { restoreWant(); return res.status(409).json({ error: moved.err }); }
+  }
+  if (w.offerKind === 'points') addPoints(s.steamId, w.offerAmount); else addToken(s.steamId, w.offerTokenType, w.offerAmount);
+  const got = w.wantKind === 'token' ? `${w.wantQty}× ${tokenLabel(w.wantTokenType)}` : `einen ${w.wantDino}`;
+  sendDiscordDM(w.requesterDiscordId, `✅ **Gesuch erfüllt!** **${s.name || 'Ein Spieler'}** hat dir **${got}** geliefert. Deine Gegenleistung (${wantOfferText(w)}) wurde übergeben.`).catch(() => {});
+  res.json({ ok: true });
 });
 
 // ── 9) Skin-Editor (Relay an Game-Server) ───────────────────────────────────
@@ -1986,6 +2804,23 @@ app.get('/public/status', async (_req, res) => {
   }
 });
 
+// Aktueller Abo-Rang eines Discord-Users (für die Website, KEIN Login nötig).
+// Quelle = subscriptions.json (aktive PayPal-Abos). So zeigt die Abo-Seite den Rang
+// auch bei bereits eingeloggten Nutzern, deren Login-Param fehlt.
+app.get('/public/abo', (req, res) => {
+  res.set('Access-Control-Allow-Origin', '*');
+  const did = String(req.query.discord_id || '').trim();
+  if (!/^\d{5,25}$/.test(did)) return res.json({ tier: null });
+  const subs = readJson(SUBSCRIPTIONS_FILE, {});
+  const order = ['Knochen', 'Bernstein', 'Obsidian'];
+  let tier = null;
+  for (const meta of Object.values(subs)) {
+    if (String(meta.discordId) === did && order.includes(meta.tier)
+        && order.indexOf(meta.tier) > order.indexOf(tier || '')) tier = meta.tier;
+  }
+  res.json({ tier });
+});
+
 // ── Health ───────────────────────────────────────────────────────────────
 app.get('/auth/health', (_req, res) => res.json({ ok: true }));
 
@@ -2047,6 +2882,38 @@ function creatorForCode(code) {
 }
 const round2 = (n) => Math.round((Number(n) || 0) * 100) / 100;
 
+// ── Abo-Willkommens-Bonus (Punkte je Rang, aufsteigend) ──────────────────────
+// Beim Abschluss/Upgrade eines Rangs gibt es einmalig Punkte gutgeschrieben.
+const ABO_BONUS = { Knochen: 1000, Bernstein: 1500, Obsidian: 2000 };
+const ABO_BONUS_FILE = `${BOT_DATA_DIR}/abo_bonus.json`;   // { discordId: höchster bereits gutgeschriebener Bonus }
+// VORVERKAUF-STICHTAG: Abos werden schon vorher verkauft (Rolle/Badge sofort), aber die
+// Ingame-Vorteile (Bonus-Punkte) zünden erst ab diesem Zeitpunkt. ISO-Datum in der ENV setzen
+// (z. B. ABO_PERKS_START=2026-07-01T00:00:00+02:00). Leer/ungültig = sofort aktiv (kein Stichtag).
+const ABO_PERKS_START = process.env.ABO_PERKS_START ? Date.parse(process.env.ABO_PERKS_START) : 0;
+function aboPerksLive() { return !ABO_PERKS_START || Number.isNaN(ABO_PERKS_START) || Date.now() >= ABO_PERKS_START; }
+// Schreibt den Bonus für den (höchsten je erreichten) Rang gut. Farm-sicher: nur die
+// Differenz zum bisher höchsten Bonus, also kein Mehrfach-Kassieren durch Kündigen+Neuabschluss
+// oder Hoch-/Runterstufen. Vor dem Stichtag bzw. ohne Steam-Verknüpfung → pending; der stündliche
+// reconcileSubscriptions holt den Bonus automatisch nach (nahtlos, sobald beides erfüllt ist).
+function grantAboBonus(discordId, roleName) {
+  const target = ABO_BONUS[roleName] || 0;
+  if (!target) return { granted: 0, pending: false, reason: null };
+  if (!aboPerksLive()) return { granted: 0, pending: true, reason: 'date' };   // Vorverkauf → später nachholen
+  const steamId = lookupSteamId(discordId);
+  if (!steamId) return { granted: 0, pending: true, reason: 'no-steam' };       // Steam fehlt → später nachholen
+  // Differenz innerhalb des Locks bestimmen + Marker persistieren; Punkte danach buchen (eigenes Lock).
+  const delta = withFileLock(ABO_BONUS_FILE, () => {
+    const all = readJson(ABO_BONUS_FILE, {});
+    const prev = Number(all[discordId] || 0);
+    if (target <= prev) return 0;
+    all[discordId] = target;
+    writeJsonFile(ABO_BONUS_FILE, all);
+    return target - prev;
+  });
+  if (delta > 0) addPoints(steamId, delta);
+  return { granted: delta, pending: false, reason: null };
+}
+
 app.post('/paypal/webhook', express.json({ type: '*/*', limit: '1mb' }), async (req, res) => {
   const event = req.body || {};
   try {
@@ -2075,18 +2942,38 @@ app.post('/paypal/webhook', express.json({ type: '*/*', limit: '1mb' }), async (
         if (other !== roleName) { try { await setMemberRole(discordId, other, false); } catch {} }
       }
       await setMemberRole(discordId, roleName, true);
+      // Upgrade-Sauberkeit: ältere noch laufende Abos desselben Users bei PayPal kündigen,
+      // damit beim Hoch-/Runterstufen nicht doppelt abgebucht wird (neues Abo ersetzt das alte).
+      const priorSubs = readJson(SUBSCRIPTIONS_FILE, {});
+      for (const [oldId, meta] of Object.entries(priorSubs)) {
+        if (oldId !== rsc.id && String(meta.discordId) === discordId) {
+          await paypalCancelSubscription(oldId).catch(() => {});
+          withFileLock(SUBSCRIPTIONS_FILE, () => { const s = readJson(SUBSCRIPTIONS_FILE, {}); delete s[oldId]; writeJsonFile(SUBSCRIPTIONS_FILE, s); });
+          console.log(`🔁 Altes Abo ${oldId} von ${discordId} gekündigt (Wechsel auf ${roleName})`);
+        }
+      }
       // Subscription-Mapping merken → spätere Zahlungen dem Creator-Code zuordnen
       withFileLock(SUBSCRIPTIONS_FILE, () => {
         const subs = readJson(SUBSCRIPTIONS_FILE, {});
         subs[rsc.id] = { discordId, creatorCode, planId: rsc.plan_id || '', tier: roleName, startedAt: Date.now() };
         writeJsonFile(SUBSCRIPTIONS_FILE, subs);
       });
+      // Willkommens-Bonus-Punkte gutschreiben (aufsteigend je Rang, einmalig je Stufe)
+      const bonus = grantAboBonus(discordId, roleName);
       // Willkommens-DM (fire-and-forget, blockiert die Webhook-Antwort nicht)
+      const bonusLine = bonus.granted > 0
+        ? `\n\n💰 Als Willkommens-Bonus wurden dir **${bonus.granted} Punkte** gutgeschrieben.`
+        : bonus.reason === 'date'
+          ? `\n\n🚀 **Vorverkauf:** Dein Willkommens-Bonus (**${ABO_BONUS[roleName]} Punkte**) wird automatisch gutgeschrieben, sobald die Ingame-Vorteile live sind. Verknüpfe schon mal deinen Steam-Account im Discord, dann klappt's nahtlos.`
+          : bonus.reason === 'no-steam'
+            ? `\n\n💰 Deine Bonus-Punkte für **${roleName}** liegen bereit — verknüpfe deinen Steam-Account im Discord, dann werden sie automatisch gutgeschrieben.`
+            : '';
       sendDiscordDM(discordId,
-        `🎉 Danke für deine Unterstützung! Dein Rang **${roleName}** ist jetzt aktiv — die Perks sind in Discord & im Overlay freigeschaltet. ❤️\n\n` +
-        `Kündigen kannst du jederzeit selbst in deinem PayPal-Konto unter „Einstellungen → Automatische Zahlungen".`
+        `🎉 Danke für deine Unterstützung! Dein Rang **${roleName}** ist jetzt aktiv. ❤️` +
+        bonusLine +
+        `\n\nKündigen kannst du jederzeit selbst in deinem PayPal-Konto unter „Einstellungen → Automatische Zahlungen".`
       ).catch(() => {});
-      console.log(`✅ Abo aktiv: ${discordId} → ${roleName}${creatorCode ? ` (Code ${creatorCode})` : ''}`);
+      console.log(`✅ Abo aktiv: ${discordId} → ${roleName}${creatorCode ? ` (Code ${creatorCode})` : ''}${bonus.granted ? ` (+${bonus.granted} Punkte)` : bonus.reason ? ` (Bonus pending: ${bonus.reason})` : ''}`);
 
     } else if (['BILLING.SUBSCRIPTION.CANCELLED', 'BILLING.SUBSCRIPTION.EXPIRED', 'BILLING.SUBSCRIPTION.SUSPENDED'].includes(type)) {
       const discordId = String(rsc.custom_id || '').split('|')[0].trim();
@@ -2157,6 +3044,8 @@ async function reconcileSubscriptions() {
       if (!sub || !sub.status) continue;
       if (sub.status === 'ACTIVE') {
         await setMemberRole(did, roleName, true).catch(() => {}); synced++;
+        // Bonus-Punkte nachholen, falls beim Kauf noch kein Steam verknüpft war (idempotent).
+        try { grantAboBonus(did, roleName); } catch {}
       } else if (['CANCELLED', 'EXPIRED', 'SUSPENDED'].includes(sub.status)) {
         await setMemberRole(did, roleName, false).catch(() => {});
         withFileLock(SUBSCRIPTIONS_FILE, () => { const s = readJson(SUBSCRIPTIONS_FILE, {}); delete s[subId]; writeJsonFile(SUBSCRIPTIONS_FILE, s); });

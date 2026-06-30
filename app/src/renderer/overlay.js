@@ -109,6 +109,8 @@ let calibPairs = [];
 let armedRef = null;
 let isAdmin = false;     // Owner/Admin — volle Config
 let isIngame = false;    // Owner/Admin/Moderator — Ingame-Tools (Admin-Panel)
+let isTeam = false;      // Owner/Admin/Support
+let isStaff = false;     // isIngame || isTeam → sieht Support-Tools (Dino-Token etc.)
 let zoneEditMode = false;
 let activeZone = null; // 'pvp' | 'pve'
 let pttHeld = false, ptmHeld = false;
@@ -430,6 +432,10 @@ async function init() {
   el('adminCloseBtn').onclick = () => closeAdminPanel();
   el('admUserLoad').onclick = () => admLoadUserInfo();
   el('admLightningBtn').onclick = () => admLightning();
+  document.querySelectorAll('#adminTabs [data-atab]').forEach((b) => { b.onclick = () => showAdminTab(b.dataset.atab); });
+  { const b = el('dtTabGive'); if (b) b.onclick = () => { dtTab = 'give'; renderDtTab(); }; }
+  { const b = el('dtTabEdit'); if (b) b.onclick = () => { dtTab = 'edit'; renderDtTab(); }; }
+  { const b = el('dtTabDel'); if (b) b.onclick = () => { dtTab = 'delete'; renderDtTab(); }; }
   el('giftTargetKind').onchange = () => updateGiftTarget();
   el('giftSubmit').onclick = () => admGift();
   el('adminCalibBtn').onclick = () => adminCalibrate();
@@ -568,6 +574,7 @@ function startPositionPolling() {
         if (settingsOpen) renderVoiceUsers();
         if (mapOpen) renderBigMap();
         if (featureOpen === 'group') updateGroupLive();   // nur Mitglieder/Chat updaten, NICHT das Eingabefeld neu bauen
+        if (featureOpen === 'profile') updateProfileServerDinos();   // Server-Dino-Zahlen live
       }
     } catch {}
   };
@@ -1023,18 +1030,34 @@ let adminUserMap = new Map();   // Option-Text → { steamId, discordId, name }
 let admSelectedSteamId = null;
 
 function openAdminPanel() {
-  if (!isIngame) { showToast('Nur für Team (Moderator+)', 'error'); return; }
+  if (!isStaff) { showToast('Nur für Staff (Supporter/Moderator+)', 'error'); return; }
   adminOpen = true;
   el('adminPanel').style.display = 'block';
-  // Admin-only Spalten (Beschenken, Dino-Limits) für Moderatoren ausblenden
+  // Spalten nach Rang einblenden: admin-only nur Admin, ingame-only nur Moderator+.
+  // Supporter (Team) sehen Spieler-Verwaltung (Info/Lightning) + Dino-Token-Tools.
   document.querySelectorAll('#adminPanel .admin-only').forEach((c) => { c.style.display = isAdmin ? '' : 'none'; });
+  document.querySelectorAll('#adminPanel .ingame-only').forEach((c) => { c.style.display = isIngame ? '' : 'none'; });
   updateInteractive();
   ensureGiftTypeOptions();
   loadAdminUsers();
-  loadAdminRoles();                       // Gift-Rollen-Dropdown — jetzt auch für Moderatoren (Beschenken)
+  if (isIngame) loadAdminRoles();         // Gift-Rollen-Dropdown — nur Moderator+ (Beschenken)
   if (isAdmin) loadDinoLimits();
-  loadTeleports();
-  renderAdminTpList();
+  if (isIngame) { loadTeleports(); renderAdminTpList(); }
+  showAdminTab('tools');
+}
+// Admin-Panel-Tabs (Tools / Dino-Token / künftige Staff-Chunks)
+let adminTab = 'tools';
+function showAdminTab(t) {
+  const btn = document.querySelector(`#adminTabs [data-atab="${t}"]`);
+  if (btn && btn.style.display === 'none') t = 'tools';   // gesperrten Tab → zurück auf Tools
+  adminTab = t;
+  document.querySelectorAll('#adminTabs [data-atab]').forEach((b) => b.classList.toggle('secondary', b.dataset.atab !== t));
+  document.querySelectorAll('#adminPanel .admin-pane').forEach((p) => { p.hidden = p.dataset.pane !== t; });
+  if (t === 'dtoken') ensureDtLoaded();
+  else if (t === 'pvp') ensurePvpLoaded();
+  else if (t === 'account') renderAccount();
+  else if (t === 'server') renderServer();
+  bfScheduleFrameSync && bfScheduleFrameSync();
 }
 function closeAdminPanel() {
   adminOpen = false;
@@ -1660,13 +1683,15 @@ function toggleFeature(id) {
   else if (id === 'lexikon') renderLexikon();
   else if (id === 'skinEditor') renderSkinEditor();
   else if (id === 'quests') { loadQuest(); startQuestPoll(); }
+  else if (id === 'support') { renderSupport(); startSupportPoll(); }
   el(id).style.display = 'block';
   updateInteractive();
 }
 function closeAllFeatures(skipInteractive) {
-  ['dinoInfo', 'skinEditor', 'garage', 'market', 'group', 'profile', 'lexikon', 'quests'].forEach((id) => { el(id).style.display = 'none'; });
+  ['dinoInfo', 'skinEditor', 'garage', 'market', 'group', 'profile', 'lexikon', 'quests', 'support'].forEach((id) => { el(id).style.display = 'none'; });
   const tc = el('ticketChat'); if (tc) tc.style.display = 'none';   // Ticket-Chat mit schließen
   stopQuestPoll();
+  stopSupportPoll();
   if (featureOpen === 'dinoInfo') stopDinoInfo();
   featureOpen = null;
   if (!skipInteractive) updateInteractive();
@@ -1930,19 +1955,15 @@ function renderProfile() {
         </div>
         <div class="pf-inv">🎟️ Inventar: <b>${escapeHtml(tokenList)}</b></div>
       </div>
-      <!-- Rechts: Tickets -->
+      <!-- Rechts: Dinos auf dem Server (aktuelle Zahlen + Limits) -->
       <div class="pf-side">
-        <div class="pf-col-head">🎫 Tickets</div>
-        ${profileTicketsHtml()}
+        <div class="pf-col-head">🦖 Dinos auf dem Server</div>
+        <div id="pfServerDinos" class="pf-dino-list">${profileServerDinosHtml()}</div>
       </div>
     </div>`;
   close();
-  // Tickets anklickbar → Chat-Fenster
-  panel.querySelectorAll('.profileTicketRow').forEach((row) => {
-    row.onmouseenter = () => { row.style.background = 'rgba(var(--accent-rgb),0.16)'; };
-    row.onmouseleave = () => { row.style.background = 'rgba(255,255,255,0.04)'; };
-    row.onclick = () => openTicketChat(row.dataset.channel, row.dataset.ticket, row.dataset.cat);
-  });
+  // Dino-Limits einmalig nachladen, dann die Liste füllen (Tickets sind in den Support-Bereich gewandert)
+  if (!dinoLimitsLoaded) fetchDinoLimits().then(() => { if (featureOpen === 'profile') updateProfileServerDinos(); });
   // Events anklickbar → Detail-Modal (Banner, Beschreibung, Ort)
   panel.querySelectorAll('.profileEventRow').forEach((row) => {
     row.onmouseenter = () => { row.style.background = 'rgba(var(--accent-rgb),0.16)'; };
@@ -2003,6 +2024,51 @@ function profileTicketsHtml() {
     </div>`;
   }).join('');
 }
+// Rechte Profil-Spalte: aktuelle Spezies-Zahlen auf dem Server vs. ihre Limits.
+// Zahlen kommen aus denselben Online-Spielern wie die Karte (`players[].dino`),
+// die Limits aus `dinoLimits` (GET /dino-limits). Farbe nach Auslastung.
+function profileServerDinosHtml() {
+  const counts = {};
+  for (const p of players) {
+    const sp = ((p && p.dino) || '').split('_')[0];
+    if (!sp || sp === '?') continue;
+    counts[sp] = (counts[sp] || 0) + 1;
+  }
+  const roster = dinoLimitSpecies.length ? dinoLimitSpecies : Object.keys(dinoLimits);
+  const inRoster = new Set(roster);
+  const rows = [];
+  for (const sp of roster) {
+    const lim = dinoLimits[sp] || 0;
+    const cur = counts[sp] || 0;
+    if (lim <= 0 && cur <= 0) continue;            // unbegrenzt + keiner da → weglassen
+    rows.push({ sp, cur, lim });
+  }
+  for (const sp of Object.keys(counts)) {           // präsente Spezies ohne Limit-Eintrag (unbegrenzt)
+    if (!inRoster.has(sp)) rows.push({ sp, cur: counts[sp], lim: 0 });
+  }
+  if (!rows.length) return '<div style="color:var(--muted);font-size:12px">Aktuell keine Dinos auf dem Server.</div>';
+  rows.sort((a, b) => {
+    const al = a.lim > 0, bl = b.lim > 0;
+    if (al !== bl) return al ? -1 : 1;              // limitierte zuerst
+    if (al && bl) { const r = (b.cur / b.lim) - (a.cur / a.lim); if (r) return r; }   // nach Auslastung
+    if (b.cur !== a.cur) return b.cur - a.cur;      // dann nach Anzahl
+    return a.sp.localeCompare(b.sp);
+  });
+  return rows.map(({ sp, cur, lim }) => {
+    let val;
+    if (lim > 0) {
+      const col = cur >= lim ? '#ef4444' : (cur / lim >= 0.8 ? '#f59e0b' : '#22c55e');
+      val = `<b style="color:${col}">${cur}</b><span style="color:var(--muted)">/${lim}</span>`;
+    } else {
+      val = `<b>${cur}</b><span style="color:var(--muted)">/∞</span>`;
+    }
+    return `<div class="pf-dino-row"><span class="pf-dino-nm">${escapeHtml(sp)}</span><span>${val}</span></div>`;
+  }).join('');
+}
+function updateProfileServerDinos() {
+  const box = el('pfServerDinos'); if (box) box.innerHTML = profileServerDinosHtml();
+}
+
 function ticketSeen() { try { return JSON.parse(localStorage.getItem('bf-ticket-seen')) || {}; } catch { return {}; } }
 function setTicketSeen(o) { localStorage.setItem('bf-ticket-seen', JSON.stringify(o)); }
 async function loadMyTickets() {
@@ -2107,6 +2173,307 @@ function renderTicketChat(modal, channelId, ticketId, category, messages) {
     <div style="margin-top:10px;font-size:11px;color:var(--muted)">Zum Antworten ins Discord-Ticket schreiben.</div>`;
   el('ticketChatClose').onclick = closeTicketChat;
   const sc = el('ticketChatScroll'); if (sc) sc.scrollTop = sc.scrollHeight;   // ans Ende scrollen (neueste sichtbar)
+}
+
+// ── 🆘 Support-Panel (Tickets im Overlay, immer synchron mit Discord) ─────────
+// Spieler öffnen Hilfe-/Melde-Tickets, schreiben im Overlay; Team kann annehmen,
+// schreiben, weiterleiten (Rolle/Person) und schließen (mit Grund). Schreiben geht
+// direkt über den token-service in den Discord-Channel; Öffnen/Annehmen/Weiterleiten/
+// Schließen läuft über eine Request-Queue, die der Bot-Job abarbeitet.
+let supTickets = [];          // Liste der sichtbaren Tickets
+let supSel = null;            // ausgewählter channelId
+let supCfg = null;            // /me/ticket-config (Kategorien, isStaff, Weiterleit-Ziele)
+let supMessages = [];         // Nachrichten des ausgewählten Tickets
+let supComposing = false;     // gerade „Neues Ticket"-Formular offen
+let supListTimer = null, supMsgTimer = null;
+
+function startSupportPoll() {
+  stopSupportPoll();
+  supListTimer = setInterval(() => { if (featureOpen === 'support' && !supComposing) loadSupportTickets(); }, 6000);
+  supMsgTimer = setInterval(() => { if (featureOpen === 'support' && supSel && !supComposing) loadSupportMessages(); }, 4000);
+}
+function stopSupportPoll() {
+  if (supListTimer) clearInterval(supListTimer); supListTimer = null;
+  if (supMsgTimer) clearInterval(supMsgTimer); supMsgTimer = null;
+  const m = el('supPicker'); if (m) m.style.display = 'none';
+}
+
+async function renderSupport() {
+  const panel = el('support');
+  panel.classList.add('sup-wide');
+  panel.innerHTML = `
+    <div class="sup-head">
+      <h2 style="margin:0">🆘 Support</h2>
+      <div style="display:flex;gap:8px">
+        <button id="supNew" style="width:auto;flex:none;padding:8px 14px">➕ Neues Ticket</button>
+        <button class="closeFeature secondary" style="width:auto;flex:none;padding:8px 14px">Schließen</button>
+      </div>
+    </div>
+    <div class="sup-body">
+      <div id="supTickets" class="sup-list"><div class="sup-empty">Lädt…</div></div>
+      <div id="supChat" class="sup-chat"><div class="sup-empty">Wähle links ein Ticket – oder öffne oben ein neues.</div></div>
+    </div>`;
+  panel.querySelector('.closeFeature').onclick = () => closeAllFeatures();
+  el('supNew').onclick = openSupportTicketForm;
+  await loadSupportConfig();
+  await loadSupportTickets();
+  if (supSel && supTickets.some((t) => t.channelId === supSel)) loadSupportMessages();
+}
+
+async function loadSupportConfig() {
+  if (!sessionToken) return;
+  try {
+    const r = await fetch(`${config.tokenBase}/me/ticket-config`, { headers: { Authorization: `Bearer ${sessionToken}` } });
+    if (r.ok) supCfg = await r.json();
+  } catch {}
+}
+
+async function loadSupportTickets() {
+  if (!sessionToken) return;
+  try {
+    const r = await fetch(`${config.tokenBase}/me/tickets`, { headers: { Authorization: `Bearer ${sessionToken}` } });
+    if (!r.ok) return;
+    supTickets = (await r.json()).tickets || [];
+  } catch { return; }
+  // Erstmalig gesehene Tickets in die Seen-Map aufnehmen (Toasts macht der globale loadMyTickets-Poll).
+  const seen = ticketSeen(); let changed = false;
+  for (const t of supTickets) { if (!(t.channelId in seen)) { seen[t.channelId] = t.lastMessageAt || 0; changed = true; } }
+  if (changed) setTicketSeen(seen);
+  if (featureOpen === 'support' && !supComposing) renderSupTicketList();
+}
+
+function supCatLabel(id) { return (supCfg && supCfg.categories && (supCfg.categories.find((c) => c.id === id) || {}).label) || id || ''; }
+
+function renderSupTicketList() {
+  const box = el('supTickets'); if (!box) return;
+  if (!supTickets.length) { box.innerHTML = '<div class="sup-empty">Keine Tickets.<br>Öffne oben ein neues.</div>'; return; }
+  box.innerHTML = supTickets.map((t) => {
+    const sel = t.channelId === supSel ? ' sel' : '';
+    const inBearb = t.status === 'in_bearbeitung';
+    const stCol = inBearb ? '#22c55e' : '#f59e0b';
+    const stTxt = inBearb ? `In Bearbeitung${t.handler ? ' · ' + escapeHtml(t.handler) : ''}` : 'Offen';
+    const neu = t.lastFromOther ? '<span class="sup-dot"></span>' : '';
+    const roleTag = t.role === 'handler' ? '🛠️' : (t.role === 'available' ? '🆕' : '');
+    const who = (t.role !== 'opener' && t.openerName) ? ` · von ${escapeHtml(t.openerName)}` : '';
+    return `<div class="sup-trow${sel}" data-ch="${escapeHtml(t.channelId)}">
+      <div class="sup-trow-top"><b>#${t.ticketId} · ${escapeHtml(supCatLabel(t.category))}</b> ${roleTag}${neu}</div>
+      <div class="sup-trow-sub" style="color:${stCol}">${stTxt}${who}</div>
+    </div>`;
+  }).join('');
+  box.querySelectorAll('.sup-trow').forEach((row) => { row.onclick = () => selectSupportTicket(row.dataset.ch); });
+}
+
+function selectSupportTicket(channelId) {
+  supSel = channelId; supComposing = false; supMessages = [];
+  renderSupTicketList();
+  loadSupportMessages();
+}
+
+async function loadSupportMessages() {
+  if (!sessionToken || !supSel) return;
+  const chat = el('supChat'); if (chat && !supMessages.length) chat.innerHTML = '<div class="sup-empty">Lädt Nachrichten…</div>';
+  try {
+    const r = await fetch(`${config.tokenBase}/me/ticket-messages?channelId=${encodeURIComponent(supSel)}`, { headers: { Authorization: `Bearer ${sessionToken}` } });
+    if (!r.ok) throw new Error('HTTP ' + r.status);
+    const data = await r.json();
+    supMessages = data.messages || [];
+    // Als gesehen markieren (löscht die „neue Antwort"-Markierung in Liste)
+    const t = supTickets.find((x) => x.channelId === supSel);
+    if (t) { const seen = ticketSeen(); seen[supSel] = t.lastMessageAt || Date.now(); setTicketSeen(seen); if (t.lastFromOther) { t.lastFromOther = false; renderSupTicketList(); } }
+    renderSupChat(data);
+  } catch {
+    if (chat && !supMessages.length) chat.innerHTML = '<div class="sup-empty" style="color:#fca5a5">Nachrichten konnten nicht geladen werden.</div>';
+  }
+}
+
+function supBubbleHtml(m) {
+  const body = escapeHtml(m.content || '') || `<i style="opacity:.6">${m.hasAttachment ? '[Anhang]' : '[leer]'}</i>`;
+  if (m.fromBot) {
+    return `<div style="margin:8px 0;text-align:center"><div style="display:inline-block;max-width:92%;padding:7px 11px;border-radius:10px;background:rgba(var(--accent-rgb),0.10);border:1px solid var(--border);color:var(--muted);font-size:12px;line-height:1.35">🤖 <b style="color:var(--accent-2)">${escapeHtml(m.author)}</b> · ${body}</div></div>`;
+  }
+  const mine = m.fromMe;
+  return `<div style="display:flex;flex-direction:column;align-items:${mine ? 'flex-end' : 'flex-start'};margin-bottom:9px">
+    <div style="font-size:10px;color:var(--muted);margin-bottom:2px">${mine ? 'Du' : escapeHtml(m.author)} · ${fmtEventTime(m.at ? new Date(m.at).toISOString() : '')}</div>
+    <div style="max-width:85%;padding:8px 11px;border-radius:12px;font-size:13px;line-height:1.35;${mine
+      ? 'background:linear-gradient(135deg,var(--accent),#7c3aed);color:#fff;border-bottom-right-radius:4px'
+      : 'background:rgba(255,255,255,0.06);color:#eee;border-bottom-left-radius:4px'}">${body}</div>
+  </div>`;
+}
+
+function renderSupChat(data) {
+  const chat = el('supChat'); if (!chat) return;
+  // Entwurf im Eingabefeld über Re-Renders (Polling) hinweg erhalten
+  const prev = el('supInput'); const draft = prev ? prev.value : ''; const focused = document.activeElement === prev; const caret = prev ? prev.selectionStart : null;
+  const t = supTickets.find((x) => x.channelId === supSel);
+  const staff = !!(supCfg && supCfg.isStaff);
+  const role = t ? t.role : null;
+  const catLabel = supCatLabel((t && t.category) || (data && data.category));
+  let actions = '';
+  if (staff) {
+    if (role === 'available') actions += `<button id="supClaim" style="width:auto;flex:none;padding:6px 12px;font-size:12px">✋ Annehmen</button>`;
+    if (role === 'handler' || role === 'available') {
+      actions += `<button id="supForward" class="secondary" style="width:auto;flex:none;padding:6px 12px;font-size:12px">↗️ Weiterleiten</button>`;
+      actions += `<button id="supClose" class="secondary" style="width:auto;flex:none;padding:6px 12px;font-size:12px">🔒 Schließen</button>`;
+    }
+  }
+  const bubbles = (supMessages || []).map(supBubbleHtml).join('') || '<div class="sup-empty">Noch keine Nachrichten in diesem Ticket.</div>';
+  const tid = (data && data.ticketId != null) ? data.ticketId : (t ? t.ticketId : '');
+  chat.innerHTML = `
+    <div class="sup-chat-head">
+      <div><b>🎫 #${tid}</b> <span style="color:var(--muted);font-size:12px">· ${escapeHtml(catLabel)}</span></div>
+      <div style="display:flex;gap:6px;flex-wrap:wrap">${actions}</div>
+    </div>
+    <div id="supScroll" class="sup-scroll">${bubbles}</div>
+    <div class="sup-compose">
+      <input id="supInput" class="tm-input" style="flex:1" placeholder="Nachricht schreiben…" maxlength="1500">
+      <button id="supSend" style="width:auto;flex:none;padding:9px 16px">Senden</button>
+    </div>`;
+  const sc = el('supScroll'); if (sc) sc.scrollTop = sc.scrollHeight;
+  const ni = el('supInput'); if (ni) { ni.value = draft; if (focused) { ni.focus(); if (caret != null) { try { ni.setSelectionRange(caret, caret); } catch {} } } }
+  el('supSend').onclick = () => sendSupportMsg();
+  el('supInput').onkeydown = (e) => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); sendSupportMsg(); } };
+  if (el('supClaim')) el('supClaim').onclick = supClaim;
+  if (el('supForward')) el('supForward').onclick = supForward;
+  if (el('supClose')) el('supClose').onclick = supClose;
+}
+
+async function sendSupportMsg() {
+  const inp = el('supInput'); if (!inp || !supSel) return;
+  const message = inp.value.trim(); if (!message) return;
+  inp.value = ''; inp.disabled = true;
+  try {
+    const r = await fetch(`${config.tokenBase}/me/ticket-send`, { method: 'POST', headers: { Authorization: `Bearer ${sessionToken}`, 'Content-Type': 'application/json' }, body: JSON.stringify({ channelId: supSel, message }) });
+    const d = await r.json().catch(() => ({}));
+    if (!r.ok) { showToast(d.error || 'Senden fehlgeschlagen', 'error'); inp.value = message; }
+    else { await loadSupportMessages(); }
+  } catch { showToast('Senden fehlgeschlagen', 'error'); inp.value = message; }
+  if (el('supInput')) { el('supInput').disabled = false; el('supInput').focus(); }
+}
+
+function openSupportTicketForm() {
+  supComposing = true; supSel = null; supMessages = [];
+  renderSupTicketList();
+  const chat = el('supChat'); if (!chat) return;
+  const cats = (supCfg && supCfg.categories) || [{ id: 'help', label: 'Frage / Hilfe', emoji: '❓' }, { id: 'report', label: 'Spieler melden', emoji: '🚨' }];
+  let cat = cats[0].id; let known = true;
+  chat.innerHTML = `
+    <div class="sup-chat-head"><div><b>➕ Neues Ticket</b></div></div>
+    <div class="sup-scroll" style="display:block">
+      <div class="tm-form" style="max-width:480px">
+        <label>Kategorie</label>
+        <div id="supCatRow" style="display:flex;gap:8px;flex-wrap:wrap">
+          ${cats.map((c, i) => `<button class="sup-cat secondary${i === 0 ? ' on' : ''}" data-cat="${c.id}" style="width:auto;flex:none;padding:8px 14px">${c.emoji || ''} ${escapeHtml(c.label)}</button>`).join('')}
+        </div>
+        <div id="supReportBox" style="display:none">
+          <label>Kennst du den gemeldeten Spieler?</label>
+          <div style="display:flex;gap:8px">
+            <button id="supKnownYes" class="secondary on" style="width:auto;flex:none;padding:7px 12px">Ja, bekannt</button>
+            <button id="supKnownNo" class="secondary" style="width:auto;flex:none;padding:7px 12px">Unbekannt</button>
+          </div>
+          <label id="supTargetLbl">Name / SteamID des Spielers</label>
+          <input id="supTarget" class="tm-input" placeholder="z. B. Spielername oder 7656…" maxlength="100">
+        </div>
+        <label>Beschreibung</label>
+        <textarea id="supDesc" class="tm-input" rows="5" placeholder="Beschreibe dein Anliegen…" maxlength="1500"></textarea>
+        <button id="supSubmit" style="margin-top:10px">Ticket erstellen</button>
+      </div>
+    </div>`;
+  const refresh = () => {
+    chat.querySelectorAll('.sup-cat').forEach((b) => b.classList.toggle('on', b.dataset.cat === cat));
+    el('supReportBox').style.display = cat === 'report' ? 'block' : 'none';
+  };
+  chat.querySelectorAll('.sup-cat').forEach((b) => { b.onclick = () => { cat = b.dataset.cat; refresh(); }; });
+  el('supKnownYes').onclick = () => { known = true; el('supKnownYes').classList.add('on'); el('supKnownNo').classList.remove('on'); el('supTargetLbl').style.display = ''; el('supTarget').style.display = ''; };
+  el('supKnownNo').onclick = () => { known = false; el('supKnownNo').classList.add('on'); el('supKnownYes').classList.remove('on'); el('supTargetLbl').style.display = 'none'; el('supTarget').style.display = 'none'; };
+  el('supSubmit').onclick = () => submitSupportTicket(cat, () => known);
+  refresh();
+}
+
+async function submitSupportTicket(category, getKnown) {
+  const desc = (el('supDesc') ? el('supDesc').value : '').trim();
+  if (!desc) { showToast('Bitte beschreibe dein Anliegen.', 'error'); return; }
+  const body = { category, message: desc };
+  if (category === 'report') { const known = getKnown(); body.reportKnown = known; body.reportTarget = known ? (el('supTarget') ? el('supTarget').value.trim() : '') : ''; }
+  const btn = el('supSubmit'); if (btn) btn.disabled = true;
+  try {
+    const r = await fetch(`${config.tokenBase}/me/ticket-open`, { method: 'POST', headers: { Authorization: `Bearer ${sessionToken}`, 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+    const d = await r.json().catch(() => ({}));
+    if (!r.ok) { showToast(d.error || 'Konnte Ticket nicht öffnen', 'error'); if (btn) btn.disabled = false; return; }
+    showToast('🎫 Ticket wird erstellt…', 'success');
+    supComposing = false;
+    const chat = el('supChat'); if (chat) chat.innerHTML = '<div class="sup-empty">🎫 Dein Ticket wird angelegt – gleich erscheint es links in der Liste.</div>';
+    setTimeout(loadSupportTickets, 1500);
+    setTimeout(loadSupportTickets, 4000);
+  } catch { showToast('Konnte Ticket nicht öffnen', 'error'); if (btn) btn.disabled = false; }
+}
+
+// Team-Aktionen (annehmen/weiterleiten/schließen) → Request-Queue, Bot-Job arbeitet sie ab
+async function supAction(path, body, okMsg) {
+  try {
+    const r = await fetch(`${config.tokenBase}${path}`, { method: 'POST', headers: { Authorization: `Bearer ${sessionToken}`, 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+    const d = await r.json().catch(() => ({}));
+    if (!r.ok) { showToast(d.error || 'Aktion fehlgeschlagen', 'error'); return false; }
+    if (okMsg) showToast(okMsg, 'success');
+    setTimeout(loadSupportTickets, 1500);
+    setTimeout(() => { if (supSel && featureOpen === 'support') loadSupportMessages(); }, 1800);
+    return true;
+  } catch { showToast('Aktion fehlgeschlagen', 'error'); return false; }
+}
+function supClaim() { if (supSel) supAction('/me/ticket-claim', { channelId: supSel }, '✋ Ticket angenommen'); }
+
+function supModalEl() {
+  let m = el('supPicker');
+  if (!m) {
+    m = document.createElement('div'); m.id = 'supPicker';
+    m.style.cssText = 'position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);z-index:80;'
+      + 'width:clamp(320px,30vw,420px);max-height:70vh;display:none;flex-direction:column;'
+      + 'background:var(--panel);border:1px solid var(--border);border-radius:14px;padding:16px;'
+      + 'box-shadow:var(--glow-strong);backdrop-filter:var(--blur);-webkit-backdrop-filter:var(--blur)';
+    document.body.appendChild(m);
+  }
+  return m;
+}
+function supCloseModal() { const m = el('supPicker'); if (m) m.style.display = 'none'; updateInteractive(); }
+
+function supForward() {
+  if (!supSel || !supCfg) return;
+  const m = supModalEl(); m.style.display = 'flex';
+  const roles = supCfg.roles || []; const users = supCfg.users || [];
+  m.innerHTML = `
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px"><b>↗️ Ticket weiterleiten</b><button id="supPkClose" class="secondary" style="width:auto;flex:none;padding:4px 11px">✕</button></div>
+    <label style="font-size:11px;color:var(--muted)">An Rolle</label>
+    <select id="supFwRole" class="tm-input"><option value="">— Rolle wählen —</option>${roles.map((r) => `<option value="${escapeHtml(r.id)}">${escapeHtml(r.name)}</option>`).join('')}</select>
+    <label style="font-size:11px;color:var(--muted);margin-top:8px">oder an Person</label>
+    <select id="supFwUser" class="tm-input"><option value="">— Person wählen —</option>${users.map((u) => `<option value="${escapeHtml(u.discordId)}">${escapeHtml(u.name)}</option>`).join('')}</select>
+    <button id="supFwGo" style="margin-top:14px">Weiterleiten</button>`;
+  el('supPkClose').onclick = supCloseModal;
+  el('supFwRole').onchange = () => { if (el('supFwRole').value) el('supFwUser').value = ''; };
+  el('supFwUser').onchange = () => { if (el('supFwUser').value) el('supFwRole').value = ''; };
+  el('supFwGo').onclick = async () => {
+    const roleId = el('supFwRole').value, userId = el('supFwUser').value;
+    if (!roleId && !userId) { showToast('Bitte Rolle oder Person wählen', 'error'); return; }
+    const ok = await supAction('/me/ticket-forward', userId ? { channelId: supSel, targetType: 'user', targetId: userId } : { channelId: supSel, targetType: 'role', targetId: roleId }, '↗️ Weitergeleitet');
+    if (ok) supCloseModal();
+  };
+  updateInteractive();
+}
+
+function supClose() {
+  if (!supSel) return;
+  const m = supModalEl(); m.style.display = 'flex';
+  m.innerHTML = `
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px"><b>🔒 Ticket schließen</b><button id="supPkClose" class="secondary" style="width:auto;flex:none;padding:4px 11px">✕</button></div>
+    <label style="font-size:11px;color:var(--muted)">Grund (wird im Transcript vermerkt)</label>
+    <textarea id="supCloseReason" class="tm-input" rows="4" placeholder="z. B. Anliegen gelöst…" maxlength="500"></textarea>
+    <button id="supCloseGo" style="margin-top:14px">Ticket schließen</button>`;
+  el('supPkClose').onclick = supCloseModal;
+  el('supCloseGo').onclick = async () => {
+    const reason = (el('supCloseReason').value || '').trim();
+    if (!reason) { showToast('Bitte einen Grund angeben', 'error'); return; }
+    const ok = await supAction('/me/ticket-close', { channelId: supSel, reason }, '🔒 Ticket geschlossen');
+    if (ok) { supCloseModal(); supSel = null; supMessages = []; const c = el('supChat'); if (c) c.innerHTML = '<div class="sup-empty">Ticket geschlossen.</div>'; setTimeout(loadSupportTickets, 1500); }
+  };
+  updateInteractive();
 }
 
 // ── Quests (RP-Challenge: Dino + Handicap + Kleinigkeit + RP-Rolle) ───────────
@@ -2580,7 +2947,7 @@ function showDinoDetail(card, ctx) {
       + sellBtn
       + `<button id="ddDelete" class="secondary" style="width:100%;color:#fca5a5;border-color:#7f1d1d">🗑️ Aus Garage löschen</button>`;
   }
-  else if (ctx.mode === 'market') action = ctx.mine ? `<div class="price-tag" style="margin-top:14px">Dein Angebot · ${(ctx.price || 0).toLocaleString('de-DE')} Pkt.</div>` : `<button id="ddBuy" style="width:100%;margin-top:14px">🦖 Kaufen — ${(ctx.price || 0).toLocaleString('de-DE')} Pkt.</button>`;
+  else if (ctx.mode === 'market') action = ctx.mine ? `<div class="price-tag" style="margin-bottom:8px">Dein Angebot · ${(ctx.price || 0).toLocaleString('de-DE')} Pkt.</div><button id="ddWithdraw" class="secondary" style="width:100%">↩️ Angebot zurückziehen</button>` : `<button id="ddBuy" style="width:100%;margin-top:14px">🦖 Kaufen — ${(ctx.price || 0).toLocaleString('de-DE')} Pkt.</button>`;
   box.classList.add('dd-box-wide');
   const badges = [card.isElder ? '👑 Elder' : '', card.isPrime ? '⭐ Prime' : '', card.gender || '', card.isBleeding ? '🩸 Blutet' : '']
     .filter(Boolean).map((b) => `<span class="di-mchip">${b}</span>`).join('');
@@ -2604,6 +2971,7 @@ function showDinoDetail(card, ctx) {
   const u = box.querySelector('#ddUnpark'); if (u) u.onclick = () => { closeDinoDetail(); unparkById(card.id); };
   const sw = box.querySelector('#ddSwap'); if (sw) sw.onclick = () => { closeDinoDetail(); apiAction('/garage/swap', { slotId: card.id }, '🔄 Gswapt zu {dino}', loadGarage); };
   const b = box.querySelector('#ddBuy'); if (b) b.onclick = () => { closeDinoDetail(); buyOfferId(card.id); };
+  const wd = box.querySelector('#ddWithdraw'); if (wd) wd.onclick = () => { closeDinoDetail(); apiAction('/market/withdraw', { offerId: card.id }, '↩️ Angebot zurückgezogen', loadMarket); };
   const ss = box.querySelector('#ddSellServer');
   if (ss && !ss.disabled) ss.onclick = () => {
     const price = card.serverPrice ?? 0;
@@ -2871,16 +3239,37 @@ const dietOfDino = (c) => DINO_DIET[(c || '').split('_')[0]] || 'other';
 // [key, Chip-Label, Gruppen-Label, Farbe]
 const MK_DIETS = [['carni', '🥩 Karni', 'Karnivoren', '#ef4444'], ['herbi', '🌿 Herbi', 'Herbivoren', '#22c55e'], ['omni', '🍃 Omni', 'Omnivoren', '#eab308']];
 let marketSearch = '', marketDiet = 'all', marketSort = 'price-asc', marketOffers = [];
+let marketTab = 'dino'; // 'dino' | 'token' | 'mine' — oberster Markt-Tab
 async function renderMarket() {
   el('market').classList.add('m-wide');
   el('market').innerHTML = `
+    <div style="display:flex;gap:6px;margin-bottom:12px">
+      <button id="mtDino" style="flex:1">🦖 Dino-Markt</button>
+      <button id="mtToken" class="secondary" style="flex:1">🎁 Token-Markt</button>
+      <button id="mtMine" class="secondary" style="flex:1">📋 Meine</button>
+    </div>
+    <div id="mkRoot"></div>`;
+  el('mtDino').onclick = () => { if (marketTab !== 'dino') { marketTab = 'dino'; renderMarketTab(); } };
+  el('mtToken').onclick = () => { if (marketTab !== 'token') { marketTab = 'token'; renderMarketTab(); } };
+  el('mtMine').onclick = () => { if (marketTab !== 'mine') { marketTab = 'mine'; renderMarketTab(); } };
+  renderMarketTab();
+}
+function renderMarketTab() {
+  [['mtDino', 'dino'], ['mtToken', 'token'], ['mtMine', 'mine']].forEach(([id, v]) => { const b = el(id); if (b) b.className = marketTab === v ? '' : 'secondary'; });
+  if (marketTab === 'dino') renderDinoMarket();
+  else if (marketTab === 'token') renderTokenMarket();
+  else renderMyOffers();
+}
+function renderDinoMarket() {
+  el('mkRoot').innerHTML = `
     <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px">
       <h2 style="margin:0">🦖 Dino-Markt</h2>
       <span id="mkPoints" class="price-tag">… Pkt.</span>
     </div>
     <div style="display:flex;gap:6px;margin-bottom:12px">
       <button id="mkTabOffers" style="flex:1">Angebote</button>
-      <button id="mkTabCreate" class="secondary" style="flex:1">➕ Angebot erstellen</button>
+      <button id="mkTabWants" class="secondary" style="flex:1">🔎 Gesuche</button>
+      <button id="mkTabCreate" class="secondary" style="flex:1">➕ Verkaufen</button>
     </div>
     <div id="mkControls" style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-bottom:12px">
       <input id="mkSearch" placeholder="🔍 Spezies suchen…" style="flex:1;min-width:150px;padding:8px;border-radius:8px;border:1px solid var(--border);background:rgba(0,0,0,0.25);color:#eee;font-size:13px">
@@ -2894,6 +3283,7 @@ async function renderMarket() {
     </div>
     <div id="mkBody"></div>`;
   el('mkTabOffers').onclick = () => { marketView = 'offers'; loadMarket(); };
+  el('mkTabWants').onclick = () => { marketView = 'wants'; loadMarket(); };
   el('mkTabCreate').onclick = () => { marketView = 'create'; loadMarket(); };
   const dietBox = el('mkDiet');
   const chips = [['all', 'Alle', '', 'var(--accent)'], ...MK_DIETS];
@@ -2902,12 +3292,12 @@ async function renderMarket() {
   const se = el('mkSearch'); se.value = marketSearch; se.oninput = (e) => { marketSearch = e.target.value; renderMarketOffers(); };
   const so = el('mkSort'); so.value = marketSort; so.onchange = (e) => { marketSort = e.target.value; renderMarketOffers(); };
   marketView = 'offers';
-  await loadMarket();
+  loadMarket();
 }
+let dmState = null, dmGarage = [];
 async function loadMarket() {
-  const tabO = el('mkTabOffers'), tabC = el('mkTabCreate'); if (!tabO) return;
-  tabO.className = marketView === 'offers' ? '' : 'secondary';
-  tabC.className = marketView === 'create' ? '' : 'secondary';
+  if (!el('mkTabOffers')) return;
+  [['mkTabOffers', 'offers'], ['mkTabWants', 'wants'], ['mkTabCreate', 'create']].forEach(([id, v]) => { const b = el(id); if (b) b.className = marketView === v ? '' : 'secondary'; });
   const ctrl = el('mkControls'); if (ctrl) ctrl.style.display = marketView === 'offers' ? 'flex' : 'none';
   const body = el('mkBody'); body.innerHTML = '<div style="color:var(--muted);font-size:13px">Lade…</div>';
   try {
@@ -2915,18 +3305,69 @@ async function loadMarket() {
       fetch(`${config.tokenBase}/market`, { headers: { Authorization: `Bearer ${sessionToken}` } }).then((r) => r.json()),
       fetch(`${config.tokenBase}/garage`, { headers: { Authorization: `Bearer ${sessionToken}` } }).then((r) => r.json()),
     ]);
+    dmState = m; dmGarage = g.slots || [];
     el('mkPoints').textContent = `${(m.points || 0).toLocaleString('de-DE')} Pkt.`;
-    if (marketView === 'offers') {
-      marketOffers = m.offers || [];
-      renderMarketOffers();
-    } else {
-      const slots = g.slots || [];
+    if (marketView === 'offers') { marketOffers = m.offers || []; renderMarketOffers(); }
+    else if (marketView === 'wants') { renderDinoWants(); }
+    else {
+      const slots = dmGarage;
       if (!slots.length) { body.innerHTML = '<div style="color:var(--muted);font-size:13px">Garage leer — nichts zu verkaufen.</div>'; return; }
       body.innerHTML = '<p style="color:var(--muted);font-size:13px;margin-bottom:8px">Wähle einen Dino zum Verkaufen.</p>';
       const grid = document.createElement('div'); grid.className = 'dino-grid'; body.appendChild(grid);
       for (const s of slots) grid.appendChild(dinoCardEl(s, () => showSellDialog(s)));
     }
   } catch { body.innerHTML = '<div style="color:#ef4444;font-size:13px">Markt konnte nicht geladen werden.</div>'; }
+}
+// Dino-Gesuche (Suche Dino X, biete …) — stöbern, erfüllen, selbst aufgeben
+function renderDinoWants() {
+  const body = el('mkBody'); if (!body || !dmState) return;
+  const wants = dmState.wants || [];
+  let html = '<div style="margin-bottom:12px"><button id="dwNew">➕ Gesuch aufgeben</button></div>';
+  html += wants.length ? wants.map((w) => `
+    <div class="tm-row"><div class="tm-info"><b>Suche ${escapeHtml(w.wantDino)}</b><span style="${tmMuted}">bietet ${escapeHtml(w.offerText || '')} · von ${escapeHtml(w.requesterName || '?')}</span></div>
+      ${w.mine ? `<button class="secondary" data-wcancel="${w.id}">Zurückziehen</button>` : `<button data-wfill="${w.id}" data-dino="${escapeHtml(w.wantDino)}">Erfüllen</button>`}</div>`).join('')
+    : `<div style="${tmMuted}">Keine Dino-Gesuche. Gib selbst eins auf! 🔎</div>`;
+  body.innerHTML = html;
+  el('dwNew').onclick = () => showDinoWantForm();
+  body.querySelectorAll('[data-wcancel]').forEach((b) => { b.onclick = () => apiAction('/wants/cancel', { wantId: b.dataset.wcancel }, '↩️ Gesuch zurückgezogen', loadMarket); });
+  body.querySelectorAll('[data-wfill]').forEach((b) => { b.onclick = () => fulfillDinoWant(b.dataset.wfill, b.dataset.dino); });
+}
+function showDinoWantForm() {
+  const body = el('mkBody');
+  const spOpts = Object.keys(DINO_DIET).sort().map((sp) => `<option value="${sp}">${sp}</option>`).join('');
+  const allTok = (dmState.tokenDefs || []).map((t) => `<option value="${t.id}">${t.emoji} ${t.label}</option>`).join('');
+  const q25 = Array.from({ length: 25 }, (_, i) => `<option value="${i + 1}">${i + 1}×</option>`).join('');
+  body.innerHTML = `
+    <div class="tm-form">
+      <label>Gesuchter Dino</label><select id="dwDino" class="bf-select">${spOpts}</select>
+      <label>Gebot-Art</label><select id="dwKind" class="bf-select"><option value="points">💰 Punkte</option><option value="token">🎁 Token</option></select>
+      <div id="dwPriceWrap"></div>
+      <div style="display:flex;gap:6px;margin-top:10px"><button id="dwSubmit" style="flex:1">🔎 Gesuch aufgeben (${dmState.offerHours || 72}h)</button><button id="dwBack" class="secondary" style="flex:none">Zurück</button></div>
+    </div>`;
+  const fillPrice = () => {
+    el('dwPriceWrap').innerHTML = el('dwKind').value === 'points'
+      ? '<label>Gebot (Punkte)</label><input id="dwAmt" type="number" min="1" placeholder="z.B. 5000" class="tm-input">'
+      : `<label>Gebot-Token</label><select id="dwPtok" class="bf-select">${allTok}</select><label>Menge</label><select id="dwPamt" class="bf-select">${q25}</select>`;
+  };
+  el('dwKind').onchange = fillPrice; fillPrice();
+  el('dwBack').onclick = () => { marketView = 'wants'; loadMarket(); };
+  el('dwSubmit').onclick = () => {
+    const kind = el('dwKind').value;
+    const payload = { wantKind: 'dino', wantDino: el('dwDino').value, offerKind: kind };
+    if (kind === 'points') { const a = parseInt(el('dwAmt').value); if (!a || a <= 0) { showToast('Bitte gültiges Punkte-Gebot eingeben', 'error'); return; } payload.offerAmount = a; }
+    else { payload.offerAmount = parseInt(el('dwPamt').value); payload.offerTokenType = el('dwPtok').value; }
+    apiAction('/wants/create', payload, '🔎 Gesuch aufgegeben', () => { marketView = 'wants'; loadMarket(); });
+  };
+}
+function fulfillDinoWant(wantId, dino) {
+  const matches = (dmGarage || []).filter((s) => (s.snapshot?.dinoClass || '').split('_')[0] === dino);
+  if (!matches.length) { showToast(`Du hast keinen ${dino} in der Garage.`, 'error'); return; }
+  const box = el('dinoDetail').querySelector('.box');
+  box.innerHTML = `<div style="font-weight:700;margin-bottom:10px">Welchen ${escapeHtml(dino)} liefern?</div><div class="dino-grid" id="wfGrid"></div><button class="secondary" id="wfClose" style="width:100%;margin-top:10px">Abbrechen</button>`;
+  el('dinoDetail').style.display = 'flex';
+  const grid = box.querySelector('#wfGrid');
+  matches.forEach((s) => grid.appendChild(dinoCardEl(s, () => { closeDinoDetail(); apiAction('/wants/fulfill', { wantId, slotId: s.id }, '✅ Gesuch erfüllt!', loadMarket); })));
+  box.querySelector('#wfClose').onclick = closeDinoDetail;
 }
 // Angebote filtern (Suche + Diät) + sortieren + nach Diät gruppiert anzeigen
 function renderMarketOffers() {
@@ -2973,6 +3414,525 @@ function showSellDialog(card) {
   box.querySelector('#sdClose').onclick = closeDinoDetail;
   box.querySelector('#sdServer').onclick = () => { closeDinoDetail(); apiAction('/market/sell-server', { slotId: card.id }, '💰 An Server verkauft (+500)', loadMarket); };
   box.querySelector('#sdPlayer').onclick = () => { const p = parseInt(box.querySelector('#sdPrice').value); if (!p || p <= 0) { showToast('Bitte gültigen Preis eingeben', 'error'); return; } closeDinoDetail(); apiAction('/market/sell-player', { slotId: card.id, price: p }, '🏷️ Angebot erstellt', loadMarket); };
+}
+
+// ── Token-Markt (Auktionshaus + Direkt-Tausch) ─────────────────────────────
+let tokenView = 'auctions'; // 'auctions' | 'create' | 'trade'
+let tmState = null;
+const tmMuted = 'color:var(--muted);font-size:12px';
+function tmDef(id) { return (tmState?.tokenDefs || []).find((t) => t.id === id) || { id, label: id, emoji: '🎁' }; }
+function tmTokenLabel(id) { const d = tmDef(id); return `${d.emoji} ${d.label}`; }
+function tmPriceText(a) { return a.priceKind === 'points' ? `${(a.priceAmount || 0).toLocaleString('de-DE')} Pkt.` : `${a.priceAmount}× ${tmTokenLabel(a.priceTokenType)}`; }
+
+async function renderTokenMarket() {
+  el('mkRoot').innerHTML = `
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px">
+      <h2 style="margin:0">🎁 Token-Markt</h2>
+      <span id="tmPoints" class="price-tag">… Pkt.</span>
+    </div>
+    <div style="display:flex;gap:6px;margin-bottom:12px">
+      <button id="tvAuc" style="flex:1">🏛️ Auktionen</button>
+      <button id="tvWants" class="secondary" style="flex:1">🔎 Gesuche</button>
+      <button id="tvCreate" class="secondary" style="flex:1">📤 Einstellen</button>
+      <button id="tvTrade" class="secondary" style="flex:1">🔄 Tausch</button>
+    </div>
+    <div id="tmBody"><div style="${tmMuted}">Lade…</div></div>`;
+  el('tvAuc').onclick = () => { tokenView = 'auctions'; renderTokenView(); };
+  el('tvWants').onclick = () => { tokenView = 'wants'; renderTokenView(); };
+  el('tvCreate').onclick = () => { tokenView = 'create'; renderTokenView(); };
+  el('tvTrade').onclick = () => { tokenView = 'trade'; renderTokenView(); };
+  await loadTokenMarket();
+}
+async function loadTokenMarket() {
+  try {
+    const d = await fetch(`${config.tokenBase}/tokenmarket`, { headers: { Authorization: `Bearer ${sessionToken}` } }).then((r) => r.json());
+    if (d.error) throw new Error(d.error);
+    tmState = d;
+    if (el('tmPoints')) el('tmPoints').textContent = `${(d.points || 0).toLocaleString('de-DE')} Pkt.`;
+    renderTokenView();
+  } catch { if (el('tmBody')) el('tmBody').innerHTML = '<div style="color:#ef4444;font-size:13px">Token-Markt konnte nicht geladen werden.</div>'; }
+}
+function renderTokenView() {
+  [['tvAuc', 'auctions'], ['tvWants', 'wants'], ['tvCreate', 'create'], ['tvTrade', 'trade']].forEach(([id, v]) => { const b = el(id); if (b) b.className = tokenView === v ? '' : 'secondary'; });
+  const body = el('tmBody'); if (!body || !tmState) return;
+  if (tokenView === 'auctions') renderTokenAuctions(body);
+  else if (tokenView === 'wants') renderTokenWants(body);
+  else if (tokenView === 'create') renderTokenCreate(body);
+  else renderTokenTrade(body);
+}
+// Token-Gesuche (Suche Token X, biete …) — stöbern, erfüllen, selbst aufgeben
+function renderTokenWants(body) {
+  const wants = tmState.wants || [];
+  let html = '<div style="margin-bottom:12px"><button id="twNew">➕ Gesuch aufgeben</button></div>';
+  html += wants.length ? wants.map((w) => `
+    <div class="tm-row"><div class="tm-info"><b>Suche ${w.wantQty}× ${tmTokenLabel(w.wantTokenType)}</b><span style="${tmMuted}">bietet ${escapeHtml(w.offerText || '')} · von ${escapeHtml(w.requesterName || '?')}</span></div>
+      ${w.mine ? `<button class="secondary" data-wcancel="${w.id}">Zurückziehen</button>` : `<button data-wfill="${w.id}">Erfüllen</button>`}</div>`).join('')
+    : `<div style="${tmMuted}">Keine Token-Gesuche. Gib selbst eins auf! 🔎</div>`;
+  body.innerHTML = html;
+  el('twNew').onclick = () => showTokenWantForm(body);
+  body.querySelectorAll('[data-wcancel]').forEach((b) => { b.onclick = () => apiAction('/wants/cancel', { wantId: b.dataset.wcancel }, '↩️ Gesuch zurückgezogen', loadTokenMarket); });
+  body.querySelectorAll('[data-wfill]').forEach((b) => { b.onclick = () => apiAction('/wants/fulfill', { wantId: b.dataset.wfill }, '✅ Gesuch erfüllt!', loadTokenMarket); });
+}
+function showTokenWantForm(body) {
+  const allTok = (tmState.tokenDefs || []).map((t) => `<option value="${t.id}">${t.emoji} ${t.label}</option>`).join('');
+  const q25 = Array.from({ length: 25 }, (_, i) => `<option value="${i + 1}">${i + 1}×</option>`).join('');
+  body.innerHTML = `
+    <div class="tm-form">
+      <label>Gesuchter Token</label><select id="twTok" class="bf-select">${allTok}</select>
+      <label>Menge</label><select id="twQty" class="bf-select">${q25}</select>
+      <label>Gebot-Art</label><select id="twKind" class="bf-select"><option value="points">💰 Punkte</option><option value="token">🎁 Token</option></select>
+      <div id="twPriceWrap"></div>
+      <div style="display:flex;gap:6px;margin-top:10px"><button id="twSubmit" style="flex:1">🔎 Gesuch aufgeben (${tmState.auctionHours || 72}h)</button><button id="twBack" class="secondary" style="flex:none">Zurück</button></div>
+    </div>`;
+  const fillPrice = () => {
+    el('twPriceWrap').innerHTML = el('twKind').value === 'points'
+      ? '<label>Gebot (Punkte)</label><input id="twAmt" type="number" min="1" placeholder="z.B. 400" class="tm-input">'
+      : `<label>Gebot-Token</label><select id="twPtok" class="bf-select">${allTok}</select><label>Menge</label><select id="twPamt" class="bf-select">${q25}</select>`;
+  };
+  el('twKind').onchange = fillPrice; fillPrice();
+  el('twBack').onclick = () => { tokenView = 'wants'; renderTokenView(); };
+  el('twSubmit').onclick = () => {
+    const kind = el('twKind').value;
+    const payload = { wantKind: 'token', wantTokenType: el('twTok').value, wantQty: parseInt(el('twQty').value), offerKind: kind };
+    if (kind === 'points') { const a = parseInt(el('twAmt').value); if (!a || a <= 0) { showToast('Bitte gültiges Punkte-Gebot eingeben', 'error'); return; } payload.offerAmount = a; }
+    else { payload.offerAmount = parseInt(el('twPamt').value); payload.offerTokenType = el('twPtok').value; }
+    apiAction('/wants/create', payload, '🔎 Gesuch aufgegeben', () => { tokenView = 'wants'; loadTokenMarket(); });
+  };
+}
+function renderTokenAuctions(body) {
+  const list = tmState.auctions || [];
+  if (!list.length) { body.innerHTML = `<div style="${tmMuted}">Keine aktiven Angebote. Stell selbst welche ein! 📤</div>`; return; }
+  body.innerHTML = list.map((a) => `
+    <div class="tm-row">
+      <div class="tm-info"><b>${a.qty}× ${tmTokenLabel(a.tokenType)}</b><span style="${tmMuted}">${tmPriceText(a)} · von ${escapeHtml(a.sellerName || '?')}</span></div>
+      ${a.mine ? `<button class="secondary" data-cancel="${a.id}">Abbrechen</button>` : `<button data-buy="${a.id}">Kaufen</button>`}
+    </div>`).join('');
+  body.querySelectorAll('[data-buy]').forEach((b) => { b.onclick = () => apiAction('/tokenmarket/auction/buy', { auctionId: b.dataset.buy }, '🎉 Token gekauft!', loadTokenMarket); });
+  body.querySelectorAll('[data-cancel]').forEach((b) => { b.onclick = () => apiAction('/tokenmarket/auction/cancel', { auctionId: b.dataset.cancel }, '↩️ Auktion abgebrochen', loadTokenMarket); });
+}
+function renderTokenCreate(body) {
+  const owned = (tmState.tokenDefs || []).filter((t) => (tmState.inventory?.[t.id] || 0) > 0);
+  if (!owned.length) { body.innerHTML = `<div style="${tmMuted}">Du hast keine Token zum Verkaufen. Kauf dir eine Lootbox! 🎁</div>`; return; }
+  const ownedOpts = owned.map((t) => `<option value="${t.id}">${t.emoji} ${t.label} (${tmState.inventory[t.id]}×)</option>`).join('');
+  const allOpts = (tmState.tokenDefs || []).map((t) => `<option value="${t.id}">${t.emoji} ${t.label}</option>`).join('');
+  const q25 = Array.from({ length: 25 }, (_, i) => `<option value="${i + 1}">${i + 1}×</option>`).join('');
+  body.innerHTML = `
+    <div class="tm-form">
+      <label>Token</label><select id="acTok" class="bf-select">${ownedOpts}</select>
+      <label>Menge</label><select id="acQty" class="bf-select"></select>
+      <label>Preis-Art</label><select id="acKind" class="bf-select"><option value="points">💰 Punkte</option><option value="token">🎁 Anderer Token</option></select>
+      <div id="acPriceWrap"></div>
+      <button id="acSubmit" style="width:100%;margin-top:10px">📤 Einstellen (${tmState.auctionHours || 48}h)</button>
+    </div>`;
+  const fillQty = () => { const max = Math.min(25, tmState.inventory[el('acTok').value] || 1); el('acQty').innerHTML = Array.from({ length: max }, (_, i) => `<option value="${i + 1}">${i + 1}×</option>`).join(''); };
+  const fillPrice = () => {
+    el('acPriceWrap').innerHTML = el('acKind').value === 'points'
+      ? '<label>Preis (Punkte)</label><input id="acAmt" type="number" min="1" placeholder="z.B. 400" class="tm-input">'
+      : `<label>Preis-Token</label><select id="acPtok" class="bf-select">${allOpts}</select><label>Menge</label><select id="acPamt" class="bf-select">${q25}</select>`;
+  };
+  el('acTok').onchange = fillQty; el('acKind').onchange = fillPrice; fillQty(); fillPrice();
+  el('acSubmit').onclick = () => {
+    const kind = el('acKind').value;
+    const payload = { tokenType: el('acTok').value, qty: parseInt(el('acQty').value), priceKind: kind };
+    if (kind === 'points') { const amt = parseInt(el('acAmt').value); if (!amt || amt <= 0) { showToast('Bitte gültigen Punkte-Preis eingeben', 'error'); return; } payload.priceAmount = amt; }
+    else { payload.priceAmount = parseInt(el('acPamt').value); payload.priceTokenType = el('acPtok').value; }
+    apiAction('/tokenmarket/auction/create', payload, '🏛️ Auktion erstellt', () => { tokenView = 'auctions'; loadTokenMarket(); });
+  };
+}
+function renderTokenTrade(body) {
+  const owned = (tmState.tokenDefs || []).filter((t) => (tmState.inventory?.[t.id] || 0) > 0);
+  const players = tmState.players || [];
+  const inc = tmState.trades?.incoming || [], out = tmState.trades?.outgoing || [];
+  let html = '<div class="tm-sec">📨 Eingehende Angebote</div>';
+  html += inc.length ? inc.map((t) => `
+    <div class="tm-row"><div class="tm-info"><b>von ${escapeHtml(t.fromName)}</b><span style="${tmMuted}">Du bekommst ${t.giveQty}× ${tmTokenLabel(t.giveType)} · gibst ${t.wantQty}× ${tmTokenLabel(t.wantType)}</span></div>
+      <div style="display:flex;gap:6px"><button data-acc="${t.id}">✅</button><button class="secondary" data-dec="${t.id}">✖️</button></div></div>`).join('') : `<div style="${tmMuted}">Keine.</div>`;
+  html += '<div class="tm-sec">📤 Meine Angebote</div>';
+  html += out.length ? out.map((t) => `
+    <div class="tm-row"><div class="tm-info"><b>an ${escapeHtml(t.toName)}</b><span style="${tmMuted}">${t.giveQty}× ${tmTokenLabel(t.giveType)} → ${t.wantQty}× ${tmTokenLabel(t.wantType)}</span></div>
+      <button class="secondary" data-cxl="${t.id}">Zurückziehen</button></div>`).join('') : `<div style="${tmMuted}">Keine.</div>`;
+  html += '<div class="tm-sec">🔄 Neues Angebot</div>';
+  if (!owned.length) html += `<div style="${tmMuted}">Du hast keine Token zum Tauschen.</div>`;
+  else if (!players.length) html += `<div style="${tmMuted}">Keine Online-Spieler als Tauschpartner. (Offline-Tausch geht im Discord.)</div>`;
+  else {
+    const pOpts = players.map((p) => `<option value="${p.steamId}">${escapeHtml(p.name)}</option>`).join('');
+    const ownedOpts = owned.map((t) => `<option value="${t.id}">${t.emoji} ${t.label} (${tmState.inventory[t.id]}×)</option>`).join('');
+    const allOpts = (tmState.tokenDefs || []).map((t) => `<option value="${t.id}">${t.emoji} ${t.label}</option>`).join('');
+    const q25 = Array.from({ length: 25 }, (_, i) => `<option value="${i + 1}">${i + 1}×</option>`).join('');
+    html += `<div class="tm-form">
+      <label>Partner (online)</label><select id="trUser" class="bf-select">${pOpts}</select>
+      <label>Du gibst</label><div style="display:flex;gap:6px"><select id="trGive" class="bf-select" style="flex:1">${ownedOpts}</select><select id="trGiveQ" class="bf-select" style="flex:none;width:84px"></select></div>
+      <label>Du willst dafür</label><div style="display:flex;gap:6px"><select id="trWant" class="bf-select" style="flex:1">${allOpts}</select><select id="trWantQ" class="bf-select" style="flex:none;width:84px">${q25}</select></div>
+      <button id="trSend" style="width:100%;margin-top:10px">🔄 Angebot senden</button></div>`;
+  }
+  body.innerHTML = html;
+  body.querySelectorAll('[data-acc]').forEach((b) => { b.onclick = () => apiAction('/tokenmarket/trade/accept', { tradeId: b.dataset.acc }, '🤝 Tausch angenommen', loadTokenMarket); });
+  body.querySelectorAll('[data-dec]').forEach((b) => { b.onclick = () => apiAction('/tokenmarket/trade/cancel', { tradeId: b.dataset.dec }, '✖️ Abgelehnt', loadTokenMarket); });
+  body.querySelectorAll('[data-cxl]').forEach((b) => { b.onclick = () => apiAction('/tokenmarket/trade/cancel', { tradeId: b.dataset.cxl }, '↩️ Zurückgezogen', loadTokenMarket); });
+  if (el('trSend')) {
+    const fillGiveQ = () => { const max = Math.min(25, tmState.inventory[el('trGive').value] || 1); el('trGiveQ').innerHTML = Array.from({ length: max }, (_, i) => `<option value="${i + 1}">${i + 1}×</option>`).join(''); };
+    el('trGive').onchange = fillGiveQ; fillGiveQ();
+    el('trSend').onclick = () => {
+      const u = players.find((p) => p.steamId === el('trUser').value);
+      apiAction('/tokenmarket/trade/offer', { toSteamId: el('trUser').value, toName: u?.name || 'Spieler', giveType: el('trGive').value, giveQty: parseInt(el('trGiveQ').value), wantType: el('trWant').value, wantQty: parseInt(el('trWantQ').value) }, '📨 Angebot gesendet', loadTokenMarket);
+    };
+  }
+}
+
+// ── Meine Angebote (alle eigenen Listings + Gesuche, zentral zurückziehbar) ──
+async function renderMyOffers() {
+  el('mkRoot').innerHTML = '<h2 style="margin:0 0 12px">📋 Meine Angebote</h2><div id="myBody"><div style="' + tmMuted + '">Lade…</div></div>';
+  try {
+    const [m, tm] = await Promise.all([
+      fetch(`${config.tokenBase}/market`, { headers: { Authorization: `Bearer ${sessionToken}` } }).then((r) => r.json()),
+      fetch(`${config.tokenBase}/tokenmarket`, { headers: { Authorization: `Bearer ${sessionToken}` } }).then((r) => r.json()),
+    ]);
+    const lbl = (id, data) => { const d = (data.tokenDefs || []).find((x) => x.id === id) || { emoji: '🎁', label: id }; return `${d.emoji} ${d.label}`; };
+    const rows = [];
+    (m.offers || []).filter((o) => o.mine).forEach((o) => rows.push({ t: `🦖 ${o.dino} — ${(o.price || 0).toLocaleString('de-DE')} Pkt.`, sub: 'Dino-Angebot', act: () => apiAction('/market/withdraw', { offerId: o.id }, '↩️ Zurückgezogen', renderMyOffers) }));
+    (m.wants || []).filter((w) => w.mine).forEach((w) => rows.push({ t: `🔎 Suche ${w.wantDino} — bietet ${w.offerText}`, sub: 'Dino-Gesuch', act: () => apiAction('/wants/cancel', { wantId: w.id }, '↩️ Zurückgezogen', renderMyOffers) }));
+    (tm.auctions || []).filter((a) => a.mine).forEach((a) => rows.push({ t: `🏛️ ${a.qty}× ${lbl(a.tokenType, tm)} — ${a.priceText}`, sub: 'Token-Auktion', act: () => apiAction('/tokenmarket/auction/cancel', { auctionId: a.id }, '↩️ Zurückgezogen', renderMyOffers) }));
+    (tm.wants || []).filter((w) => w.mine).forEach((w) => rows.push({ t: `🔎 Suche ${w.wantQty}× ${lbl(w.wantTokenType, tm)} — bietet ${w.offerText}`, sub: 'Token-Gesuch', act: () => apiAction('/wants/cancel', { wantId: w.id }, '↩️ Zurückgezogen', renderMyOffers) }));
+    (tm.trades?.outgoing || []).forEach((t) => rows.push({ t: `🔄 an ${t.toName}: ${t.giveQty}× ${lbl(t.giveType, tm)} → ${t.wantQty}× ${lbl(t.wantType, tm)}`, sub: 'Tausch-Angebot', act: () => apiAction('/tokenmarket/trade/cancel', { tradeId: t.id }, '↩️ Zurückgezogen', renderMyOffers) }));
+    const body = el('myBody'); if (!body) return;
+    if (!rows.length) { body.innerHTML = `<div style="${tmMuted}">Du hast keine aktiven Angebote oder Gesuche.</div>`; return; }
+    body.innerHTML = '';
+    rows.forEach((r) => {
+      const d = document.createElement('div'); d.className = 'tm-row';
+      d.innerHTML = `<div class="tm-info"><b>${escapeHtml(r.t)}</b><span style="${tmMuted}">${r.sub}</span></div>`;
+      const btn = document.createElement('button'); btn.className = 'secondary'; btn.textContent = 'Zurückziehen'; btn.onclick = r.act;
+      d.appendChild(btn); body.appendChild(d);
+    });
+  } catch { const b = el('myBody'); if (b) b.innerHTML = '<div style="color:#ef4444;font-size:13px">Konnte nicht geladen werden.</div>'; }
+}
+
+// ── Dino-Token-Verwaltung (Staff: geben / bearbeiten / löschen) ─────────────
+let dtTab = 'give';                 // 'give' | 'edit' | 'delete'
+let dtCfg = null;                   // {species, dietBySpecies, primeLabels, mutations}
+let dtUsers = [], dtRoles = [];
+let dtSel = { species: null, gender: 'Male', grow: 25, elder: 0, primes: [], mut: { base: [], parent: [], elder: [] }, targetKind: 'user' };
+
+async function ensureDtLoaded() {
+  if (!isStaff) return;
+  if (dtCfg) { renderDtTab(); return; }
+  const body = el('dtBody'); if (body) body.innerHTML = '<div class="dt-muted">Lade…</div>';
+  dtTab = 'give';
+  dtSel = { species: null, gender: 'Male', grow: 25, elder: 0, primes: [], mut: { base: [], parent: [], elder: [] }, targetKind: 'user' };
+  try {
+    const [cfg, users, roles] = await Promise.all([
+      fetch(`${config.tokenBase}/admin/dino-token/config`, { headers: { Authorization: `Bearer ${sessionToken}` } }).then((r) => r.json()),
+      fetch(`${config.tokenBase}/admin/users`, { headers: { Authorization: `Bearer ${sessionToken}` } }).then((r) => r.json()).catch(() => ({ users: [] })),
+      isIngame ? fetch(`${config.tokenBase}/admin/roles`, { headers: { Authorization: `Bearer ${sessionToken}` } }).then((r) => r.json()).catch(() => ({ roles: [] })) : Promise.resolve({ roles: [] }),
+    ]);
+    if (cfg.error) throw new Error(cfg.error);
+    dtCfg = cfg; dtUsers = users.users || []; dtRoles = roles.roles || [];
+    dtSel.species = (dtCfg.species || [])[0] || '';
+  } catch (e) { const b = el('dtBody'); if (b) b.innerHTML = `<div style="color:#ef4444;font-size:13px">Konnte nicht laden: ${escapeHtml(e.message || '')}</div>`; return; }
+  renderDtTab();
+}
+function renderDtTab() {
+  [['dtTabGive', 'give'], ['dtTabEdit', 'edit'], ['dtTabDel', 'delete']].forEach(([id, v]) => { const b = el(id); if (b) b.className = dtTab === v ? '' : 'secondary'; });
+  if (dtTab === 'give') renderDtGive(); else renderDtEditDelete();
+}
+function dtDiet() { return (dtCfg.dietBySpecies || {})[(dtSel.species || '').split('_')[0]] || 'both'; }
+function renderDtPrime() {
+  const box = el('dtPrime'); if (!box) return;
+  box.innerHTML = (dtCfg.primeLabels || []).map((lbl, i) => { const n = i + 1; const on = dtSel.primes.includes(n); return `<span class="dt-chip${on ? ' on' : ''}" data-prime="${n}">${n}. ${escapeHtml(lbl)}</span>`; }).join('');
+  box.querySelectorAll('[data-prime]').forEach((ch) => { ch.onclick = () => { const n = parseInt(ch.dataset.prime); const i = dtSel.primes.indexOf(n); if (i >= 0) dtSel.primes.splice(i, 1); else dtSel.primes.push(n); const l = el('dtPrimeLbl'); if (l) l.textContent = `Prime-Bedingungen (${dtSel.primes.length}/10)`; renderDtPrime(); renderDtMut(); }; });
+}
+function renderDtMut() {
+  const box = el('dtMut'); if (!box) return;
+  const c = dtSel, diet = dtDiet(), gender = c.gender;
+  const list = (dtCfg.mutations || []).filter((m) => (m.diet === 'both' || m.diet === diet) && (!m.femaleOnly || gender === 'female' || gender === 'Female'));
+  const primeCount = c.primes.length, baseMax = primeCount >= 5 ? 4 : 3, elderUnlocked = primeCount >= 1;
+  const valid = new Set(list.map((m) => m.value));
+  c.mut.base = c.mut.base.filter((v) => valid.has(v)).slice(0, baseMax);
+  c.mut.parent = c.mut.parent.filter((v) => valid.has(v)).slice(0, 4);
+  c.mut.elder = elderUnlocked ? c.mut.elder.filter((v) => valid.has(v)).slice(0, 8) : [];
+  const group = (key, title, max, enabled) => {
+    if (!enabled) return `<div class="dt-sec">${title} — gesperrt (≥1 Prime nötig)</div>`;
+    const others = new Set([...(key !== 'base' ? c.mut.base : []), ...(key !== 'parent' ? c.mut.parent : []), ...(key !== 'elder' ? c.mut.elder : [])]);
+    const sel = new Set(c.mut[key]);
+    const chips = list.map((m) => { const on = sel.has(m.value); const dim = others.has(m.value) && !on; return `<span class="dt-chip${on ? ' on' : ''}${dim ? ' dim' : ''}" data-mut="${key}" data-val="${escapeHtml(m.value)}" title="${escapeHtml(m.description || '')}">${escapeHtml(m.label)}</span>`; }).join('');
+    return `<div class="dt-sec">${title} (${sel.size}/${max})</div><div class="dt-chips">${chips}</div>`;
+  };
+  box.innerHTML = group('base', '🧬 Base', baseMax, true) + group('parent', '🧬 Parent', 4, true) + group('elder', '🧬 Elder', 8, elderUnlocked);
+  box.querySelectorAll('[data-mut]').forEach((ch) => { ch.onclick = () => {
+    const key = ch.dataset.mut, val = ch.dataset.val, arr = c.mut[key], i = arr.indexOf(val);
+    const max = key === 'base' ? baseMax : key === 'parent' ? 4 : 8;
+    if (i >= 0) arr.splice(i, 1); else { if (arr.length >= max) { showToast(`Max. ${max} in ${key}`, 'error'); return; } arr.push(val); }
+    renderDtMut();
+  }; });
+}
+function renderDtGive() {
+  const c = dtSel;
+  const userOpts = dtUsers.map((u) => `<option value="${u.steamId}">${escapeHtml(u.name)}</option>`).join('');
+  const roleOpts = dtRoles.map((r) => `<option value="${r.id}">${escapeHtml(r.name)}</option>`).join('');
+  const spOpts = (dtCfg.species || []).map((s) => `<option value="${s}"${s === c.species ? ' selected' : ''}>${s}</option>`).join('');
+  el('dtBody').innerHTML = `
+    <div class="dt-form">
+      <label>Ziel</label>
+      <select id="dtKind" class="bf-select">
+        <option value="user"${c.targetKind === 'user' ? ' selected' : ''}>👤 Einzelner Spieler</option>
+        <option value="role"${c.targetKind === 'role' ? ' selected' : ''}>👥 Rolle (alle Verknüpften)</option>
+        <option value="online"${c.targetKind === 'online' ? ' selected' : ''}>🌐 Alle Online</option>
+      </select>
+      <div id="dtTargetBox"></div>
+      <label>Spezies</label><select id="dtSpecies" class="bf-select">${spOpts}</select>
+      <div class="dt-row">
+        <div style="flex:1"><label>Geschlecht</label><select id="dtGender" class="bf-select"><option value="Male"${c.gender === 'Male' ? ' selected' : ''}>♂ Male</option><option value="Female"${c.gender === 'Female' ? ' selected' : ''}>♀ Female</option></select></div>
+        <div style="flex:1"><label>Wachstum %</label><input id="dtGrow" type="number" min="1" max="100" value="${c.grow}" class="tm-input"></div>
+        <div style="flex:1"><label>Elder-Stacks</label><select id="dtElder" class="bf-select">${[0, 1, 2, 3].map((n) => `<option value="${n}"${c.elder === n ? ' selected' : ''}>${n}×</option>`).join('')}</select></div>
+      </div>
+      <label id="dtPrimeLbl">Prime-Bedingungen (${c.primes.length}/10)</label>
+      <div class="dt-chips" id="dtPrime"></div>
+      <div id="dtMut"></div>
+      <button id="dtGiveSubmit" style="width:100%;margin-top:14px;background:#16a34a">🎁 Token geben</button>
+    </div>`;
+  const renderTarget = () => {
+    c.targetKind = el('dtKind').value;
+    el('dtTargetBox').innerHTML = c.targetKind === 'user'
+      ? `<label>Spieler</label><select id="dtUser" class="bf-select">${userOpts}</select>`
+      : c.targetKind === 'role'
+        ? `<label>Rolle</label><select id="dtRole" class="bf-select">${roleOpts}</select>`
+        : '<div class="dt-muted" style="margin-top:6px">→ an alle aktuell online Spieler.</div>';
+  };
+  renderTarget();
+  el('dtKind').onchange = renderTarget;
+  el('dtSpecies').onchange = (e) => { c.species = e.target.value; renderDtMut(); };
+  el('dtGender').onchange = (e) => { c.gender = e.target.value; renderDtMut(); };
+  el('dtGrow').oninput = (e) => { c.grow = e.target.value; };
+  el('dtElder').onchange = (e) => { c.elder = parseInt(e.target.value); };
+  renderDtPrime(); renderDtMut();
+  el('dtGiveSubmit').onclick = () => {
+    const body = { targetKind: c.targetKind, dino: c.species, gender: el('dtGender').value, grow: (parseInt(el('dtGrow').value) || 25) / 100, elderStacks: c.elder, primes: c.primes, mutations: c.mut };
+    if (c.targetKind === 'user') { const u = el('dtUser'); if (!u || !u.value) { showToast('Spieler wählen', 'error'); return; } body.targetSteamId = u.value; }
+    else if (c.targetKind === 'role') { const r = el('dtRole'); if (!r || !r.value) { showToast('Rolle wählen', 'error'); return; } body.roleId = r.value; }
+    apiAction('/admin/dino-token/create', body, '🎁 Dino-Token vergeben', () => { c.primes = []; c.mut = { base: [], parent: [], elder: [] }; renderDtPrime(); renderDtMut(); const l = el('dtPrimeLbl'); if (l) l.textContent = 'Prime-Bedingungen (0/10)'; });
+  };
+}
+function renderDtEditDelete() {
+  const userOpts = dtUsers.map((u) => `<option value="${u.steamId}">${escapeHtml(u.name)}</option>`).join('');
+  el('dtBody').innerHTML = `
+    <div class="dt-form">
+      <label>Spieler (${dtTab === 'delete' ? 'Token löschen' : 'Token bearbeiten'})</label>
+      <select id="dtEdUser" class="bf-select">${userOpts}</select>
+      <button id="dtEdLoad" style="width:100%;margin-top:8px">📋 Garage laden</button>
+    </div>
+    <div id="dtEdList" style="margin-top:12px"></div>`;
+  el('dtEdLoad').onclick = dtLoadGarage;
+}
+async function dtLoadGarage() {
+  const sid = el('dtEdUser').value; if (!sid) { showToast('Spieler wählen', 'error'); return; }
+  const box = el('dtEdList'); box.innerHTML = '<div class="dt-muted">Lade…</div>';
+  try {
+    const d = await fetch(`${config.tokenBase}/admin/dino-token/garage?steamId=${encodeURIComponent(sid)}`, { headers: { Authorization: `Bearer ${sessionToken}` } }).then((r) => r.json());
+    if (d.error) throw new Error(d.error);
+    const slots = d.slots || [];
+    if (!slots.length) { box.innerHTML = '<div class="dt-muted">Garage leer.</div>'; return; }
+    box.innerHTML = slots.map((s) => `<div class="dt-slot"><span>${escapeHtml(s.dino)} · ${Math.round((s.grow || 0) * 100)}% · ${escapeHtml(s.gender || '')}${s.isElder ? ' 👑' : ''}${s.isPrime ? ' ⭐' : ''}</span>${dtTab === 'delete' ? `<button class="secondary" data-del="${s.id}" style="flex:none;width:auto;padding:5px 10px;color:#fca5a5">🗑️</button>` : `<button data-edit="${s.id}" style="flex:none;width:auto;padding:5px 10px">✏️</button>`}</div>`).join('');
+    box.querySelectorAll('[data-del]').forEach((b) => { b.onclick = () => { if (b.dataset.armed) { apiAction('/admin/dino-token/delete', { targetSteamId: sid, slotId: b.dataset.del }, '🗑️ Token gelöscht', dtLoadGarage); } else { b.dataset.armed = '1'; b.textContent = 'Sicher?'; setTimeout(() => { b.textContent = '🗑️'; delete b.dataset.armed; }, 2500); } }; });
+    box.querySelectorAll('[data-edit]').forEach((b) => { b.onclick = () => dtOpenEdit(sid, slots.find((s) => s.id === b.dataset.edit)); });
+  } catch (e) { box.innerHTML = `<div style="color:#ef4444;font-size:13px">${escapeHtml(e.message || '')}</div>`; }
+}
+function dtOpenEdit(steamId, slot) {
+  if (!slot) return;
+  const c = dtSel;
+  c.species = slot.dino; c.gender = slot.gender || 'Male'; c.grow = Math.round((slot.grow || 0) * 100);
+  c.elder = slot.elderStacks || 0; c.primes = (slot.primes || []).slice();
+  c.mut = { base: (slot.mutations?.base || []).filter(Boolean), parent: (slot.mutations?.parent || []).filter(Boolean), elder: (slot.mutations?.elder || []).filter(Boolean) };
+  el('dtBody').innerHTML = `
+    <div class="dt-form">
+      <div class="dt-sec">✏️ ${escapeHtml(slot.dino)} bearbeiten</div>
+      <div class="dt-row">
+        <div style="flex:1"><label>Geschlecht</label><select id="dtGender" class="bf-select"><option value="Male"${c.gender === 'Male' ? ' selected' : ''}>♂ Male</option><option value="Female"${c.gender === 'Female' ? ' selected' : ''}>♀ Female</option></select></div>
+        <div style="flex:1"><label>Wachstum %</label><input id="dtGrow" type="number" min="1" max="100" value="${c.grow}" class="tm-input"></div>
+        <div style="flex:1"><label>Elder-Stacks</label><select id="dtElder" class="bf-select">${[0, 1, 2, 3].map((n) => `<option value="${n}"${c.elder === n ? ' selected' : ''}>${n}×</option>`).join('')}</select></div>
+      </div>
+      <label id="dtPrimeLbl">Prime-Bedingungen (${c.primes.length}/10)</label>
+      <div class="dt-chips" id="dtPrime"></div>
+      <div id="dtMut"></div>
+      <div class="dt-row" style="margin-top:14px"><button id="dtSave" style="flex:1;background:#16a34a">💾 Speichern</button><button id="dtBack" class="secondary" style="flex:none">Zurück</button></div>
+    </div>`;
+  el('dtGender').onchange = (e) => { c.gender = e.target.value; renderDtMut(); };
+  el('dtGrow').oninput = (e) => { c.grow = e.target.value; };
+  el('dtElder').onchange = (e) => { c.elder = parseInt(e.target.value); };
+  renderDtPrime(); renderDtMut();
+  el('dtBack').onclick = () => { dtTab = 'edit'; renderDtTab(); };
+  el('dtSave').onclick = () => apiAction('/admin/dino-token/edit', { targetSteamId: steamId, slotId: slot.id, gender: el('dtGender').value, grow: (parseInt(el('dtGrow').value) || 1) / 100, elderStacks: c.elder, primes: c.primes, mutations: c.mut }, '💾 Token aktualisiert', () => { dtTab = 'edit'; renderDtTab(); });
+}
+
+// ── PvP-Builds + Prime auf aktiven Dino (Staff) ─────────────────────────────
+let ppBuilds = [], ppUsers = [], ppRoles = [], ppPrimeLabels = [], ppLoaded = false;
+let ppGrantKind = 'user', ppPrimes = [];
+async function ensurePvpLoaded() {
+  if (!isStaff) return;
+  if (ppLoaded) { renderPvpPrime(); return; }
+  const body = el('ppBody'); if (body) body.innerHTML = '<div class="dt-muted">Lade…</div>';
+  try {
+    const [cfg, users, roles] = await Promise.all([
+      fetch(`${config.tokenBase}/admin/pvp/config`, { headers: { Authorization: `Bearer ${sessionToken}` } }).then((r) => r.json()),
+      fetch(`${config.tokenBase}/admin/users`, { headers: { Authorization: `Bearer ${sessionToken}` } }).then((r) => r.json()).catch(() => ({ users: [] })),
+      isIngame ? fetch(`${config.tokenBase}/admin/roles`, { headers: { Authorization: `Bearer ${sessionToken}` } }).then((r) => r.json()).catch(() => ({ roles: [] })) : Promise.resolve({ roles: [] }),
+    ]);
+    if (cfg.error) throw new Error(cfg.error);
+    ppBuilds = cfg.builds || []; ppPrimeLabels = cfg.primeLabels || []; ppUsers = users.users || []; ppRoles = roles.roles || []; ppLoaded = true;
+  } catch (e) { const b = el('ppBody'); if (b) b.innerHTML = `<div style="color:#ef4444;font-size:13px">Konnte nicht laden: ${escapeHtml(e.message || '')}</div>`; return; }
+  renderPvpPrime();
+}
+function renderPpPrimeChips() {
+  const box = el('ppPrChips'); if (!box) return;
+  box.innerHTML = ppPrimeLabels.map((lbl, i) => { const n = i + 1; const on = ppPrimes.includes(n); return `<span class="dt-chip${on ? ' on' : ''}" data-pp="${n}">${n}. ${escapeHtml(lbl)}</span>`; }).join('');
+  box.querySelectorAll('[data-pp]').forEach((ch) => { ch.onclick = () => { const n = parseInt(ch.dataset.pp); const i = ppPrimes.indexOf(n); if (i >= 0) ppPrimes.splice(i, 1); else ppPrimes.push(n); const l = el('ppPrLbl'); if (l) l.textContent = `Prime-Bedingungen (${ppPrimes.length}/10)`; renderPpPrimeChips(); }; });
+}
+function renderPvpPrime() {
+  const userOpts = ppUsers.map((u) => `<option value="${u.steamId}">${escapeHtml(u.name)}</option>`).join('');
+  const roleOpts = ppRoles.map((r) => `<option value="${r.id}">${escapeHtml(r.name)}</option>`).join('');
+  const buildOpts = ppBuilds.map((b) => `<option value="${b.key}">${escapeHtml(b.label)}</option>`).join('');
+  el('ppBody').innerHTML = `
+    <div class="dt-sec">🏆 PvP-Turnier-Builds</div>
+    <div class="dt-form">
+      <label>Ziel</label>
+      <select id="ppKind" class="bf-select"><option value="user">👤 Spieler</option><option value="role">👥 Rolle (alle)</option><option value="online">🌐 Alle Online</option></select>
+      <div id="ppTargetBox"></div>
+      <label>Build</label><select id="ppBuild" class="bf-select">${buildOpts}</select>
+      <div class="dt-row" style="margin-top:10px"><button id="ppGrant" style="flex:1;background:#16a34a">🏆 Build geben</button><button id="ppRemove" class="secondary" style="flex:1">🧹 Einsammeln</button></div>
+      <div class="dt-muted" style="margin-top:4px">„Einsammeln" entfernt nur PvP-Build-Dinos (normale Garage bleibt).</div>
+    </div>
+    <div class="dt-sec" style="margin-top:18px">⭐ Prime auf aktiven Dino (live)</div>
+    <div class="dt-form">
+      <label>Spieler (muss ingame sein)</label><select id="ppPrUser" class="bf-select">${userOpts}</select>
+      <label id="ppPrLbl">Prime-Bedingungen (${ppPrimes.length}/10)</label>
+      <div class="dt-chips" id="ppPrChips"></div>
+      <button id="ppPrApply" style="width:100%;margin-top:10px">⭐ Prime setzen</button>
+    </div>`;
+  const renderTarget = () => {
+    ppGrantKind = el('ppKind').value;
+    el('ppTargetBox').innerHTML = ppGrantKind === 'user' ? `<label>Spieler</label><select id="ppUser" class="bf-select">${userOpts}</select>`
+      : ppGrantKind === 'role' ? `<label>Rolle</label><select id="ppRole" class="bf-select">${roleOpts}</select>`
+        : '<div class="dt-muted" style="margin-top:6px">→ an alle aktuell online Spieler.</div>';
+  };
+  renderTarget(); el('ppKind').onchange = renderTarget;
+  const grantBody = () => {
+    const b = { targetKind: ppGrantKind };
+    if (ppGrantKind === 'user') { const u = el('ppUser'); if (!u || !u.value) { showToast('Spieler wählen', 'error'); return null; } b.targetSteamId = u.value; }
+    else if (ppGrantKind === 'role') { const r = el('ppRole'); if (!r || !r.value) { showToast('Rolle wählen', 'error'); return null; } b.roleId = r.value; }
+    return b;
+  };
+  el('ppGrant').onclick = () => { const b = grantBody(); if (!b) return; b.buildKey = el('ppBuild').value; apiAction('/admin/pvp/grant', b, '🏆 PvP-Build vergeben', null); };
+  el('ppRemove').onclick = () => { const b = grantBody(); if (!b) return; apiAction('/admin/pvp/remove', b, '🧹 PvP-Builds eingesammelt', null); };
+  renderPpPrimeChips();
+  el('ppPrApply').onclick = () => { const u = el('ppPrUser'); if (!u || !u.value) { showToast('Spieler wählen', 'error'); return; } apiAction('/admin/prime', { targetSteamId: u.value, primes: ppPrimes }, '⭐ Prime gesetzt', null); };
+}
+
+// ── Account-Verwaltung (nur Admin): Discord↔Steam Link / Find / Dupes ───────
+function renderAccount() {
+  el('acBody').innerHTML = `
+    <div class="dt-sec">🔍 Verknüpfung suchen</div>
+    <div class="dt-form">
+      <label>Discord-ID ODER Steam-ID</label>
+      <input id="acFindInput" class="tm-input" placeholder="Discord-ID oder SteamID64…">
+      <button id="acFindBtn" style="width:100%;margin-top:6px">🔍 Suchen</button>
+      <div id="acFindResult" style="margin-top:8px"></div>
+    </div>
+    <div class="dt-sec" style="margin-top:18px">🔗 Verknüpfung setzen</div>
+    <div class="dt-form">
+      <div class="dt-row"><div style="flex:1"><label>Discord-ID</label><input id="acLinkD" class="tm-input" placeholder="Discord-ID"></div><div style="flex:1"><label>Steam-ID</label><input id="acLinkS" class="tm-input" placeholder="7656119…"></div></div>
+      <button id="acLinkBtn" style="width:100%;margin-top:8px;background:#16a34a">🔗 Verknüpfen</button>
+      <div id="acLinkResult" class="dt-muted" style="margin-top:6px"></div>
+    </div>
+    <div class="dt-sec" style="margin-top:18px">🔁 Duplikate</div>
+    <div class="dt-form">
+      <button id="acDupBtn" style="width:100%">🔁 Duplikate suchen</button>
+      <div id="acDupList" style="margin-top:8px"></div>
+    </div>`;
+  el('acFindBtn').onclick = acFind;
+  el('acLinkBtn').onclick = acLink;
+  el('acDupBtn').onclick = acDups;
+}
+const acHdr = () => ({ Authorization: `Bearer ${sessionToken}` });
+function acLinkRow(r) {
+  return `<div class="dt-slot"><span>${escapeHtml(r.name || r.discordId)} · 🆔 ${escapeHtml(r.discordId)}${r.steamId ? ` ↔ 🎮 ${escapeHtml(r.steamId)}` : ''}</span><button class="secondary" data-unlink="${escapeHtml(r.discordId)}" style="flex:none;width:auto;padding:5px 10px;color:#fca5a5">Lösen</button></div>`;
+}
+async function acFind() {
+  const v = el('acFindInput').value.trim(); if (!v) { showToast('ID eingeben', 'error'); return; }
+  const q = /^7656119\d{10}$/.test(v) ? `steamId=${encodeURIComponent(v)}` : `discordId=${encodeURIComponent(v)}`;
+  const box = el('acFindResult'); box.innerHTML = '<div class="dt-muted">Suche…</div>';
+  try {
+    const d = await fetch(`${config.tokenBase}/admin/accounts/find?${q}`, { headers: acHdr() }).then((r) => r.json());
+    if (d.error) throw new Error(d.error);
+    box.innerHTML = d.results.length ? d.results.map(acLinkRow).join('') : '<div class="dt-muted">Keine Verknüpfung gefunden.</div>';
+    box.querySelectorAll('[data-unlink]').forEach((b) => { b.onclick = () => apiAction('/admin/accounts/unlink', { discordId: b.dataset.unlink }, '🔗 Verknüpfung gelöst', acFind); });
+  } catch (e) { box.innerHTML = `<div style="color:#ef4444;font-size:13px">${escapeHtml(e.message || '')}</div>`; }
+}
+async function acLink() {
+  const did = el('acLinkD').value.trim(), sid = el('acLinkS').value.trim();
+  if (!did || !sid) { showToast('Discord-ID + Steam-ID eingeben', 'error'); return; }
+  const out = el('acLinkResult'); out.textContent = '…';
+  try {
+    const r = await fetch(`${config.tokenBase}/admin/accounts/link`, { method: 'POST', headers: { ...acHdr(), 'Content-Type': 'application/json' }, body: JSON.stringify({ discordId: did, steamId: sid }) });
+    const d = await r.json(); if (!r.ok) throw new Error(d.error || 'Fehler');
+    showToast('🔗 Verknüpft', 'success'); pollHud();
+    let msg = '✅ Verknüpft.'; if (d.previous) msg += ` Vorher: ${d.previous}.`; if (d.alsoLinkedTo && d.alsoLinkedTo.length) msg += ` ⚠️ Diese SteamID ist auch verknüpft mit: ${d.alsoLinkedTo.join(', ')}.`;
+    out.textContent = msg;
+  } catch (e) { showToast(e.message, 'error'); out.textContent = '❌ ' + e.message; }
+}
+async function acDups() {
+  const box = el('acDupList'); box.innerHTML = '<div class="dt-muted">Suche…</div>';
+  try {
+    const d = await fetch(`${config.tokenBase}/admin/accounts/dups`, { headers: acHdr() }).then((r) => r.json());
+    if (d.error) throw new Error(d.error);
+    if (!d.dups.length) { box.innerHTML = '<div class="dt-muted">Keine Duplikate. 👍</div>'; return; }
+    box.innerHTML = d.dups.map((g) => `<div style="margin-bottom:10px"><div class="dt-muted">🎮 ${escapeHtml(g.steamId)} — ${g.accounts.length}× verknüpft</div>${g.accounts.map(acLinkRow).join('')}</div>`).join('');
+    box.querySelectorAll('[data-unlink]').forEach((b) => { b.onclick = () => apiAction('/admin/accounts/unlink', { discordId: b.dataset.unlink }, '🔗 Verknüpfung gelöst', acDups); });
+  } catch (e) { box.innerHTML = `<div style="color:#ef4444;font-size:13px">${escapeHtml(e.message || '')}</div>`; }
+}
+
+// ── Announce + Server-Steuerung (Staff: Announce/Status; Mod+: Wipe; Admin: Start/Stop/Restart) ──
+async function svLoadStatus() {
+  const box = el('svStatus'); if (!box) return; box.textContent = '…';
+  try {
+    const d = await fetch(`${config.tokenBase}/admin/server/status`, { headers: { Authorization: `Bearer ${sessionToken}` } }).then((r) => r.json());
+    if (d.error) throw new Error(d.error);
+    box.innerHTML = d.running ? '🟢 Server läuft' : '🔴 Server ist AUS';
+  } catch (e) { box.innerHTML = `<span style="color:#ef4444">${escapeHtml(e.message || '')}</span>`; }
+}
+function svArmConfirm(btn, label, fn) {
+  if (btn.dataset.armed) { fn(); return; }
+  btn.dataset.armed = '1'; const t = btn.textContent; btn.textContent = label;
+  setTimeout(() => { btn.textContent = t; delete btn.dataset.armed; }, 2500);
+}
+function renderServer() {
+  let html = `
+    <div class="dt-sec">📢 Ansage (ingame)</div>
+    <div class="dt-form">
+      <label>Nachricht an alle Spieler</label>
+      <input id="svMsg" class="tm-input" placeholder="z.B. Event startet in 10 Min!">
+      <button id="svAnnounce" style="width:100%;margin-top:8px">📢 Ansage senden</button>
+    </div>
+    <div class="dt-sec" style="margin-top:18px">📊 Server-Status</div>
+    <div class="dt-form">
+      <div id="svStatus" class="dt-muted">…</div>
+      <button id="svStatusBtn" class="secondary" style="width:100%;margin-top:6px">🔄 Aktualisieren</button>
+    </div>`;
+  if (isIngame) html += `
+    <div class="dt-sec" style="margin-top:18px">🧹 Wartung</div>
+    <div class="dt-form"><button id="svWipe" style="width:100%">🧹 Kadaver leeren (wipecorpses)</button></div>`;
+  if (isAdmin) html += `
+    <div class="dt-sec" style="margin-top:18px">⚙️ Server-Steuerung (gefährlich)</div>
+    <div class="dt-form"><div class="dt-row">
+      <button id="svStart" style="flex:1;background:#16a34a">▶️ Start</button>
+      <button id="svRestart" class="secondary" style="flex:1">🔁 Restart</button>
+      <button id="svStop" style="flex:1;background:#b91c1c">⏹️ Stop</button>
+    </div><div class="dt-muted" style="margin-top:4px">Stop/Restart trennt alle Spieler!</div></div>`;
+  el('svBody').innerHTML = html;
+  el('svAnnounce').onclick = () => { const m = el('svMsg').value.trim(); if (!m) { showToast('Nachricht eingeben', 'error'); return; } apiAction('/admin/server/announce', { message: m }, '📢 Ansage gesendet', () => { el('svMsg').value = ''; }); };
+  el('svStatusBtn').onclick = svLoadStatus;
+  if (el('svWipe')) el('svWipe').onclick = () => svArmConfirm(el('svWipe'), 'Sicher? Kadaver leeren', () => apiAction('/admin/server/wipecorpses', {}, '🧹 Kadaver geleert', null));
+  if (el('svStart')) el('svStart').onclick = () => apiAction('/admin/server/control', { action: 'start' }, '▶️ Server-Start ausgelöst', svLoadStatus);
+  if (el('svRestart')) el('svRestart').onclick = () => svArmConfirm(el('svRestart'), 'Sicher? Restart', () => apiAction('/admin/server/control', { action: 'restart' }, '🔁 Restart ausgelöst', svLoadStatus));
+  if (el('svStop')) el('svStop').onclick = () => svArmConfirm(el('svStop'), 'Sicher? Stop', () => apiAction('/admin/server/control', { action: 'stop' }, '⏹️ Stop ausgelöst', svLoadStatus));
+  svLoadStatus();
 }
 
 async function updateDinoInfo() {
@@ -3140,6 +4100,7 @@ function closeAllPanels() {
 const dockSvg = (inner) => `<svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">${inner}</svg>`;
 const DOCK_ICONS = {
   profile:  dockSvg('<path d="M19 21v-2a4 4 0 0 0-4-4H9a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/>'),
+  support:  dockSvg('<circle cx="12" cy="12" r="10"/><circle cx="12" cy="12" r="4"/><path d="m4.93 4.93 4.24 4.24"/><path d="m14.83 9.17 4.24-4.24"/><path d="m14.83 14.83 4.24 4.24"/><path d="m9.17 14.83-4.24 4.24"/>'),
   dino:     dockSvg('<path d="M22 12h-2.5l-2 7-4-18-3 11H2"/>'),
   group:    dockSvg('<path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M22 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/>'),
   lexikon:  dockSvg('<path d="M2 3h6a4 4 0 0 1 4 4v14a3 3 0 0 0-3-3H2z"/><path d="M22 3h-6a4 4 0 0 0-4 4v14a3 3 0 0 1 3-3h7z"/>'),
@@ -3170,7 +4131,7 @@ function updateDockActive() {
 // Dock als Navigation: Klick wechselt zum Ziel-Fenster (immer nur eins offen);
 // Klick aufs bereits aktive Icon schließt es wieder (zurück zum reinen Dock).
 function navTo(target) {
-  if (target === 'admin' && !isIngame) { showToast('Nur für Team (Moderator+)', 'error'); return; }
+  if (target === 'admin' && !isStaff) { showToast('Nur für Staff (Supporter/Moderator+)', 'error'); return; }
   const wasActive = activeNav() === target;
   closeAllPanels();
   if (!wasActive) {
@@ -3282,9 +4243,11 @@ async function connectWithSession(session) {
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
     const data = await res.json();
     isAdmin = !!data.admin;            // volle Config (Beschenken, Dino-Limits, Rollen)
-    isIngame = !!data.ingame || isAdmin; // Ingame-Tools (Moderator+): Admin-Panel sichtbar
-    { const ab = el('openAdminBtn'); if (ab) ab.style.display = isIngame ? 'block' : 'none'; }
-    { const da = el('dockAdmin'); if (da) da.style.display = isIngame ? 'flex' : 'none'; }
+    isIngame = !!data.ingame || isAdmin; // Ingame-Tools (Moderator+)
+    isTeam = !!data.team || isAdmin;     // Owner/Admin/Support
+    isStaff = isIngame || isTeam;        // sieht das Admin/Support-Panel (Support-Tools)
+    { const ab = el('openAdminBtn'); if (ab) ab.style.display = isStaff ? 'block' : 'none'; }
+    { const da = el('dockAdmin'); if (da) da.style.display = isStaff ? 'flex' : 'none'; }
     // Tickets/Events/Overlay-Gruppe laden + periodisch (Benachrichtigungen)
     loadMyTickets(); loadMyEvents(); loadOvGroup();
     if (!loadMyTickets._t) loadMyTickets._t = setInterval(loadMyTickets, 20000);
