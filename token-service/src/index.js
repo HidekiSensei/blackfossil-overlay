@@ -1074,7 +1074,8 @@ app.post('/admin/gift', express.json(), async (req, res) => {
 
 // ── Dino-Limits (Admin setzt im Overlay, sichtbar für alle + im Discord) ─────
 // In BOT_DATA_DIR, damit der Discord-Bot sie direkt lesen kann. {species: maxAnzahl},
-// 0/fehlt = unbegrenzt. Rein informativ (Soft-Limit), keine harte Durchsetzung.
+// 0/fehlt = unbegrenzt. Wird per syncNyorsClassLimits() nativ in Nyors durchgesetzt
+// (Spezies bei Cap aus dem Spawn-Picker entfernt — kein Kill, bestehende Dinos bleiben).
 const DINO_LIMITS_FILE = `${BOT_DATA_DIR}/dinolimits.json`;
 const DINO_LIMIT_SPECIES = [
   'Tyrannosaurus', 'Allosaurus', 'Carnotaurus', 'Ceratosaurus', 'Dilophosaurus', 'Herrerasaurus',
@@ -1097,6 +1098,7 @@ app.post('/admin/dino-limits', express.json(), (req, res) => {
     if (Number.isFinite(v) && v > 0) limits[sp] = v;   // 0/leer = unbegrenzt → nicht speichern
   }
   writeJsonFile(DINO_LIMITS_FILE, limits);
+  syncNyorsClassLimits().catch((e) => console.error('Nyors class-limit sync (admin):', e.message));   // sofort live ziehen
   res.json({ ok: true, limits });
 });
 
@@ -3108,47 +3110,44 @@ async function reconcileSubscriptions() {
 }
 setInterval(() => { reconcileSubscriptions().catch(() => {}); }, 60 * 60_000).unref?.();   // stündlich
 
-// ── Spezies-Limit-Durchsetzung (nativ) ──────────────────────────────────────
-// Da es keinen Pre-Spawn-Hook gibt, läuft die Durchsetzung reaktiv: ein Job zählt
-// regelmäßig die lebenden Dinos je Spezies; ist eine über ihrem Limit, werden NUR
-// die FRISCH gespawnten Überzähligen (grow < SPECIES_FRESH_GROW) geslayed — etablierte/
-// gewachsene Dinos bleiben unangetastet (kein Fortschritt-Verlust, "first come, first served").
-// Kill-Switch: SPECIES_LIMIT_ENFORCE=0 schaltet aus; SPECIES_LIMIT_DRYRUN=1 loggt nur.
-const SPECIES_ENFORCE = (process.env.SPECIES_LIMIT_ENFORCE ?? '1') === '1';
-const SPECIES_DRYRUN = (process.env.SPECIES_LIMIT_DRYRUN ?? '0') === '1';
-const SPECIES_FRESH_GROW = parseFloat(process.env.SPECIES_FRESH_GROW ?? '0.20');
-const SPECIES_ENFORCE_MS = parseInt(process.env.SPECIES_ENFORCE_MS ?? '12000', 10);
-const _spLastSlay = new Map();   // steamId → ts (Anti-Doppel-Slay)
-async function enforceSpeciesLimits() {
-  const limits = readJson(DINO_LIMITS_FILE, {});
-  if (!limits || !Object.keys(limits).length) return;
-  let players;
-  try { players = await fetchPlayers(); } catch { return; }
-  const alive = players.filter((p) => p && !p.isDead && p.dinoClass);
-  for (const [sp, max] of Object.entries(limits)) {
-    if (!(max > 0)) continue;
-    const group = alive.filter((p) => canonSpecies(p.dinoClass) === sp);
-    if (group.length <= max) continue;
-    // Etablierte (höchster Grow) behalten ihren Platz; die Überzahl wird unter den frischen geslayed.
-    const overflow = [...group].sort((a, b) => (b.grow ?? 0) - (a.grow ?? 0)).slice(max);
-    for (const p of overflow) {
-      if ((p.grow ?? 1) >= SPECIES_FRESH_GROW) continue;                           // gewachsen → verschonen
-      if (Date.now() - (_spLastSlay.get(p.steamId) ?? 0) < 30_000) continue;       // gerade erst behandelt
-      _spLastSlay.set(p.steamId, Date.now());
-      console.log(`🚫 Spezies-Limit ${sp} (${group.length}/${max}) → slay ${p.steamId} (grow ${Math.round((p.grow ?? 0) * 100)}%)${SPECIES_DRYRUN ? ' [DRYRUN]' : ''}`);
-      if (SPECIES_DRYRUN) continue;
-      fetch(`${PANEL_BASE_URL}/players/${encodeURIComponent(p.steamId)}/lightning`, {
-        method: 'POST', headers: { Authorization: `Bearer ${PANEL_ADMIN_TOKEN}`, 'Content-Type': 'application/json' },
-        body: JSON.stringify({ slay: true }), signal: AbortSignal.timeout(8000),
-      }).catch(() => {});
-      const did = lookupDiscordId(p.steamId);
-      if (did) sendDiscordDM(did, `🦖 **${sp}-Limit erreicht** (max. ${max} gleichzeitig auf dem Server). Dein gerade gespawnter **${sp}** wurde entfernt — bitte wähle eine andere Spezies.`).catch(() => {});
+// ── Spezies-Limit: native Durchsetzung über Nyors class-limits ──────────────
+// Nyors entfernt eine Spezies bei Erreichen des Caps aus dem Spawn-Picker (KEIN Kill,
+// kein Parken, bestehende Dinos bleiben). Wir spiegeln dinolimits.json in die Nyors-API:
+// gesetzte Limits (bulk) upserten, entfernte löschen, Feature aktivieren. Kill-Switch:
+// SPECIES_LIMIT_ENFORCE=0. (Der alte reaktive Slay-Job ist damit ersetzt.)
+async function nyClassLimit(method, path, body) {
+  const r = await fetch(`${PANEL_BASE_URL}${path}`, {
+    method, headers: { Authorization: `Bearer ${PANEL_ADMIN_TOKEN}`, 'Content-Type': 'application/json' },
+    body: body !== undefined ? JSON.stringify(body) : undefined, signal: AbortSignal.timeout(8000),
+  });
+  if (!r.ok) throw new Error(`${method} ${path} → ${r.status}`);
+  return r.json().catch(() => ({}));
+}
+async function syncNyorsClassLimits() {
+  const want = readJson(DINO_LIMITS_FILE, {});
+  const wantArr = Object.entries(want)
+    .filter(([, v]) => Number(v) > 0)
+    .map(([cls, lim]) => ({ class: cls, limit: Math.max(0, Math.floor(Number(lim))) }));
+  const wantKeys = new Set(wantArr.map((x) => x.class.toLowerCase()));
+  // Aktuelle Nyors-Caps holen → früher gesetzte, jetzt nicht mehr gewünschte Limits wieder freigeben.
+  let current = [];
+  try { current = (await nyClassLimit('GET', '/world/class-limits')).classes || []; } catch {}
+  for (const c of current) {
+    if (typeof c.limit === 'number' && c.limit >= 0 && !wantKeys.has(String(c.class).toLowerCase())) {
+      await nyClassLimit('DELETE', `/world/class-limits/${encodeURIComponent(c.class)}`).catch(() => {});
     }
   }
+  if (wantArr.length) await nyClassLimit('POST', '/world/class-limits', wantArr);   // bulk upsert (Array!)
+  await nyClassLimit('PATCH', '/world/class-limits/status', { class_limits_enabled: wantArr.length > 0 });
+  return wantArr.length;
 }
-if (SPECIES_ENFORCE) {
-  setInterval(() => { enforceSpeciesLimits().catch((e) => console.error('Spezies-Limit-Fehler:', e.message)); }, SPECIES_ENFORCE_MS).unref?.();
-  console.log(`✅ Spezies-Limit-Enforcer aktiv (alle ${Math.round(SPECIES_ENFORCE_MS / 1000)}s, fresh<${Math.round(SPECIES_FRESH_GROW * 100)}%${SPECIES_DRYRUN ? ', DRYRUN' : ''})`);
+if ((process.env.SPECIES_LIMIT_ENFORCE ?? '1') === '1') {
+  const run = () => syncNyorsClassLimits()
+    .then((n) => console.log(`🦖 Nyors class-limits synchronisiert (${n} Limit(s) aktiv)`))
+    .catch((e) => console.error('Nyors class-limit sync:', e.message));
+  setTimeout(run, 8000);                      // kurz nach Start
+  setInterval(run, 5 * 60_000).unref?.();     // Reconcile — überlebt Game-Server-Neustarts
+  console.log('✅ Spezies-Limit (nativ via Nyors class-limits) aktiv');
 }
 setTimeout(() => { reconcileSubscriptions().catch(() => {}); }, 90_000).unref?.();           // einmal ~90s nach Start
 
