@@ -617,6 +617,20 @@ function updateProximityVolumes() {
 // Kurzer Nachlauf (1,5 s) gegen Flackern bei Sprechpausen. Wird per
 // ActiveSpeakersChanged-Event UND im Positions-Poll (zum Ausblenden) aufgerufen.
 let _speakSeen = new Map();   // identity(steamId) → letzter Sprech-Zeitpunkt
+// Tatsächliche Wiedergabe-Lautstärke eines Sprechers (gleiche Rechnung wie
+// updateProximityVolumes). 0 = nicht hörbar (außer Reichweite / deafened / stumm).
+function audibleVol(steamId) {
+  let vol = 1;
+  const pos = players.find((pl) => pl.steamId === steamId);
+  if (me && pos) {
+    const Rw = (remoteRanges[steamId] ?? DEFAULT_RANGE) * UNITS_PER_M;
+    const d = Math.hypot(pos.x - me.x, pos.y - me.y);
+    vol = Math.max(0, Math.min(1, 2 * (1 - d / Rw)));
+  }
+  const g = userGain[steamId] ?? 1;
+  const factor = deafened ? 0 : masterGain;
+  return vol * g * factor;
+}
 function updateSpeakingBox(speakers) {
   const box = el('speakingBox'); if (!box) return;
   const now = Date.now();
@@ -625,6 +639,7 @@ function updateSpeakingBox(speakers) {
   const names = [];
   for (const [id, ts] of _speakSeen) {
     if (now - ts > 1500) { _speakSeen.delete(id); continue; }
+    if (audibleVol(id) <= 0) continue;                        // nur wen man WIRKLICH hört (Reichweite/deafened/stumm)
     const pl = players.find((x) => x.steamId === id);
     const nm = pl && (pl.name || pl.playerName);
     if (nm) names.push(nm);
