@@ -1,5 +1,10 @@
 # Changelog
 
+## v1.1.1 — Bugfix
+
+### 🔧 Fixes
+- **🔊 „Wen du gerade hörst"** zeigt jetzt wirklich nur noch die Spieler, die du auch **hören kannst** — Sprecher außerhalb deiner Reichweite (oder wenn du taub bzw. jemanden stummgeschaltet hast) erscheinen nicht mehr.
+
 ## v1.1.0 — Großes Feature-Update 🦖
 
 ### 🆕 Neue Features
