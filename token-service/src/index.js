@@ -646,6 +646,22 @@ function nearestOtherPlayerM(me, all) {
   }
   return min;
 }
+// Spezies-Namen normalisieren (Spielklasse → kanonischer Limit-Name aus DINO_LIMIT_SPECIES).
+const SPECIES_ALIAS = { Rex: 'Tyrannosaurus', Maiasaurus: 'Maiasaura' };
+const canonSpecies = (dinoClass) => { const b = baseClass(dinoClass); return SPECIES_ALIAS[b] || b; };
+// Anti-PvP-Flucht-Gate: voller Dino (100% Health/Blut/Stamina, nicht blutend). Gibt Fehlertext oder null.
+function fullDinoGateError(p, action) {
+  if (!p) return 'Du musst im Spiel sein (auf einem Dino).';
+  if (p.isBleeding) return `${action} nicht möglich: Dein Dino blutet (im Kampf).`;
+  if ((p.health ?? 0) < 1) return `${action} nicht möglich: Health muss 100% sein (aktuell ${Math.round((p.health ?? 0) * 100)}%).`;
+  if ((p.blood ?? 0) < 1) return `${action} nicht möglich: Blut muss 100% sein (aktuell ${Math.round((p.blood ?? 0) * 100)}%).`;
+  if ((p.stamina ?? 0) < 1) return `${action} nicht möglich: Stamina muss 100% sein (aktuell ${Math.round((p.stamina ?? 0) * 100)}%).`;
+  return null;
+}
+// Lebende Anzahl einer (kanonischen) Spezies auf dem Server.
+function speciesCount(players, canonSp) {
+  return players.filter((p) => p && !p.isDead && canonSpecies(p.dinoClass) === canonSp).length;
+}
 
 function readJson(file, fallback) {
   try { return JSON.parse(readFileSync(file, 'utf8')); } catch { return fallback; }
@@ -2020,6 +2036,9 @@ app.post('/garage/park', express.json(), async (req, res) => {
     const players = await fetchPlayers();
     const snapshot = players.find((p) => p.steamId === s.steamId);
     if (!snapshot) return res.status(409).json({ error: 'Du bist nicht im Spiel.' });
+    // Anti-Flucht-Gate: nur mit vollem Dino einparken
+    const pgate = fullDinoGateError(snapshot, 'Einparken');
+    if (pgate) return res.status(409).json({ error: pgate });
     // in Garage sichern
     const garage = readJson(GARAGE_FILE, {});
     if (!garage[s.steamId]) garage[s.steamId] = [];
@@ -2060,8 +2079,11 @@ app.post('/garage/unpark', express.json(), async (req, res) => {
     const meNow = players.find((p) => p.steamId === s.steamId);
     if (!meNow) return res.status(409).json({ error: 'Du musst im Spiel sein (auf einem Dino).' });
 
-    // Ausparken: nicht im Kampf / nicht blutend (aktueller Dino geht dabei verloren)
+    // Ausparken: kein 100%-Gate, aber NICHT im Kampf (blutend) und ≥ 50 m von anderen Spielern
+    // entfernt — damit es nicht als PvP-Flucht missbraucht wird.
     if (meNow.isBleeding) return res.status(409).json({ error: 'Ausparken nicht möglich: Dein Dino blutet (im Kampf).' });
+    const distU = nearestOtherPlayerM(meNow, players);
+    if (distU < SWAP_MIN_DISTANCE_M) return res.status(409).json({ error: `Ausparken nicht möglich: Spieler zu nah (${Math.round(distU)} m, nötig ≥ ${SWAP_MIN_DISTANCE_M} m).` });
 
     // Spezies-Check: nur auf gleiche Spezies aufspielbar (Basis, ohne Wachstums-Suffix)
     if (baseClass(meNow.dinoClass) !== baseClass(slot.snapshot?.dinoClass)) {
@@ -2107,13 +2129,19 @@ app.post('/garage/swap', express.json(), async (req, res) => {
     const current = players.find((p) => p.steamId === s.steamId);
     if (!current) return res.status(409).json({ error: 'Du musst im Spiel sein (auf einem Dino).' });
 
-    // Swap-Regeln: nicht im Kampf, 100% HP + 100% Blut, ≥90% Stamina, Abstand zu Spielern.
-    if (current.isBleeding) return res.status(409).json({ error: 'Swap nicht möglich: Dein Dino blutet (im Kampf).' });
-    if ((current.health ?? 0) < SWAP_MIN_HEALTH) return res.status(409).json({ error: `Swap nicht möglich: Health muss 100% sein (aktuell ${Math.round((current.health ?? 0) * 100)}%).` });
-    if ((current.blood ?? 0) < SWAP_MIN_BLOOD) return res.status(409).json({ error: `Swap nicht möglich: Blut muss 100% sein (aktuell ${Math.round((current.blood ?? 0) * 100)}%).` });
-    if ((current.stamina ?? 0) < SWAP_MIN_STAMINA) return res.status(409).json({ error: `Swap nicht möglich: Stamina muss ≥ ${Math.round(SWAP_MIN_STAMINA * 100)}% sein (aktuell ${Math.round((current.stamina ?? 0) * 100)}%).` });
+    // Swap-Regeln: voller Dino (100% HP/Blut/Stamina, nicht blutend) + Abstand zu Spielern.
+    const sgate = fullDinoGateError(current, 'Swap');
+    if (sgate) return res.status(409).json({ error: sgate });
     const dist = nearestOtherPlayerM(current, players);
     if (dist < SWAP_MIN_DISTANCE_M) return res.status(409).json({ error: `Swap nicht möglich: Spieler zu nah (${Math.round(dist)} m, nötig ≥ ${SWAP_MIN_DISTANCE_M} m).` });
+    // Spezies-Limit: nicht auf eine bereits volle Spezies wechseln (außer man spielt sie schon).
+    const targetSp = canonSpecies(slot.snapshot?.dinoClass);
+    if (targetSp !== canonSpecies(current.dinoClass)) {
+      const spLimit = (readJson(DINO_LIMITS_FILE, {}))[targetSp] || 0;
+      if (spLimit > 0 && speciesCount(players, targetSp) >= spLimit) {
+        return res.status(409).json({ error: `${targetSp}-Limit erreicht (max. ${spLimit} gleichzeitig). Es sind schon genug ${targetSp} unterwegs — bitte später erneut wechseln.` });
+      }
+    }
 
     // 1) Aktuellen Dino IMMER zuerst sichern, damit er nicht verloren geht
     const parkedId = genId();
@@ -2258,6 +2286,9 @@ app.post('/teleports/:id/use', async (req, res) => {
   try {
     const cur = (await fetchPlayers().catch(() => [])).find((p) => p.steamId === s.steamId);
     if (!cur) return res.status(409).json({ error: 'Du musst im Spiel sein.' });
+    // Anti-Flucht-Gate: nur mit vollem Dino teleportieren
+    const tgate = fullDinoGateError(cur, 'Teleport');
+    if (tgate) return res.status(409).json({ error: tgate });
     const where = Number.isFinite(tp.z) ? { x: tp.x, y: tp.y, z: tp.z + TP_Z_OFFSET } : { x: tp.x, y: tp.y };
     const r = await fetch(`${PANEL_BASE_URL}/players/${encodeURIComponent(s.steamId)}/teleport`, {
       method: 'POST', headers: { Authorization: `Bearer ${PANEL_ADMIN_TOKEN}`, 'Content-Type': 'application/json' },
@@ -3076,6 +3107,49 @@ async function reconcileSubscriptions() {
   if (synced || ended) console.log(`🔄 Abo-Abgleich: ${synced} aktiv bestätigt, ${ended} beendet/entfernt`);
 }
 setInterval(() => { reconcileSubscriptions().catch(() => {}); }, 60 * 60_000).unref?.();   // stündlich
+
+// ── Spezies-Limit-Durchsetzung (nativ) ──────────────────────────────────────
+// Da es keinen Pre-Spawn-Hook gibt, läuft die Durchsetzung reaktiv: ein Job zählt
+// regelmäßig die lebenden Dinos je Spezies; ist eine über ihrem Limit, werden NUR
+// die FRISCH gespawnten Überzähligen (grow < SPECIES_FRESH_GROW) geslayed — etablierte/
+// gewachsene Dinos bleiben unangetastet (kein Fortschritt-Verlust, "first come, first served").
+// Kill-Switch: SPECIES_LIMIT_ENFORCE=0 schaltet aus; SPECIES_LIMIT_DRYRUN=1 loggt nur.
+const SPECIES_ENFORCE = (process.env.SPECIES_LIMIT_ENFORCE ?? '1') === '1';
+const SPECIES_DRYRUN = (process.env.SPECIES_LIMIT_DRYRUN ?? '0') === '1';
+const SPECIES_FRESH_GROW = parseFloat(process.env.SPECIES_FRESH_GROW ?? '0.20');
+const SPECIES_ENFORCE_MS = parseInt(process.env.SPECIES_ENFORCE_MS ?? '12000', 10);
+const _spLastSlay = new Map();   // steamId → ts (Anti-Doppel-Slay)
+async function enforceSpeciesLimits() {
+  const limits = readJson(DINO_LIMITS_FILE, {});
+  if (!limits || !Object.keys(limits).length) return;
+  let players;
+  try { players = await fetchPlayers(); } catch { return; }
+  const alive = players.filter((p) => p && !p.isDead && p.dinoClass);
+  for (const [sp, max] of Object.entries(limits)) {
+    if (!(max > 0)) continue;
+    const group = alive.filter((p) => canonSpecies(p.dinoClass) === sp);
+    if (group.length <= max) continue;
+    // Etablierte (höchster Grow) behalten ihren Platz; die Überzahl wird unter den frischen geslayed.
+    const overflow = [...group].sort((a, b) => (b.grow ?? 0) - (a.grow ?? 0)).slice(max);
+    for (const p of overflow) {
+      if ((p.grow ?? 1) >= SPECIES_FRESH_GROW) continue;                           // gewachsen → verschonen
+      if (Date.now() - (_spLastSlay.get(p.steamId) ?? 0) < 30_000) continue;       // gerade erst behandelt
+      _spLastSlay.set(p.steamId, Date.now());
+      console.log(`🚫 Spezies-Limit ${sp} (${group.length}/${max}) → slay ${p.steamId} (grow ${Math.round((p.grow ?? 0) * 100)}%)${SPECIES_DRYRUN ? ' [DRYRUN]' : ''}`);
+      if (SPECIES_DRYRUN) continue;
+      fetch(`${PANEL_BASE_URL}/players/${encodeURIComponent(p.steamId)}/lightning`, {
+        method: 'POST', headers: { Authorization: `Bearer ${PANEL_ADMIN_TOKEN}`, 'Content-Type': 'application/json' },
+        body: JSON.stringify({ slay: true }), signal: AbortSignal.timeout(8000),
+      }).catch(() => {});
+      const did = lookupDiscordId(p.steamId);
+      if (did) sendDiscordDM(did, `🦖 **${sp}-Limit erreicht** (max. ${max} gleichzeitig auf dem Server). Dein gerade gespawnter **${sp}** wurde entfernt — bitte wähle eine andere Spezies.`).catch(() => {});
+    }
+  }
+}
+if (SPECIES_ENFORCE) {
+  setInterval(() => { enforceSpeciesLimits().catch((e) => console.error('Spezies-Limit-Fehler:', e.message)); }, SPECIES_ENFORCE_MS).unref?.();
+  console.log(`✅ Spezies-Limit-Enforcer aktiv (alle ${Math.round(SPECIES_ENFORCE_MS / 1000)}s, fresh<${Math.round(SPECIES_FRESH_GROW * 100)}%${SPECIES_DRYRUN ? ', DRYRUN' : ''})`);
+}
 setTimeout(() => { reconcileSubscriptions().catch(() => {}); }, 90_000).unref?.();           // einmal ~90s nach Start
 
 app.listen(PORT, '127.0.0.1', () => {
