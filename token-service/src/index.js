@@ -12,7 +12,8 @@ import express from 'express';
 import jwt from 'jsonwebtoken';
 import { readFileSync, writeFileSync, renameSync, openSync, closeSync, unlinkSync, statSync } from 'node:fs';
 import { AccessToken } from 'livekit-server-sdk';
-import { randomBytes } from 'node:crypto';
+import { randomBytes, createVerify } from 'node:crypto';
+import { crc32 } from 'node:zlib';
 import { MUTATIONS, PRIME_LABELS, DINOS, getDiet, activeSpecies, mutationsFor, PVP_BUILDS, PVP_LABEL_PREFIX, getPvpBuild } from './staffConfig.js';
 
 // ── Konfiguration ──────────────────────────────────────────────────────────
@@ -840,25 +841,43 @@ async function paypalToken() {
   if (!r.ok) throw new Error(`PayPal-Token ${r.status}`);
   return (await r.json()).access_token;
 }
-// Prüft die Echtheit eines Webhook-Events bei PayPal (gegen Fälschung)
-async function verifyPaypalWebhook(headers, event) {
-  const token = await paypalToken();
-  const r = await fetch(`${PAYPAL_API}/v1/notifications/verify-webhook-signature`, {
-    method: 'POST',
-    headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
-    body: JSON.stringify({
-      auth_algo: headers['paypal-auth-algo'],
-      cert_url: headers['paypal-cert-url'],
-      transmission_id: headers['paypal-transmission-id'],
-      transmission_sig: headers['paypal-transmission-sig'],
-      transmission_time: headers['paypal-transmission-time'],
-      webhook_id: PAYPAL_WEBHOOK_ID,
-      webhook_event: event,
-    }),
-    signal: AbortSignal.timeout(8000),
-  });
-  if (!r.ok) return false;
-  return (await r.json()).verification_status === 'SUCCESS';
+// PayPal-Zertifikat (für die Webhook-Signatur) laden + cachen.
+const _paypalCertCache = new Map();   // url → { pem, ts }
+async function fetchPaypalCert(url) {
+  const cached = _paypalCertCache.get(url);
+  if (cached && Date.now() - cached.ts < 24 * 60 * 60 * 1000) return cached.pem;
+  const r = await fetch(url, { signal: AbortSignal.timeout(8000) });
+  if (!r.ok) throw new Error(`Cert-Download ${r.status}`);
+  const pem = await r.text();
+  _paypalCertCache.set(url, { pem, ts: Date.now() });
+  return pem;
+}
+// Prüft die Echtheit eines Webhook-Events OFFLINE über die rohen Body-Bytes.
+// PayPal signiert `transmissionId|transmissionTime|webhookId|crc32(rawBody)` mit
+// SHA256withRSA gegen das Cert aus paypal-cert-url. Die REST-Verify-API scheiterte,
+// weil express.json() den Body neu serialisiert → crc32 stimmte nicht mehr.
+async function verifyPaypalWebhook(headers, rawBody) {
+  try {
+    const transmissionId = headers['paypal-transmission-id'];
+    const transmissionTime = headers['paypal-transmission-time'];
+    const transmissionSig = headers['paypal-transmission-sig'];
+    const certUrl = headers['paypal-cert-url'];
+    if (!transmissionId || !transmissionTime || !transmissionSig || !certUrl || !PAYPAL_WEBHOOK_ID || !rawBody) return false;
+    // cert_url MUSS eine PayPal-Domain sein (gegen SSRF / gefälschte Certs)
+    let host;
+    try { host = new URL(certUrl).hostname; } catch { return false; }
+    if (!/(^|\.)paypal\.com$/i.test(host)) return false;
+    const crc = crc32(rawBody) >>> 0;
+    const expected = `${transmissionId}|${transmissionTime}|${PAYPAL_WEBHOOK_ID}|${crc}`;
+    const pem = await fetchPaypalCert(certUrl);
+    const verifier = createVerify('RSA-SHA256');
+    verifier.update(expected);
+    verifier.end();
+    return verifier.verify(pem, transmissionSig, 'base64');
+  } catch (e) {
+    console.error('PayPal-Webhook-Verify-Fehler:', e.message);
+    return false;
+  }
 }
 // Discord-Rolle (per Name) vergeben/entziehen. Bot braucht "Rollen verwalten" + höher als die Rolle.
 async function setMemberRole(discordId, roleName, add) {
@@ -2914,14 +2933,14 @@ function grantAboBonus(discordId, roleName) {
   return { granted: delta, pending: false, reason: null };
 }
 
-app.post('/paypal/webhook', express.json({ type: '*/*', limit: '1mb' }), async (req, res) => {
+app.post('/paypal/webhook', express.json({ type: '*/*', limit: '1mb', verify: (req, _res, buf) => { req.rawBody = buf; } }), async (req, res) => {
   const event = req.body || {};
   try {
     if (!PAYPAL_WEBHOOK_ID || !PAYPAL_CLIENT_ID) {
       console.error('PayPal-Webhook: nicht konfiguriert (PAYPAL_WEBHOOK_ID/CLIENT_ID fehlen)');
       return res.sendStatus(503);
     }
-    if (!(await verifyPaypalWebhook(req.headers, event))) {
+    if (!(await verifyPaypalWebhook(req.headers, req.rawBody))) {
       console.warn('PayPal-Webhook: ungültige Signatur — verworfen');
       return res.sendStatus(400);
     }
