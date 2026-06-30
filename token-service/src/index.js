@@ -1118,7 +1118,7 @@ function buildDinoSnapshot(steamId, dinoClass, grow, gender, elderStacks, primes
     skinVariation: 0, patternIndex: 0, themeIndex: 0,
     maleDisplayColor: ZERO, markingsColor: ZERO, bodyColor: ZERO, flankColor: ZERO, underbellyColor: ZERO,
     teethColor: ZERO, mouthColor: ZERO, clawsColor: ZERO, detailColor: ZERO, eyesColor: ZERO,
-    mutations: { base: mutations?.base || [], parent: mutations?.parent || [], elder: mutations?.elder || [] },
+    mutations: padMutations(mutations),
     playerPing: 0, groupId: null, timeOnMenu: 0,
   };
   for (let i = 1; i <= 10; i++) snap[`primeCondition${i}`] = (primes || []).includes(i);
@@ -1138,6 +1138,12 @@ function dedupMutations(m) {
   const seen = new Set();
   const clean = (arr, max) => { const out = []; for (const v of (arr || [])) { if (v && !seen.has(v) && out.length < max) { seen.add(v); out.push(v); } } return out; };
   return { base: clean(m?.base, 4), parent: clean(m?.parent, 4), elder: clean(m?.elder, 8) };
+}
+// Mutationen auf die von Nyors erwarteten Slot-Zahlen auffüllen (base/parent 4, elder 8;
+// leere Slots = null). Sonst lehnt /swap mit "mutations.base must have 4 entries" ab.
+function padMutations(m) {
+  const pad = (arr, n) => { const src = Array.isArray(arr) ? arr : []; return Array.from({ length: n }, (_, i) => src[i] ?? null); };
+  return { base: pad(m?.base, 4), parent: pad(m?.parent, 4), elder: pad(m?.elder, 8) };
 }
 const cleanPrimes = (arr) => [...new Set((arr || []).map(Number).filter((n) => n >= 1 && n <= 10))];
 // Ziel(e) auflösen: einzelner User (Steam/Discord), Rolle (alle verknüpften Member) oder alle Online.
@@ -1217,7 +1223,7 @@ app.post('/admin/dino-token/edit', express.json(), (req, res) => {
     if (b.gender === 'Male' || b.gender === 'Female') sn.gender = b.gender;
     if (b.elderStacks != null) { sn.elderReplicationStacks = Math.max(0, Math.min(3, parseInt(b.elderStacks, 10) || 0)); sn.isElder = sn.elderReplicationStacks > 0; }
     if (b.primes != null) { const pr = cleanPrimes(b.primes); for (let i = 1; i <= 10; i++) sn[`primeCondition${i}`] = pr.includes(i); sn.isPrime = pr.length >= 5; }
-    if (b.mutations != null) sn.mutations = dedupMutations(b.mutations);
+    if (b.mutations != null) sn.mutations = padMutations(dedupMutations(b.mutations));
     slot.snapshot = sn;
     writeJsonFile(GARAGE_FILE, g);
     return { ok: true };
@@ -1782,7 +1788,7 @@ app.post('/me/quest/start', express.json(), async (req, res) => {
     // dann Klasse/Geschlecht/Wachstum überschreiben + Vitals auf voll (frischer Juvi).
     // WICHTIG (Anti-Dupe): die Genetik des geparkten Dinos NICHT übernehmen — sonst bekäme
     // der Quest-Juvi dessen Mutationen + Prime/Elder-Bedingungen und man könnte Dinos duplizieren.
-    const cleanGenes = { mutations: { base: [], parent: [], elder: [] }, isPrime: false, isElder: false, elderReplicationStacks: 0 };
+    const cleanGenes = { mutations: padMutations(null), isPrime: false, isElder: false, elderReplicationStacks: 0 };
     for (let i = 1; i <= 10; i++) cleanGenes[`primeCondition${i}`] = false;
     const swapBody = {
       ...current, class: q.active.dino, dinoClass: q.active.dino, gender,
