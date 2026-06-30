@@ -1031,13 +1031,14 @@ app.post('/me/slay', async (req, res) => {
   const s = sessionFrom(req);
   if (!s) return res.status(401).json({ error: 'Keine Session' });
   try {
-    const r = await fetch(`${PANEL_BASE_URL}/players/${encodeURIComponent(s.steamId)}/lightning`, {
+    // Leiser Selbst-Tod: Health auf 0 → Dino stirbt OHNE Lightning-Strike (kein lauter Blitz-Sound).
+    const r = await fetch(`${PANEL_BASE_URL}/vitals`, {
       method: 'POST', headers: { Authorization: `Bearer ${PANEL_ADMIN_TOKEN}`, 'Content-Type': 'application/json' },
-      body: JSON.stringify({ slay: true }), signal: AbortSignal.timeout(8000),
+      body: JSON.stringify(vitalsBody(s.steamId, 'health', 0)), signal: AbortSignal.timeout(8000),
     });
     const d = await r.json().catch(() => ({}));
     if (!r.ok) return res.status(502).json({ error: d.Msg || d.error || `HTTP ${r.status}` });
-    res.json({ ok: true, slayed: !!d.slayed });
+    res.json({ ok: true, slayed: true });
   } catch (e) { res.status(502).json({ error: e.message }); }
 });
 
