@@ -47,6 +47,15 @@ function applyFx() {
 function toggleFx() { fxOff = !fxOff; localStorage.setItem('bf-noblitz', fxOff ? '1' : '0'); applyFx(); }
 document.addEventListener('DOMContentLoaded', applyFx);
 
+// ── Minimap an/aus (Settings-Toggle, persistent) ────────────────────────────
+let miniHidden = localStorage.getItem('bf-hide-mini') === '1';
+function applyMiniToggle() {
+  const b = el('miniToggleBtn');
+  if (b) { b.textContent = miniHidden ? '🗺️ Minimap: Aus' : '🗺️ Minimap: An'; b.classList.toggle('secondary', miniHidden); }
+  applyServerState();   // Sichtbarkeit neu setzen (berücksichtigt onServer + miniHidden)
+}
+function toggleMinimap() { miniHidden = !miniHidden; localStorage.setItem('bf-hide-mini', miniHidden ? '1' : '0'); applyMiniToggle(); }
+
 // ── Karten-/Positions-State ─────────────────────────────────────────────────
 let players = [];
 let me = null;
@@ -529,7 +538,7 @@ let wasOnServer = false;
 function applyServerState() {
   const onServer = !!me;
   el('serverBanner').style.display = onServer ? 'none' : 'block';
-  const mw = el('minimapWrap'); if (mw) mw.style.display = onServer ? '' : 'none';
+  const mw = el('minimapWrap'); if (mw) mw.style.display = (onServer && !miniHidden) ? '' : 'none';
   const hud = el('hud'); if (hud) hud.style.display = onServer ? '' : 'none';
   updateVoiceWarn();
   if (onServer === wasOnServer) return;
@@ -575,6 +584,7 @@ function startPositionPolling() {
         if (mapOpen) renderBigMap();
         if (featureOpen === 'group') updateGroupLive();   // nur Mitglieder/Chat updaten, NICHT das Eingabefeld neu bauen
         if (featureOpen === 'profile') updateProfileServerDinos();   // Server-Dino-Zahlen live
+        updateSpeakingBox();   // Sprecher-Namen aktualisieren/ausblenden
       }
     } catch {}
   };
@@ -601,6 +611,27 @@ function updateProximityVolumes() {
     const factor = deafened ? 0 : masterGain;
     try { p.setVolume(vol * g * factor); } catch {}
   }
+}
+
+// ── Info-Box: Namen der Spieler, die man gerade hört (active speakers) ───────
+// Kurzer Nachlauf (1,5 s) gegen Flackern bei Sprechpausen. Wird per
+// ActiveSpeakersChanged-Event UND im Positions-Poll (zum Ausblenden) aufgerufen.
+let _speakSeen = new Map();   // identity(steamId) → letzter Sprech-Zeitpunkt
+function updateSpeakingBox(speakers) {
+  const box = el('speakingBox'); if (!box) return;
+  const now = Date.now();
+  const active = (speakers || (room ? room.activeSpeakers : []) || []).filter((p) => room && p !== room.localParticipant);
+  for (const p of active) _speakSeen.set(p.identity, now);
+  const names = [];
+  for (const [id, ts] of _speakSeen) {
+    if (now - ts > 1500) { _speakSeen.delete(id); continue; }
+    const pl = players.find((x) => x.steamId === id);
+    const nm = pl && (pl.name || pl.playerName);
+    if (nm) names.push(nm);
+  }
+  if (!names.length) { box.style.display = 'none'; return; }
+  box.style.display = '';
+  box.innerHTML = `🔊 ${names.map((n) => escapeHtml(n)).join(', ')}`;
 }
 
 // ── Pro-User-Lautstärke (Regler im Settings-Menü) ────────────────────────────
@@ -4283,10 +4314,11 @@ async function connect({ token, url }) {
   room = new Room({ adaptiveStream: false, dynacast: false, webAudioMix: true });
   room
     .on(RoomEvent.Connected, () => { voiceConnected = true; refreshMicState(); el('connBtn').textContent = 'Trennen'; broadcastRange(); updateVoiceWarn(); setConnQuality(room.localParticipant.connectionQuality); startConnStats(); })
-    .on(RoomEvent.Disconnected, () => { voiceConnected = false; el('connBtn').textContent = 'Verbinden'; setMicState('disconnected'); updateVoiceWarn(); stopConnStats(); renderConnInd(); })
+    .on(RoomEvent.Disconnected, () => { voiceConnected = false; el('connBtn').textContent = 'Verbinden'; setMicState('disconnected'); updateVoiceWarn(); stopConnStats(); renderConnInd(); _speakSeen.clear(); updateSpeakingBox(); })
     .on(RoomEvent.ConnectionQualityChanged, (q, p) => { if (room && p === room.localParticipant) setConnQuality(q); })
     .on(RoomEvent.ParticipantConnected, () => { broadcastRange(); if (settingsOpen) renderVoiceUsers(); })  // Neuer Teilnehmer lernt meine Reichweite
     .on(RoomEvent.ParticipantDisconnected, () => { if (settingsOpen) renderVoiceUsers(); })
+    .on(RoomEvent.ActiveSpeakersChanged, (speakers) => updateSpeakingBox(speakers))   // wen man gerade hört
     .on(RoomEvent.DataReceived, (payload, participant) => {
       try {
         const msg = JSON.parse(new TextDecoder().decode(payload));
@@ -4585,6 +4617,8 @@ function setupEditMode() {
   el('editResetBtn').onclick = () => resetPositions();
   const fxBtn = el('fxToggleBtn'); if (fxBtn) fxBtn.onclick = toggleFx;
   applyFx();
+  const miniBtn = el('miniToggleBtn'); if (miniBtn) miniBtn.onclick = toggleMinimap;
+  applyMiniToggle();
   renderThemePicker();
   syncLightningFrames();   // Minimap-Blitzrahmen direkt anzeigen
 }

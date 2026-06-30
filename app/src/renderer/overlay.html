@@ -701,6 +701,7 @@
     <div id="connInd" title="Voice-Verbindung. Gelb/Rot oder ⚠️ Relay = schlechte Verbindung → LAN statt WLAN, VPN aus." style="display:none;align-items:center;gap:7px;justify-content:center;background:var(--panel);border:1px solid var(--border);border-radius:10px;padding:6px 10px;font-size:12px;box-shadow:var(--glow)"><span id="connDot" style="width:9px;height:9px;border-radius:50%;background:#666;flex:none"></span><span id="connText" style="color:var(--muted)">—</span></div>
     <div id="rangeBox" style="text-align:center;background:var(--panel);border:1px solid var(--border);border-radius:10px;padding:6px 10px;font-size:12px">🔊 Reichweite: 10 m</div>
     <div id="zoneBox">Zone: —</div>
+    <div id="speakingBox" style="display:none;text-align:center;background:var(--panel);border:1px solid var(--border);border-radius:10px;padding:6px 10px;font-size:12px;box-shadow:var(--glow);line-height:1.35"></div>
   </div>
 
   <!-- Große Map: Teleport-Panel links | Karte mittig | rechts Ansichten + Gruppe -->
@@ -873,6 +874,8 @@
         <div class="set-block">
           <div class="set-label">⚡ Effekte</div>
           <button id="fxToggleBtn" style="width:100%">⚡ Effekte: An</button>
+          <div class="set-label" style="margin-top:10px">🗺️ Minimap</div>
+          <button id="miniToggleBtn" style="width:100%">🗺️ Minimap: An</button>
           <div style="font-size:11px;color:var(--muted);margin-top:6px">Schaltet alle Blitze/Leuchteffekte aus (z. B. für schwächere PCs).</div>
         </div>
       </div>
