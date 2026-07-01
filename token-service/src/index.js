@@ -12,7 +12,7 @@ import express from 'express';
 import jwt from 'jsonwebtoken';
 import { readFileSync, writeFileSync, renameSync, openSync, closeSync, unlinkSync, statSync, existsSync } from 'node:fs';
 import { AccessToken } from 'livekit-server-sdk';
-import { randomBytes, createVerify } from 'node:crypto';
+import { randomBytes, createVerify, createHmac, timingSafeEqual } from 'node:crypto';
 import { crc32 } from 'node:zlib';
 import { MUTATIONS, PRIME_LABELS, DINOS, getDiet, activeSpecies, mutationsFor, PVP_BUILDS, PVP_LABEL_PREFIX, getPvpBuild } from './staffConfig.js';
 
@@ -3366,6 +3366,111 @@ app.post('/paypal/webhook', express.json({ type: '*/*', limit: '1mb', verify: (r
   }
 });
 
+// ── Stripe (Karten-Abos, parallel zu PayPal) ────────────────────────────────
+const STRIPE_SECRET_KEY = process.env.STRIPE_SECRET_KEY ?? '';
+const STRIPE_WEBHOOK_SECRET = process.env.STRIPE_WEBHOOK_SECRET ?? '';
+const STRIPE_PRICES = {
+  Knochen: process.env.STRIPE_PRICE_KNOCHEN ?? '',
+  Bernstein: process.env.STRIPE_PRICE_BERNSTEIN ?? '',
+  Obsidian: process.env.STRIPE_PRICE_OBSIDIAN ?? '',
+};
+// Form-encoded POST an die Stripe-API (Bearer-Auth).
+async function stripeApi(path, params) {
+  const r = await fetch('https://api.stripe.com' + path, {
+    method: 'POST',
+    headers: { Authorization: `Bearer ${STRIPE_SECRET_KEY}`, 'Content-Type': 'application/x-www-form-urlencoded' },
+    body: new URLSearchParams(params).toString(), signal: AbortSignal.timeout(15000),
+  });
+  const d = await r.json().catch(() => ({}));
+  if (!r.ok) throw new Error(d.error?.message || `Stripe HTTP ${r.status}`);
+  return d;
+}
+// Stripe-Webhook-Signatur prüfen: Header `t=…,v1=…`, HMAC-SHA256 über `${t}.${rawBody}`.
+function verifyStripeSig(rawBody, sigHeader) {
+  try {
+    if (!sigHeader || !STRIPE_WEBHOOK_SECRET || !rawBody) return null;
+    const parts = Object.fromEntries(String(sigHeader).split(',').map((kv) => kv.split('=')));
+    if (!parts.t || !parts.v1) return null;
+    const expected = createHmac('sha256', STRIPE_WEBHOOK_SECRET).update(`${parts.t}.${rawBody.toString('utf8')}`).digest('hex');
+    const a = Buffer.from(expected), b = Buffer.from(parts.v1);
+    if (a.length !== b.length || !timingSafeEqual(a, b)) return null;
+    if (Math.abs(Date.now() / 1000 - Number(parts.t)) > 300) return null;   // 5-Min-Replay-Schutz
+    return JSON.parse(rawBody.toString('utf8'));
+  } catch { return null; }
+}
+
+// Checkout-Session erzeugen — Discord-ID als client_reference_id (wie PayPals custom_id).
+app.post('/stripe/checkout', express.json(), async (req, res) => {
+  const tier = String(req.body?.tier || '').trim();
+  const discordId = String(req.body?.discordId || '').trim();
+  const creatorCode = String(req.body?.creatorCode || '').trim().slice(0, 50);
+  const priceId = STRIPE_PRICES[tier];
+  if (!priceId) return res.status(400).json({ error: 'Ungültiger Rang.' });
+  if (!/^\d{5,25}$/.test(discordId)) return res.status(400).json({ error: 'Bitte zuerst mit Discord einloggen.' });
+  try {
+    const s = await stripeApi('/v1/checkout/sessions', {
+      mode: 'subscription',
+      'line_items[0][price]': priceId,
+      'line_items[0][quantity]': '1',
+      client_reference_id: discordId,
+      'metadata[discordId]': discordId,
+      'metadata[tier]': tier,
+      'metadata[creatorCode]': creatorCode,
+      'subscription_data[metadata][discordId]': discordId,
+      'subscription_data[metadata][tier]': tier,
+      'subscription_data[metadata][creatorCode]': creatorCode,
+      allow_promotion_codes: 'true',
+      locale: 'de',
+      success_url: 'https://www.blackfossil.de/abo?paid=1',
+      cancel_url: 'https://www.blackfossil.de/abo?cancel=1',
+    });
+    res.json({ url: s.url });
+  } catch (e) { res.status(502).json({ error: e.message }); }
+});
+
+// Stripe-Webhook: Abo-Aktivierung/Kündigung → Rolle + Willkommens-Bonus (spiegelt PayPal).
+app.post('/stripe/webhook', express.raw({ type: '*/*', limit: '1mb' }), async (req, res) => {
+  const event = verifyStripeSig(req.body, req.headers['stripe-signature']);
+  if (!event) { console.warn('Stripe-Webhook: ungültige Signatur — verworfen'); return res.sendStatus(400); }
+  try {
+    if (event.type === 'checkout.session.completed') {
+      const s = event.data.object;
+      if (s.mode === 'subscription' && s.payment_status === 'paid') {
+        const discordId = String(s.client_reference_id || s.metadata?.discordId || '').trim();
+        const tier = s.metadata?.tier;
+        const creatorCode = s.metadata?.creatorCode || '';
+        const subId = s.subscription;
+        if (/^\d{5,25}$/.test(discordId) && ALL_TIER_ROLES.includes(tier) && subId) {
+          for (const other of ALL_TIER_ROLES) if (other !== tier) { try { await setMemberRole(discordId, other, false); } catch {} }
+          await setMemberRole(discordId, tier, true);
+          withFileLock(SUBSCRIPTIONS_FILE, () => {
+            const subs = readJson(SUBSCRIPTIONS_FILE, {});
+            subs[subId] = { discordId, creatorCode, provider: 'stripe', tier, startedAt: Date.now() };
+            writeJsonFile(SUBSCRIPTIONS_FILE, subs);
+          });
+          const bonus = grantAboBonus(discordId, tier);
+          sendDiscordDM(discordId,
+            `🎉 Danke für deine Unterstützung! Dein Rang **${tier}** ist jetzt aktiv. ❤️` +
+            (bonus.granted > 0 ? `\n\n💰 Willkommens-Bonus: **${bonus.granted} Punkte** gutgeschrieben.` : '') +
+            `\n\nKündigen kannst du jederzeit über den Link in deiner Stripe-Zahlungsbestätigung.`
+          ).catch(() => {});
+          console.log(`✅ Stripe-Abo aktiv: ${discordId} → ${tier}${creatorCode ? ` (Code ${creatorCode})` : ''}${bonus.granted ? ` (+${bonus.granted} Punkte)` : bonus.reason ? ` (Bonus pending: ${bonus.reason})` : ''}`);
+        }
+      }
+    } else if (event.type === 'customer.subscription.deleted') {
+      const sub = event.data.object;
+      const discordId = String(sub.metadata?.discordId || '').trim();
+      const tier = sub.metadata?.tier;
+      if (/^\d{5,25}$/.test(discordId) && ALL_TIER_ROLES.includes(tier)) {
+        try { await setMemberRole(discordId, tier, false); } catch {}
+        withFileLock(SUBSCRIPTIONS_FILE, () => { const subs = readJson(SUBSCRIPTIONS_FILE, {}); delete subs[sub.id]; writeJsonFile(SUBSCRIPTIONS_FILE, subs); });
+        console.log(`⛔ Stripe-Abo gekündigt: ${discordId} → ${tier} entzogen`);
+      }
+    }
+    res.sendStatus(200);
+  } catch (e) { console.error('Stripe-Webhook-Fehler:', e.message); res.sendStatus(500); }
+});
+
 // ── Periodischer Abgleich: aktive PayPal-Abos ↔ Discord-Rollen ──────────────
 // Fängt Fälle ab, in denen ein Webhook verloren ging (Rolle nicht vergeben, oder
 // Kündigung verpasst). Geht NUR über die uns bekannten Subscriptions (subscriptions.json).
@@ -3378,6 +3483,7 @@ async function reconcileSubscriptions() {
   for (const subId of ids) {
     try {
       const meta = subs[subId] || {};
+      if (meta.provider === 'stripe') continue;   // Stripe-Abos laufen über den Stripe-Webhook, nicht PayPal
       const roleName = meta.tier;
       const did = String(meta.discordId || '');
       if (!roleName || !/^\d{5,25}$/.test(did)) continue;
