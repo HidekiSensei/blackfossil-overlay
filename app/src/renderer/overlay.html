@@ -393,6 +393,12 @@
     .theme-sw { width: 32px; height: 32px; border-radius: 50%; border: 2px solid transparent; cursor: pointer; padding: 0; flex: none; box-shadow: 0 0 0 1px rgba(0,0,0,0.4); transition: transform .1s; }
     .theme-sw:hover { transform: scale(1.12); }
     .theme-sw.on { border-color: #fff; box-shadow: 0 0 0 2px var(--accent), 0 0 10px var(--accent); }
+    .theme-sw.locked { opacity: .42; filter: grayscale(.6); font-size: 13px; line-height: 28px; text-align: center; }
+    .theme-sw.locked:hover { transform: none; }
+    .theme-custom { display: inline-flex; align-items: center; gap: 6px; font-size: 12px; padding: 4px 8px; border-radius: 8px; border: 1px solid var(--border); cursor: pointer; background: rgba(255,255,255,0.04); }
+    .theme-custom.locked { opacity: .55; cursor: default; }
+    .theme-custom.on { border-color: #fff; box-shadow: 0 0 0 1px var(--accent); }
+    .theme-custom input[type=color] { width: 24px; height: 20px; border: 0; background: none; padding: 0; cursor: pointer; }
 
     /* ════════════════════════════════════════════════════════════════
        ⚡ BlackFossil FX — elektrische Energie passend zum Lightning-Logo.

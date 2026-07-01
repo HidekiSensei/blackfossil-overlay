@@ -10,7 +10,7 @@
 
 import express from 'express';
 import jwt from 'jsonwebtoken';
-import { readFileSync, writeFileSync, renameSync, openSync, closeSync, unlinkSync, statSync } from 'node:fs';
+import { readFileSync, writeFileSync, renameSync, openSync, closeSync, unlinkSync, statSync, existsSync } from 'node:fs';
 import { AccessToken } from 'livekit-server-sdk';
 import { randomBytes, createVerify } from 'node:crypto';
 import { crc32 } from 'node:zlib';
@@ -81,10 +81,13 @@ for (const [plan, role] of [
 ]) { if (plan) PAYPAL_PLANS[plan] = role; }
 // Alle Abo-Rollen (für sauberes Entziehen/Upgrade)
 const ALL_TIER_ROLES = ['Knochen', 'Bernstein', 'Obsidian'];
+// 🧪 Test-/Comp-Rolle: wer diese Discord-Rolle hat, bekommt SOFORT volle Obsidian-Perks
+// (umgeht den Go-Live-Stichtag — fürs Testen vor dem Release & für verschenkte Ränge).
+const FORCE_OBSIDIAN_ROLE = process.env.ABO_FORCE_OBSIDIAN_ROLE ?? 'Joe';
 
 // ── Discord-Rollen-Check (Admin + Tier + Staff-Rang) ────────────────────────
 async function getDiscordStatus(discordId) {
-  const result = { admin: false, ingame: false, team: false, rank: 'Fossil', tier: 'Fossil', aboTier: null, staff: null };
+  const result = { admin: false, ingame: false, team: false, rank: 'Fossil', tier: 'Fossil', aboTier: null, aboForce: null, staff: null };
   if (!DISCORD_BOT_TOKEN || !DISCORD_GUILD_ID) return result;
   try {
     const headers = { Authorization: `Bot ${DISCORD_BOT_TOKEN}` };
@@ -104,6 +107,9 @@ async function getDiscordStatus(discordId) {
     // Abo-Rang (Knochen/Bernstein/Obsidian) separat ermitteln — steht NICHT in RANK_ROLES.
     // Höchsten gehaltenen Abo-Rang nehmen (ALL_TIER_ROLES ist aufsteigend sortiert).
     result.aboTier = [...ALL_TIER_ROLES].reverse().find((n) => myRoleNames.has(n)) || null;
+    // 🧪 Obsidian-Override (umgeht Stichtag, s. aboPerkIdx): „Joe"-Test-/Comp-Rolle ODER Team
+    // (TEAM_RANKS) → das Team hat ständig die vollen Obsidian-Perks.
+    result.aboForce = ((FORCE_OBSIDIAN_ROLE && myRoleNames.has(FORCE_OBSIDIAN_ROLE)) || TEAM_RANKS.includes(rank)) ? 'Obsidian' : null;
     result.staff = null;         // kein zweites Badge mehr
     result.admin = ADMIN_RANKS.includes(rank);
     result.ingame = INGAME_RANKS.includes(rank);
@@ -191,7 +197,7 @@ app.get('/auth/callback', async (req, res) => {
 
     // Steam-ID nachschlagen + Rang/Rechte (Rang braucht kein Steam)
     const steamId = lookupSteamId(user.id);
-    const { admin, ingame, team, rank, tier, aboTier, staff } = await getDiscordStatus(user.id);
+    const { admin, ingame, team, rank, tier, aboTier, aboForce, staff } = await getDiscordStatus(user.id);
 
     // Web-Login (Abo-Kauf): zurück zur Website mit Discord-ID. Steam ist hier
     // NICHT Pflicht — die Abo-Rolle wird über die Discord-ID vergeben.
@@ -214,7 +220,7 @@ app.get('/auth/callback', async (req, res) => {
 
     // App-Session ausstellen (30 Tage)
     const session = jwt.sign(
-      { steamId, discordId: user.id, name: user.global_name || user.username, admin, ingame, team, rank, tier, staff, avatar: user.avatar ?? null },
+      { steamId, discordId: user.id, name: user.global_name || user.username, admin, ingame, team, rank, tier, aboForce, staff, avatar: user.avatar ?? null },
       SESSION_SECRET,
       { expiresIn: '30d' }
     );
@@ -265,6 +271,9 @@ app.get('/token', async (req, res) => {
     rank: payload.rank || payload.tier || 'Fossil',
     tier: payload.rank || payload.tier || 'Fossil',
     staff: null,
+    // Effektiver Abo-Rang (für Theme-Gating + Zombie-Slider im Overlay). Vor dem
+    // Go-Live-Stichtag null → Overlay zeigt Free-Verhalten. Live aus subscriptions.json.
+    aboTier: payload.aboForce || (aboPerksLive() ? aboTierFor(payload.discordId) : null),
   });
 });
 
@@ -609,16 +618,75 @@ const TOKEN_LIMIT = parseInt(process.env.TOKEN_LIMIT ?? '50', 10);
 const PARK_COOLDOWN_MS = parseInt(process.env.PARK_COOLDOWN_MIN ?? '5', 10) * 60_000;   // TEST: 5 Min (normal 30)
 const UNPACK_COOLDOWN_MS = parseInt(process.env.UNPACK_COOLDOWN_MIN ?? '5', 10) * 60_000; // TEST: 5 Min (normal 30)
 
+// ════════════════════════════════════════════════════════════════════════════
+// 🎁 ABO-PERKS — ZENTRALE KONFIGURATION
+// Tiers: Fossil(0) < Knochen(1) < Bernstein(2) < Obsidian(3).
+// Ingame-Vorteile zünden erst ab dem Stichtag ABO_PERKS_START (aboPerksLive()).
+//
+// ⚙️ SEASON-WECHSEL: ALLE Perk-Werte hier zentral anpassen. Ein Season-Wipe löscht
+//    die SPIELER-Daten (garage.json, points.json, inventories, cooldowns.json,
+//    quests.json, marketplace/auctions/wants) — DIESE Config bleibt bestehen.
+//    Werte ändern → Datei kopieren + `pm2 restart bf-token`. Reihenfolge in jedem
+//    Array = [Fossil, Knochen, Bernstein, Obsidian].
+// ════════════════════════════════════════════════════════════════════════════
+const ABO_TIERS = ['Fossil', 'Knochen', 'Bernstein', 'Obsidian'];
+const ABO_PERKS = {
+  garageSlots:   [10, 20, 40, 80],       // 🚗 Garage-Plätze (für alle gratis, Free vermindert)
+  cooldownMin:   [30, 20, 10, 5],        // ⏱️ Ein-/Ausparken-Cooldown in Minuten
+  questsPerDay:  [2, 3, 4, 5],           // 📜 Quest-Rolls/Tag (Basis 2 + Tier-Bonus)
+  marketSlots:   [2, 3, 4, 5],           // 🛒 gleichzeitige Markt-Angebote (Basis 2 + Tier-Bonus)
+  skinSlots:     [1, 2, 5, 10],          // 💾 Skin-Vorlagen-Speicherplätze (Free: 1, zahlt fürs Speichern)
+  growBiweekly:  [0, 1, 2, 3],           // 🌱 Instant-Grow-Token alle 14 Tage ab Kaufdatum (Bot-Job)
+  lootboxWeekly: [0, 1, 2, 3],           // 🎁 Lootboxen alle 7 Tage ab Kaufdatum (Bot-Job)
+  welcomeBonus:  [0, 1000, 1500, 2000],  // 💰 Willkommens-Punkte (= ABO_BONUS, hier dokumentiert)
+};
+const aboIdx = (tier) => { const i = ABO_TIERS.indexOf(tier); return i < 0 ? 0 : i; };
+// Aktiver Abo-Rang eines Discord-Users — LIVE aus subscriptions.json (höchster gehaltener;
+// kein Re-Login nötig). null = kein Abo.
+function aboTierFor(discordId) {
+  if (!discordId) return null;
+  const subs = readJson(`${BOT_DATA_DIR}/subscriptions.json`, {});
+  let best = null, bestIdx = 0;
+  for (const meta of Object.values(subs)) {
+    if (String(meta.discordId) !== String(discordId)) continue;
+    const i = aboIdx(meta.tier);
+    if (i > bestIdx) { bestIdx = i; best = meta.tier; }
+  }
+  return best;
+}
+// Effektiver Perk-Index (0–3): respektiert den Go-Live-Stichtag (vorher → Fossil/0).
+function aboPerkIdx(s) {
+  if (s && s.aboForce) return aboIdx(s.aboForce);   // 🧪 Joe-Test-/Comp-Override → sofort Obsidian (kein Stichtag)
+  return aboPerksLive() ? aboIdx(aboTierFor(s && s.discordId)) : 0;
+}
+const garageLimitFor = (s) => ABO_PERKS.garageSlots[aboPerkIdx(s)];
+const cooldownMsFor  = (s) => ABO_PERKS.cooldownMin[aboPerkIdx(s)] * 60_000;
+const questLimitFor  = (s) => ABO_PERKS.questsPerDay[aboPerkIdx(s)];
+const marketLimitFor = (s) => ABO_PERKS.marketSlots[aboPerkIdx(s)];
+const skinSlotsFor   = (s) => ABO_PERKS.skinSlots[aboPerkIdx(s)];
+const skinFreeFor    = (s) => aboPerkIdx(s) >= 1;   // Skin-Creator ab Knochen kostenlos (live & gratis)
+// 💰 Skin-Punkt-Kosten — gelten NUR für Free (skinFreeFor=false). Ab Knochen alles gratis.
+const SKIN_COSTS = { color: 50, tplSave: 500, tplApply: 250 };   // pro geänderte Farbe · Vorlage speichern · Vorlage anwenden
+// Aktive öffentliche Markt-Listings eines Spielers (gemeinsamer Pool gegen marketLimitFor):
+// Dino-Markt + Token-Auktionen + Gesuche. Direkt-Tausch (P2P, TTL-begrenzt) zählt NICHT mit.
+// (sweep* sind Funktions-Deklarationen → gehoistet, daher hier nutzbar.)
+const countMarketListings = (steamId) =>
+  sweepMarketplace().filter((o) => o.sellerSteamId === steamId).length
+  + sweepAuctions().filter((a) => a.sellerSteamId === steamId).length
+  + sweepWants().filter((w) => w.requesterSteamId === steamId).length;
+
 function cooldownRemaining(steamId, action) {
   const store = readJson(COOLDOWNS_FILE, {});
   const until = store[steamId]?.[action] ?? 0;
   return Math.max(0, until - Date.now());
 }
-function startCooldown(steamId, action) {
+// durMs optional → tier-abhängiger Cooldown (s. cooldownMsFor); sonst Action-Default.
+function startCooldown(steamId, action, durMs) {
   withFileLock(COOLDOWNS_FILE, () => {
     const store = readJson(COOLDOWNS_FILE, {});
     if (!store[steamId]) store[steamId] = {};
-    const dur = action === 'park' ? PARK_COOLDOWN_MS : action === 'swap' ? SWAP_COOLDOWN_MS : UNPACK_COOLDOWN_MS;
+    const dur = Number.isFinite(durMs) ? durMs
+      : (action === 'park' ? PARK_COOLDOWN_MS : action === 'swap' ? SWAP_COOLDOWN_MS : UNPACK_COOLDOWN_MS);
     store[steamId][action] = Date.now() + dur;
     writeJsonFile(COOLDOWNS_FILE, store);
   });
@@ -1597,7 +1665,7 @@ app.post('/me/ticket-close', express.json(), (req, res) => {
 const QUESTS_FILE = process.env.QUESTS_FILE ?? '/opt/token-service/quests.json';
 const QUEST_DAILY_LIMIT = 2;
 const QUEST_GROW_TARGET = 0.8;
-const QUEST_REWARD_POINTS = parseInt(process.env.QUEST_REWARD_POINTS ?? '500');   // Belohnung pro erfüllter RP-Quest
+const QUEST_REWARD_POINTS = parseInt(process.env.QUEST_REWARD_POINTS ?? '250');   // Belohnung pro erfüllter RP-Quest
 // Dino-Roster (key = Spielklasse via baseClass). Bei Bedarf an den Server anpassen.
 const QUEST_DINOS = [
   { key: 'Tyrannosaurus', name: 'Tyrannosaurus', diet: 'carni' },
@@ -1739,7 +1807,7 @@ app.get('/me/quest', async (req, res) => {
     } catch {}
   }
   all[s.steamId] = q; writeJsonFile(QUESTS_FILE, all);
-  res.json({ dayKey: q.dayKey, rollsToday: q.rollsToday, dailyLimit: QUEST_DAILY_LIMIT, growTarget: QUEST_GROW_TARGET, reward: QUEST_REWARD_POINTS, active: q.active, doneCount: (q.done || []).length, justCompleted, progress });
+  res.json({ dayKey: q.dayKey, rollsToday: q.rollsToday, dailyLimit: questLimitFor(s), growTarget: QUEST_GROW_TARGET, reward: QUEST_REWARD_POINTS, active: q.active, doneCount: (q.done || []).length, justCompleted, progress });
 });
 app.post('/me/quest/roll', express.json(), (req, res) => {
   const s = sessionFrom(req);
@@ -1748,7 +1816,8 @@ app.post('/me/quest/roll', express.json(), (req, res) => {
   if (type !== 'rp') return res.status(400).json({ error: 'Diese Quest-Art kommt bald.' });
   const { all, q } = questFor(s.steamId);
   if (q.active) return res.status(409).json({ error: 'Du hast bereits eine Quest — erst abschließen oder aufgeben.' });
-  if (q.rollsToday >= QUEST_DAILY_LIMIT) return res.status(429).json({ error: `Tageslimit erreicht (${QUEST_DAILY_LIMIT} pro Tag).` });
+  const qLimit = questLimitFor(s);
+  if (q.rollsToday >= qLimit) return res.status(429).json({ error: `Tageslimit erreicht (${qLimit} pro Tag).` });
   const dino = questPick(QUEST_DINOS);
   q.active = {
     id: `${Date.now()}-${Math.floor(Math.random() * 1e4)}`, type: 'rp',
@@ -1758,7 +1827,7 @@ app.post('/me/quest/roll', express.json(), (req, res) => {
   };
   q.rollsToday += 1;
   all[s.steamId] = q; writeJsonFile(QUESTS_FILE, all);
-  res.json({ active: q.active, rollsToday: q.rollsToday, dailyLimit: QUEST_DAILY_LIMIT });
+  res.json({ active: q.active, rollsToday: q.rollsToday, dailyLimit: questLimitFor(s) });
 });
 // Quest STARTEN (auch Neustart nach Fehlschlag): aktuellen Dino einparken + als
 // Quest-Dino-Juvi (25%, zufälliges Geschlecht) aufspielen. So beginnt das Tracking sauber.
@@ -1817,7 +1886,7 @@ app.post('/me/quest/abandon', (req, res) => {
   const { all, q } = questFor(s.steamId);
   if (q.active) { q.active.status = 'void'; q.active = null; }
   all[s.steamId] = q; writeJsonFile(QUESTS_FILE, all);
-  res.json({ ok: true, rollsToday: q.rollsToday, dailyLimit: QUEST_DAILY_LIMIT });
+  res.json({ ok: true, rollsToday: q.rollsToday, dailyLimit: questLimitFor(s) });
 });
 
 // Geschlecht ändern (Skin-Editor): The Isle kann das Geschlecht nur per Respawn
@@ -1825,6 +1894,8 @@ app.post('/me/quest/abandon', (req, res) => {
 app.post('/me/gender', express.json(), async (req, res) => {
   const s = sessionFrom(req);
   if (!s) return res.status(401).json({ error: 'Keine Session' });
+  // Geschlechtswechsel ist erst ab Rang Bernstein freigeschaltet.
+  if (aboPerkIdx(s) < 2) return res.status(403).json({ error: 'Geschlechtswechsel ist ab Rang Bernstein freigeschaltet.' });
   const gender = req.body?.gender;
   if (gender !== 'Male' && gender !== 'Female') return res.status(400).json({ error: 'Ungültiges Geschlecht' });
   let players; try { players = await fetchPlayers(); } catch (e) { return res.status(502).json({ error: e.message }); }
@@ -2024,7 +2095,7 @@ app.get('/garage', (req, res) => {
   const slots = garage[s.steamId] ?? [];
   res.json({
     slots: slots.map(slotCard),
-    limit: TOKEN_LIMIT,
+    limit: garageLimitFor(s),
     count: slots.length,
     cooldowns: {
       park: cooldownRemaining(s.steamId, 'park'),
@@ -2051,9 +2122,10 @@ app.post('/garage/park', express.json(), async (req, res) => {
     // in Garage sichern
     const garage = readJson(GARAGE_FILE, {});
     if (!garage[s.steamId]) garage[s.steamId] = [];
-    // Token-Limit prüfen
-    if (garage[s.steamId].length >= TOKEN_LIMIT) {
-      return res.status(409).json({ error: `Garage voll (${garage[s.steamId].length}/${TOKEN_LIMIT}). Verkaufe oder spiele zuerst einen aus.` });
+    // Garage-Limit prüfen (tier-abhängig: Free 10 / Knochen 20 / Bernstein 40 / Obsidian 80)
+    const gLimit = garageLimitFor(s);
+    if (garage[s.steamId].length >= gLimit) {
+      return res.status(409).json({ error: `Garage voll (${garage[s.steamId].length}/${gLimit}). Verkaufe oder spiele zuerst einen aus.` });
     }
     garage[s.steamId].push({ id: genId(), savedAt: Date.now(), snapshot });
     writeJsonFile(GARAGE_FILE, garage);
@@ -2062,8 +2134,8 @@ app.post('/garage/park', express.json(), async (req, res) => {
       method: 'POST', headers: { Authorization: `Bearer ${PANEL_ADMIN_TOKEN}`, 'Content-Type': 'application/json' }, body: '{}',
     });
     if (!pr.ok) throw new Error(`Einparken fehlgeschlagen (${pr.status})`);
-    startCooldown(s.steamId, 'park');
-    res.json({ ok: true, dino: snapshot.dinoClass, count: garage[s.steamId].length, limit: TOKEN_LIMIT });
+    startCooldown(s.steamId, 'park', cooldownMsFor(s));
+    res.json({ ok: true, dino: snapshot.dinoClass, count: garage[s.steamId].length, limit: gLimit });
   } catch (err) {
     res.status(502).json({ error: err.message });
   }
@@ -2112,7 +2184,7 @@ app.post('/garage/unpark', express.json(), async (req, res) => {
     const fresh = readJson(GARAGE_FILE, {});
     fresh[s.steamId] = (fresh[s.steamId] ?? []).filter((x) => x.id !== slotId);
     writeJsonFile(GARAGE_FILE, fresh);
-    startCooldown(s.steamId, 'unpack');
+    startCooldown(s.steamId, 'unpack', cooldownMsFor(s));
     res.json({ ok: true, dino: slot.snapshot?.dinoClass });
   } catch (err) {
     res.status(502).json({ error: err.message });
@@ -2345,6 +2417,7 @@ app.get('/market', (req, res) => {
     inventory: getInventory(s.steamId),
     tokenDefs: TOKEN_ORDER.map((id) => ({ id, label: TOKEN_DEFS[id].label, emoji: TOKEN_DEFS[id].emoji })),
     offerHours: AUCTION_HOURS,
+    marketLimit: marketLimitFor(s), marketUsed: countMarketListings(s.steamId),
     offers: market.map((o) => ({ ...slotCard(o), price: o.price, mine: o.sellerSteamId === s.steamId, expiresAt: o.expiresAt })),
     wants: wants.map((w) => ({ ...w, mine: w.requesterSteamId === s.steamId, offerText: wantOfferText(w) })),
   });
@@ -2386,6 +2459,8 @@ app.post('/garage/delete', express.json(), (req, res) => {
 app.post('/market/sell-player', express.json(), (req, res) => {
   const s = sessionFrom(req);
   if (!s) return res.status(401).json({ error: 'Keine Session' });
+  const mLimit = marketLimitFor(s);
+  if (countMarketListings(s.steamId) >= mLimit) return res.status(403).json({ error: `Markt-Limit erreicht (${mLimit} gleichzeitige Angebote). Höhere Abo-Ränge schalten mehr frei.` });
   const { slotId, price } = req.body ?? {};
   const p = parseInt(price);
   if (!Number.isFinite(p) || p <= 0) return res.status(400).json({ error: 'Ungültiger Preis' });
@@ -2500,6 +2575,7 @@ app.get('/tokenmarket', async (req, res) => {
     inventory: getInventory(s.steamId),
     tokenDefs: TOKEN_ORDER.map((id) => ({ id, label: TOKEN_DEFS[id].label, emoji: TOKEN_DEFS[id].emoji })),
     auctionHours: AUCTION_HOURS,
+    marketLimit: marketLimitFor(s), marketUsed: countMarketListings(s.steamId),
     auctions: auctions.map((a) => ({ ...a, mine: a.sellerSteamId === s.steamId, priceText: auctionPriceLabel(a) })),
     wants: sweepWants().filter((w) => w.wantKind === 'token').map((w) => ({ ...w, mine: w.requesterSteamId === s.steamId, offerText: wantOfferText(w) })),
     players,
@@ -2514,6 +2590,8 @@ app.get('/tokenmarket', async (req, res) => {
 app.post('/tokenmarket/auction/create', express.json(), (req, res) => {
   const s = sessionFrom(req);
   if (!s) return res.status(401).json({ error: 'Keine Session' });
+  const mLimit = marketLimitFor(s);
+  if (countMarketListings(s.steamId) >= mLimit) return res.status(403).json({ error: `Markt-Limit erreicht (${mLimit} gleichzeitige Angebote). Höhere Abo-Ränge schalten mehr frei.` });
   const { tokenType, priceKind, priceTokenType } = req.body ?? {};
   const qty = parseInt(req.body?.qty), priceAmount = parseInt(req.body?.priceAmount);
   if (!TOKEN_DEFS[tokenType]) return res.status(400).json({ error: 'Unbekannter Token' });
@@ -2714,6 +2792,8 @@ function sweepWants() {
 app.post('/wants/create', express.json(), (req, res) => {
   const s = sessionFrom(req);
   if (!s) return res.status(401).json({ error: 'Keine Session' });
+  const mLimit = marketLimitFor(s);
+  if (countMarketListings(s.steamId) >= mLimit) return res.status(403).json({ error: `Markt-Limit erreicht (${mLimit} gleichzeitige Angebote). Höhere Abo-Ränge schalten mehr frei.` });
   const { wantKind, wantDino, wantTokenType, offerKind, offerTokenType } = req.body ?? {};
   const wantQty = parseInt(req.body?.wantQty), offerAmount = parseInt(req.body?.offerAmount);
   if (wantKind !== 'dino' && wantKind !== 'token') return res.status(400).json({ error: 'Ungültige Gesuch-Art.' });
@@ -2795,60 +2875,203 @@ app.post('/wants/fulfill', express.json(), (req, res) => {
   res.json({ ok: true });
 });
 
-// ── 9) Skin-Editor (Relay an Game-Server) ───────────────────────────────────
+// ── 9) Skin-Editor (Relay an Game-Server) + Skin-Ökonomie ───────────────────
 const TIER_ORDER = ['Fossil', 'Knochen', 'Bernstein', 'Obsidian'];
 const SKIN_REQUIRE_TIER = process.env.SKIN_REQUIRE_TIER ?? ''; // leer = für alle frei
+const SKIN_COLOR_FIELDS = ['maleDisplayColor', 'markingsColor', 'bodyColor', 'flankColor', 'underbellyColor', 'teethColor', 'mouthColor', 'clawsColor', 'detailColor', 'eyesColor'];
+const SKIN_TEMPLATES_FILE = `${BOT_DATA_DIR}/skin_templates.json`;   // { steamId: [ {id,name,skinVariation,patternIndex,themeIndex,colors} ] }
+
+// 🧹 EINMALIGER Vorlagen-Reset zum Abo-Perks-Launch (neue Skin-Ökonomie → sauberer Start).
+// Läuft GENAU EINMAL: die Marker-Datei verhindert Wiederholung bei künftigen Deploys/Neustarts.
+// Für einen erneuten Reset in einer späteren Season die Versionsnummer im Marker erhöhen (v2, …).
+const SKIN_TPL_RESET_MARKER = `${BOT_DATA_DIR}/.skin_templates_reset_v1`;
+try {
+  if (!existsSync(SKIN_TPL_RESET_MARKER)) {
+    writeJsonFile(SKIN_TEMPLATES_FILE, {});
+    writeFileSync(SKIN_TPL_RESET_MARKER, new Date().toISOString());
+    console.log('[skin] Vorlagen einmalig zurückgesetzt (Launch-Reset v1).');
+  }
+} catch (e) { console.warn('[skin] Vorlagen-Reset übersprungen:', e.message); }
+
+// Frischen, LEBENDEN Dino holen (Skin geht nur auf lebendem Ingame-Dino). Wirft {status,error}.
+async function fetchLivingDino(steamId) {
+  let current;
+  try { current = (await fetchPlayers()).find((p) => p.steamId === steamId); }
+  catch (err) { throw { status: 502, error: `Spielerdaten nicht erreichbar: ${err.message}` }; }
+  if (!current) throw { status: 409, error: 'Du musst im Spiel auf einem Dino sein, um den Skin zu ändern.' };
+  if (current.isDead) throw { status: 409, error: 'Dein Dino ist tot — Skin kann nicht geändert werden.' };
+  return current;
+}
+const clampColor = (arr) => arr.map((v) => Math.max(0.0001, Number(v) || 0));   // 0,0,0 = „kein Override" → Epsilon
+const colorsFromBody = (b) => {
+  const colors = {};
+  for (const k of SKIN_COLOR_FIELDS) if (Array.isArray(b?.[k]) && b[k].length === 3) colors[k] = b[k];
+  return colors;
+};
+// Wie viele Farbfelder ändern sich ggü. dem aktuellen Dino? (Toleranz 0.01/Kanal) → Free-Kosten.
+function changedColorCount(current, colors) {
+  let n = 0;
+  for (const k of SKIN_COLOR_FIELDS) {
+    const next = colors[k]; if (!Array.isArray(next) || next.length !== 3) continue;
+    const cur = Array.isArray(current[k]) ? current[k] : [0, 0, 0];
+    if (next.some((v, i) => Math.abs(Number(v) - Number(cur[i] ?? 0)) > 0.01)) n++;
+  }
+  return n;
+}
+// Skin-Felder auf den FRISCHEN Snapshot mergen + an Nyors pushen. Wirft {status,error}.
+async function pushSkin(steamId, current, fields) {
+  const payload = { ...current };
+  payload.skinVariation = Number(fields.skinVariation) || 0;
+  payload.patternIndex = Number(fields.patternIndex) || 0;
+  payload.themeIndex = Number(fields.themeIndex) || 0;
+  if (fields.gender === 'Male' || fields.gender === 'Female') payload.gender = fields.gender;
+  for (const k of SKIN_COLOR_FIELDS) {
+    const c = fields.colors && fields.colors[k];
+    if (Array.isArray(c) && c.length === 3) payload[k] = clampColor(c);
+  }
+  let r;
+  try {
+    r = await fetch(`${PANEL_BASE_URL}/players/${encodeURIComponent(steamId)}/skin`, {
+      method: 'POST', headers: { Authorization: `Bearer ${PANEL_ADMIN_TOKEN}`, 'Content-Type': 'application/json' }, body: JSON.stringify(payload),
+      signal: AbortSignal.timeout(15000),
+    });
+  } catch (err) {
+    throw { status: 502, error: err.name === 'TimeoutError' ? 'Game-Server hat nicht rechtzeitig geantwortet — bitte gleich nochmal versuchen.' : err.message };
+  }
+  if (!r.ok) {
+    let detail = `HTTP ${r.status}`;
+    try { const e = await r.json(); detail = e.message ?? e.error ?? e.Msg ?? detail; }
+    catch { try { const t = await r.text(); if (t) detail = t.slice(0, 200); } catch {} }
+    throw { status: 502, error: `Skin-Update fehlgeschlagen: ${detail}` };
+  }
+}
+const readSkinTemplates = (steamId) => { const all = readJson(SKIN_TEMPLATES_FILE, {}); return Array.isArray(all[steamId]) ? all[steamId] : []; };
 
 app.post('/skin', express.json(), async (req, res) => {
   const s = sessionFrom(req);
   if (!s) return res.status(401).json({ error: 'Keine Session' });
-  // Optionales Tier-Gate (später aktivierbar)
   if (SKIN_REQUIRE_TIER) {
     const have = TIER_ORDER.indexOf(s.tier || 'Fossil');
     const need = TIER_ORDER.indexOf(SKIN_REQUIRE_TIER);
     if (have < need) return res.status(403).json({ error: `Skin-Editor ab Tier "${SKIN_REQUIRE_TIER}"` });
   }
-  // 1) Frischen Spieler-Status holen — Skin geht nur auf einem lebenden Ingame-Dino
-  let current;
   try {
-    current = (await fetchPlayers()).find((p) => p.steamId === s.steamId);
-  } catch (err) {
-    return res.status(502).json({ error: `Spielerdaten nicht erreichbar: ${err.message}` });
-  }
-  if (!current) return res.status(409).json({ error: 'Du musst im Spiel auf einem Dino sein, um den Skin zu ändern.' });
-  if (current.isDead) return res.status(409).json({ error: 'Dein Dino ist tot — Skin kann nicht geändert werden.' });
-
-  const b = req.body ?? {};
-  // 2) Skin-Felder auf den FRISCHEN Snapshot mergen (kein veralteter/partieller Body)
-  const payload = { ...current };
-  payload.skinVariation = Number(b.skinVariation) || 0;
-  payload.patternIndex = Number(b.patternIndex) || 0;
-  payload.themeIndex = Number(b.themeIndex) || 0;
-  if (b.gender === 'Male' || b.gender === 'Female') payload.gender = b.gender;   // Geschlecht im Skin-Editor umschaltbar
-  for (const k of ['maleDisplayColor', 'markingsColor', 'bodyColor', 'flankColor', 'underbellyColor', 'teethColor', 'mouthColor', 'clawsColor', 'detailColor', 'eyesColor']) {
-    // The Isle behandelt exakt 0,0,0 als „kein Override" → Skins greifen dann nicht.
-    // Auf einen winzigen Epsilon clampen (optisch weiter schwarz, aber != 0).
-    if (Array.isArray(b[k]) && b[k].length === 3) payload[k] = b[k].map((v) => Math.max(0.0001, Number(v) || 0));
-  }
-  try {
-    const r = await fetch(`${PANEL_BASE_URL}/players/${encodeURIComponent(s.steamId)}/skin`, {
-      method: 'POST', headers: { Authorization: `Bearer ${PANEL_ADMIN_TOKEN}`, 'Content-Type': 'application/json' }, body: JSON.stringify(payload),
-      signal: AbortSignal.timeout(15000),
-    });
-    if (!r.ok) {
-      // Echten Grund vom Game-Server durchreichen (Cooldown, „im Menü", …) statt generisch
-      let detail = `HTTP ${r.status}`;
-      try { const e = await r.json(); detail = e.message ?? e.error ?? e.Msg ?? detail; }
-      catch { try { const t = await r.text(); if (t) detail = t.slice(0, 200); } catch {} }
-      return res.status(502).json({ error: `Skin-Update fehlgeschlagen: ${detail}` });
+    const current = await fetchLivingDino(s.steamId);
+    const b = req.body ?? {};
+    const colors = colorsFromBody(b);
+    // 💰 Free zahlt 50 pro GEÄNDERTE Farbe (Muster/Variation/Gender bleiben gratis); ab Knochen alles gratis.
+    // Atomar reservieren, bei Push-Fehler zurückbuchen → kein Punkt-Verlust ohne angewendeten Skin.
+    let charged = 0;
+    if (!skinFreeFor(s)) {
+      const cost = changedColorCount(current, colors) * SKIN_COSTS.color;
+      if (cost > 0) {
+        if (!spendPoints(s.steamId, cost)) return res.status(402).json({ error: `Nicht genug Punkte — ${cost} nötig (${SKIN_COSTS.color} pro geänderte Farbe).`, cost });
+        charged = cost;
+      }
     }
-    res.json({ ok: true });
-  } catch (err) {
-    const msg = err.name === 'TimeoutError'
-      ? 'Game-Server hat nicht rechtzeitig geantwortet — bitte gleich nochmal versuchen.'
-      : err.message;
-    res.status(502).json({ error: msg });
+    // Gender NUR ab Bernstein — sonst ignorieren (kein Bypass des Geschlecht-Gates via Skin-Push).
+    const skinGender = aboPerkIdx(s) >= 2 ? b.gender : undefined;
+    try { await pushSkin(s.steamId, current, { skinVariation: b.skinVariation, patternIndex: b.patternIndex, themeIndex: b.themeIndex, gender: skinGender, colors }); }
+    catch (e) { if (charged) addPoints(s.steamId, charged); throw e; }
+    res.json({ ok: true, charged, points: getPoints(s.steamId) });
+  } catch (e) {
+    if (e && e.status) return res.status(e.status).json({ error: e.error });
+    res.status(502).json({ error: e.message || 'Fehler' });
   }
+});
+
+// ── Skin-Vorlagen (server-seitig, dino-übergreifend) — Slots + Free-Kosten ───
+// GET: Liste + Slot-Limit/Kosten fürs Overlay-Gating.
+app.get('/skin/templates', (req, res) => {
+  const s = sessionFrom(req);
+  if (!s) return res.status(401).json({ error: 'Keine Session' });
+  const templates = readSkinTemplates(s.steamId);
+  res.json({ templates, limit: skinSlotsFor(s), used: templates.length, free: skinFreeFor(s), costs: SKIN_COSTS });
+});
+
+// Speichern (Free zahlt SKIN_COSTS.tplSave, nur bei NEU; Überschreiben gleicher Name = gratis).
+app.post('/skin/templates', express.json(), (req, res) => {
+  const s = sessionFrom(req);
+  if (!s) return res.status(401).json({ error: 'Keine Session' });
+  const b = req.body ?? {};
+  const name = String(b.name || '').trim().slice(0, 30);
+  if (!name) return res.status(400).json({ error: 'Vorlagen-Name fehlt.' });
+  const colors = {};
+  for (const k of SKIN_COLOR_FIELDS) if (Array.isArray(b.colors?.[k]) && b.colors[k].length === 3) colors[k] = b.colors[k].map(Number);
+  const list = readSkinTemplates(s.steamId);
+  const isNew = !list.some((t) => t.name === name);
+  if (isNew && list.length >= skinSlotsFor(s)) {
+    return res.status(409).json({ error: `Keine freien Vorlagen-Slots (${skinSlotsFor(s)}). Lösche eine Vorlage oder hol dir einen höheren Rang.` });
+  }
+  let charged = 0;
+  if (!skinFreeFor(s) && isNew) {
+    if (!spendPoints(s.steamId, SKIN_COSTS.tplSave)) return res.status(402).json({ error: `Nicht genug Punkte — Speichern kostet ${SKIN_COSTS.tplSave}.` });
+    charged = SKIN_COSTS.tplSave;
+  }
+  const templates = withFileLock(SKIN_TEMPLATES_FILE, () => {
+    const all = readJson(SKIN_TEMPLATES_FILE, {});
+    const cur = Array.isArray(all[s.steamId]) ? all[s.steamId] : [];
+    const i = cur.findIndex((t) => t.name === name);
+    const tpl = { id: i >= 0 ? cur[i].id : genId(), name, skinVariation: Number(b.skinVariation) || 0, patternIndex: Number(b.patternIndex) || 0, themeIndex: Number(b.themeIndex) || 0, colors };
+    if (i >= 0) cur[i] = tpl; else cur.push(tpl);
+    all[s.steamId] = cur; writeJsonFile(SKIN_TEMPLATES_FILE, all);
+    return cur;
+  });
+  res.json({ ok: true, charged, points: getPoints(s.steamId), templates, limit: skinSlotsFor(s), used: templates.length });
+});
+
+// Löschen (gratis).
+app.delete('/skin/templates/:id', (req, res) => {
+  const s = sessionFrom(req);
+  if (!s) return res.status(401).json({ error: 'Keine Session' });
+  const templates = withFileLock(SKIN_TEMPLATES_FILE, () => {
+    const all = readJson(SKIN_TEMPLATES_FILE, {});
+    const cur = (Array.isArray(all[s.steamId]) ? all[s.steamId] : []).filter((t) => t.id !== req.params.id);
+    all[s.steamId] = cur; writeJsonFile(SKIN_TEMPLATES_FILE, all);
+    return cur;
+  });
+  res.json({ ok: true, templates, limit: skinSlotsFor(s), used: templates.length });
+});
+
+// Vorlage anwenden (Free zahlt SKIN_COSTS.tplApply pauschal; Farben kommen server-seitig aus der Vorlage → nicht manipulierbar).
+app.post('/skin/templates/:id/apply', express.json(), async (req, res) => {
+  const s = sessionFrom(req);
+  if (!s) return res.status(401).json({ error: 'Keine Session' });
+  const tpl = readSkinTemplates(s.steamId).find((t) => t.id === req.params.id);
+  if (!tpl) return res.status(404).json({ error: 'Vorlage nicht gefunden.' });
+  try {
+    const current = await fetchLivingDino(s.steamId);
+    let charged = 0;
+    if (!skinFreeFor(s)) {
+      if (!spendPoints(s.steamId, SKIN_COSTS.tplApply)) return res.status(402).json({ error: `Nicht genug Punkte — Vorlage anwenden kostet ${SKIN_COSTS.tplApply}.` });
+      charged = SKIN_COSTS.tplApply;
+    }
+    try { await pushSkin(s.steamId, current, tpl); }
+    catch (e) { if (charged) addPoints(s.steamId, charged); throw e; }
+    res.json({ ok: true, charged, points: getPoints(s.steamId) });
+  } catch (e) {
+    if (e && e.status) return res.status(e.status).json({ error: e.error });
+    res.status(502).json({ error: e.message || 'Fehler' });
+  }
+});
+
+// 🧟 Zombie-/Corpse-Look (0–1) — EXKLUSIV Obsidian (Backend-Erzwingung). Setzt den
+// "forced body-gore"-Wert via Nyors /players/:id/zombie. Rein kosmetisch (kein Slay).
+// Der Slider im Skin-Creator ruft das auf; Caddy: durch /me* abgedeckt.
+app.post('/me/zombie', express.json(), async (req, res) => {
+  const s = sessionFrom(req);
+  if (!s) return res.status(401).json({ error: 'Keine Session' });
+  if (aboPerkIdx(s) < 3) return res.status(403).json({ error: 'Der Zombie-Look ist exklusiv für Obsidian.' });
+  const value = Math.max(0, Math.min(1, Number(req.body?.value) || 0));
+  try {
+    const r = await fetch(`${PANEL_BASE_URL}/players/${encodeURIComponent(s.steamId)}/zombie`, {
+      method: 'POST', headers: { Authorization: `Bearer ${PANEL_ADMIN_TOKEN}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ value }), signal: AbortSignal.timeout(8000),
+    });
+    const d = await r.json().catch(() => ({}));
+    if (!r.ok) return res.status(502).json({ error: d.Msg || d.error || `HTTP ${r.status}` });
+    res.json({ ok: true, value });
+  } catch (e) { res.status(502).json({ error: e.message }); }
 });
 
 // ── 10) Öffentlicher Server-Status (für die Webseite, kein Login) ───────────

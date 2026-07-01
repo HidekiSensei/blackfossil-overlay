@@ -6,36 +6,87 @@ const el = (id) => document.getElementById(id);
 // ── Color-Themes (Overlay personalisieren) ───────────────────────────────────
 // rgb = "r,g,b" des Akzents (für rgba(var(--accent-rgb),a) in FX/Blitzen).
 // panel = ans Theme gekoppelte Hintergrundfarbe der Panels (dunkler Akzent-Ton).
+// min = Mindest-Abo-Rang (0 Fossil/Free · 1 Knochen · 2 Bernstein · 3 Obsidian). Gating über aboTier.
 const BF_THEMES = {
-  violett: { name: 'Violett', accent: '#8b5cf6', accent2: '#a78bfa', accentD: '#7c3aed', border: 'rgba(139,92,246,0.32)', rgb: '139,92,246', panel: 'rgba(20,13,38,0.82)', inputBg: '#160d28' },
-  blau:    { name: 'Blau',    accent: '#3b82f6', accent2: '#60a5fa', accentD: '#2563eb', border: 'rgba(59,130,246,0.32)', rgb: '59,130,246', panel: 'rgba(12,18,38,0.82)', inputBg: '#0c1426' },
-  cyan:    { name: 'Cyan',    accent: '#06b6d4', accent2: '#22d3ee', accentD: '#0891b2', border: 'rgba(6,182,212,0.32)', rgb: '6,182,212', panel: 'rgba(8,24,30,0.82)', inputBg: '#07181d' },
-  gruen:   { name: 'Grün',    accent: '#22c55e', accent2: '#4ade80', accentD: '#16a34a', border: 'rgba(34,197,94,0.32)', rgb: '34,197,94', panel: 'rgba(10,28,18,0.82)', inputBg: '#0a1c12' },
-  gold:    { name: 'Gold',    accent: '#f59e0b', accent2: '#fbbf24', accentD: '#d97706', border: 'rgba(245,158,11,0.32)', rgb: '245,158,11', panel: 'rgba(32,24,8,0.84)', inputBg: '#1c1506' },
-  rot:     { name: 'Rot',     accent: '#ef4444', accent2: '#f87171', accentD: '#dc2626', border: 'rgba(239,68,68,0.32)', rgb: '239,68,68', panel: 'rgba(34,12,12,0.84)', inputBg: '#1e0c0c' },
-  pink:    { name: 'Pink',    accent: '#ec4899', accent2: '#f472b6', accentD: '#db2777', border: 'rgba(236,72,153,0.32)', rgb: '236,72,153', panel: 'rgba(34,12,26,0.84)', inputBg: '#1e0c18' },
+  violett: { name: 'Violett', min: 0, accent: '#8b5cf6', accent2: '#a78bfa', accentD: '#7c3aed', border: 'rgba(139,92,246,0.32)', rgb: '139,92,246', panel: 'rgba(20,13,38,0.82)', inputBg: '#160d28' },
+  blau:    { name: 'Blau',    min: 1, accent: '#3b82f6', accent2: '#60a5fa', accentD: '#2563eb', border: 'rgba(59,130,246,0.32)', rgb: '59,130,246', panel: 'rgba(12,18,38,0.82)', inputBg: '#0c1426' },
+  cyan:    { name: 'Cyan',    min: 1, accent: '#06b6d4', accent2: '#22d3ee', accentD: '#0891b2', border: 'rgba(6,182,212,0.32)', rgb: '6,182,212', panel: 'rgba(8,24,30,0.82)', inputBg: '#07181d' },
+  gruen:   { name: 'Grün',    min: 1, accent: '#22c55e', accent2: '#4ade80', accentD: '#16a34a', border: 'rgba(34,197,94,0.32)', rgb: '34,197,94', panel: 'rgba(10,28,18,0.82)', inputBg: '#0a1c12' },
+  gold:    { name: 'Gold',    min: 2, accent: '#f59e0b', accent2: '#fbbf24', accentD: '#d97706', border: 'rgba(245,158,11,0.32)', rgb: '245,158,11', panel: 'rgba(32,24,8,0.84)', inputBg: '#1c1506' },
+  rot:     { name: 'Rot',     min: 2, accent: '#ef4444', accent2: '#f87171', accentD: '#dc2626', border: 'rgba(239,68,68,0.32)', rgb: '239,68,68', panel: 'rgba(34,12,12,0.84)', inputBg: '#1e0c0c' },
+  pink:    { name: 'Pink',    min: 2, accent: '#ec4899', accent2: '#f472b6', accentD: '#db2777', border: 'rgba(236,72,153,0.32)', rgb: '236,72,153', panel: 'rgba(34,12,26,0.84)', inputBg: '#1e0c18' },
 };
+// ── Abo-Gating (Stichtag-aware aboTier kommt aus /token) ─────────────────────
+const ABO_ORDER = ['Fossil', 'Knochen', 'Bernstein', 'Obsidian'];
+let myAboTier = 'Fossil';
+const myAboIdx = () => Math.max(0, ABO_ORDER.indexOf(myAboTier));
+const themeUnlocked = (key) => { const t = BF_THEMES[key]; return !!t && myAboIdx() >= (t.min || 0); };
+function setAboTier(tier) {
+  myAboTier = ABO_ORDER.includes(tier) ? tier : 'Fossil';
+  // Gespeicherte Theme-Wahl jetzt mit korrektem Rang anwenden (beim Laden war der Rang noch unbekannt).
+  applyTheme(localStorage.getItem('bf-theme') || 'violett');
+  if (featureOpen === 'settings') renderThemePicker();
+}
+// Custom-Theme (Obsidian): vollständiges Theme aus EINER Akzent-Farbe ableiten.
+function hexToRgb(hex) { const n = parseInt(String(hex).slice(1), 16); return [(n >> 16) & 255, (n >> 8) & 255, n & 255]; }
+function rgbToHex(r, g, b) { const h = (v) => ('0' + Math.max(0, Math.min(255, Math.round(v))).toString(16)).slice(-2); return '#' + h(r) + h(g) + h(b); }
+function themeFromHex(hex) {
+  const [r, g, b] = hexToRgb(hex);
+  const li = (v) => v + (255 - v) * 0.25, dk = (v) => v * 0.82;
+  return {
+    name: 'Custom', min: 3, accent: hex, accent2: rgbToHex(li(r), li(g), li(b)), accentD: rgbToHex(dk(r), dk(g), dk(b)),
+    border: `rgba(${r},${g},${b},0.32)`, rgb: `${r},${g},${b}`,
+    panel: `rgba(${Math.round(r * 0.14)},${Math.round(g * 0.14)},${Math.round(b * 0.14)},0.84)`, inputBg: rgbToHex(r * 0.16, g * 0.16, b * 0.16),
+  };
+}
 let currentTheme = localStorage.getItem('bf-theme') || 'violett';
-function applyTheme(key) {
-  const t = BF_THEMES[key] || BF_THEMES.violett; currentTheme = BF_THEMES[key] ? key : 'violett';
+function buildTheme(key) {
+  if (key === 'custom') return themeFromHex(localStorage.getItem('bf-custom') || '#8b5cf6');
+  return BF_THEMES[key] || BF_THEMES.violett;
+}
+// persist nur bei expliziter Nutzer-Wahl → Fallback-auf-Violett (Rang noch unbekannt/herabgestuft)
+// überschreibt NICHT die gespeicherte Präferenz.
+function applyTheme(key, persist) {
+  const allowed = key === 'custom' ? myAboIdx() >= 3 : themeUnlocked(key);
+  if (!allowed) key = 'violett';
+  const t = buildTheme(key); currentTheme = key;
   const r = document.documentElement.style;
   r.setProperty('--accent', t.accent); r.setProperty('--accent-2', t.accent2);
   r.setProperty('--accent-d', t.accentD); r.setProperty('--border', t.border);
   r.setProperty('--accent-rgb', t.rgb); r.setProperty('--panel', t.panel);
   r.setProperty('--input-bg', t.inputBg);
-  localStorage.setItem('bf-theme', currentTheme);
+  if (persist) localStorage.setItem('bf-theme', key);
   minimapDirty = true;   // Theme-Farben geändert → Minimap neu zeichnen
 }
 function renderThemePicker() {
   const box = el('themePicker'); if (!box) return;
-  box.innerHTML = Object.entries(BF_THEMES).map(([k, t]) =>
-    `<button class="theme-sw${k === currentTheme ? ' on' : ''}" data-theme="${k}" title="${t.name}" style="background:linear-gradient(135deg,${t.accent},${t.accentD})"></button>`).join('');
+  box.innerHTML = Object.entries(BF_THEMES).map(([k, t]) => {
+    const locked = !themeUnlocked(k);
+    const tip = locked ? `${t.name} 🔒 ab ${ABO_ORDER[t.min]}` : t.name;
+    return `<button class="theme-sw${k === currentTheme ? ' on' : ''}${locked ? ' locked' : ''}" data-theme="${k}" title="${tip}" style="background:linear-gradient(135deg,${t.accent},${t.accentD})">${locked ? '🔒' : ''}</button>`;
+  }).join('') + customThemeHTML();
   box.querySelectorAll('.theme-sw').forEach((b) => b.onclick = () => {
-    applyTheme(b.dataset.theme);
-    box.querySelectorAll('.theme-sw').forEach((x) => x.classList.toggle('on', x.dataset.theme === currentTheme));
+    const k = b.dataset.theme;
+    if (!themeUnlocked(k)) { showToast(`🔒 „${BF_THEMES[k].name}" gibt's ab Rang ${ABO_ORDER[BF_THEMES[k].min]}.`, 'error'); return; }
+    applyTheme(k, true);
+    box.querySelectorAll('.theme-sw,.theme-custom').forEach((x) => x.classList.toggle('on', x.dataset.theme === currentTheme));
   });
+  wireCustomTheme(box);
 }
-applyTheme(currentTheme);   // sofort beim Laden anwenden (kein Flash)
+function customThemeHTML() {
+  if (myAboIdx() < 3) return `<div class="theme-custom locked" title="Eigene Akzentfarbe — exklusiv für Obsidian">🎨🔒 Eigene Farbe</div>`;
+  const cur = localStorage.getItem('bf-custom') || '#8b5cf6';
+  return `<label class="theme-custom${currentTheme === 'custom' ? ' on' : ''}" data-theme="custom" title="Eigene Akzentfarbe wählen">🎨 <input type="color" id="themeCustomInput" value="${cur}"></label>`;
+}
+function wireCustomTheme(box) {
+  const inp = box.querySelector('#themeCustomInput'); if (!inp) return;
+  inp.oninput = () => {
+    localStorage.setItem('bf-custom', inp.value);
+    applyTheme('custom', true);
+    box.querySelectorAll('.theme-sw,.theme-custom').forEach((x) => x.classList.toggle('on', x.dataset.theme === currentTheme));
+  };
+}
+applyTheme(currentTheme);   // sofort beim Laden anwenden (kein Flash; Rang folgt via setAboTier)
 
 // ── Blitz-Effekte an/aus (Settings-Toggle, persistent) ──────────────────────
 let fxOff = localStorage.getItem('bf-noblitz') === '1';
@@ -3100,8 +3151,44 @@ const SKIN_GROUPS = [
   ['maleDisplayColor', 'Display (♂)'], ['teethColor', 'Zähne'], ['mouthColor', 'Maul'], ['clawsColor', 'Krallen'],
 ];
 let skinState = null;
+let skinPays = false;       // Free (myAboIdx<1) zahlt + nicht-live; ab Knochen live & gratis
+let zombieTimer = null;
+let skinTpl = { templates: [], limit: 0, used: 0, free: true, costs: { color: 50, tplSave: 500, tplApply: 250 } };
 function linToHex(rgb) { if (!rgb) return '#888888'; const h = (v) => ('0' + gc(v).toString(16)).slice(-2); return '#' + h(rgb[0]) + h(rgb[1]) + h(rgb[2]); }
 function hexToLin(hex) { const n = parseInt(hex.slice(1), 16); const f = (v) => Math.pow(v / 255, 2.2); return [f((n >> 16) & 255), f((n >> 8) & 255), f(n & 255)]; }
+function setPointsHud(p) { const e = el('hudPoints'); if (e && typeof p === 'number') e.textContent = `${p.toLocaleString('de-DE')} Pkt.`; }
+// Baseline = zuletzt angewendeter Stand (für Free-Kosten = geänderte Farben ggü. Baseline + Reset).
+function deepColors(c) { const o = {}; for (const [k] of SKIN_GROUPS) o[k] = (c[k] || [0.5, 0.5, 0.5]).slice(); return o; }
+function setSkinBaseline() { if (skinState) skinState.baseline = { colors: deepColors(skinState.colors), skinVariation: skinState.skinVariation, patternIndex: skinState.patternIndex }; }
+function changedColorFields() {
+  if (!skinState?.baseline) return 0;
+  let n = 0;
+  for (const [k] of SKIN_GROUPS) {
+    const a = skinState.colors[k] || [0, 0, 0], b = skinState.baseline.colors[k] || [0, 0, 0];
+    if (a.some((v, i) => Math.abs(v - (b[i] ?? 0)) > 0.01)) n++;
+  }
+  return n;
+}
+function skinDirty() {
+  if (!skinState?.baseline) return false;
+  return changedColorFields() > 0 || skinState.skinVariation !== skinState.baseline.skinVariation || skinState.patternIndex !== skinState.baseline.patternIndex;
+}
+// Aktualisiert den Free-„Anwenden"-Button (Kosten = 50 × geänderte Farben).
+function updateApplyCost() {
+  const btn = el('skApply'); if (!btn) return;
+  const cost = changedColorFields() * (skinTpl.costs?.color ?? 50);
+  const dirty = skinDirty();
+  btn.disabled = !dirty; btn.style.opacity = dirty ? '1' : '.5';
+  btn.textContent = cost > 0 ? `✅ Anwenden (${cost} Pkt)` : (dirty ? '✅ Anwenden (gratis)' : '✅ Angewendet');
+}
+// 🧟 Zombie-Look setzen (Obsidian; Backend erzwingt zusätzlich).
+async function setZombie(value) {
+  try {
+    const r = await fetch(`${config.tokenBase}/me/zombie`, { method: 'POST', headers: { Authorization: `Bearer ${sessionToken}`, 'Content-Type': 'application/json' }, body: JSON.stringify({ value }) });
+    const d = await r.json(); if (!r.ok) throw new Error(d.error || 'Fehler');
+    showToast('🧟 Zombie-Look aktualisiert', 'success');
+  } catch (e) { showToast(e.message, 'error'); }
+}
 
 async function renderSkinEditor() {
   const panel = el('skinEditor');
@@ -3115,27 +3202,42 @@ async function renderSkinEditor() {
   const sk = me.skin || {};
   skinState = { skinVariation: sk.skinVariation || 0, patternIndex: sk.patternIndex || 0, themeIndex: sk.themeIndex || 0, gender: me.gender === 'Female' ? 'Female' : 'Male', colors: {} };
   for (const [k] of SKIN_GROUPS) skinState.colors[k] = (sk.colors && sk.colors[k]) ? sk.colors[k] : [0.5, 0.5, 0.5];
+  setSkinBaseline();
+  skinPays = myAboIdx() < 1;                 // Free zahlt + nicht-live; ab Knochen live & gratis
+  const obsidian = myAboIdx() >= 3;
+  const canGender = myAboIdx() >= 2;         // Geschlechtswechsel erst ab Bernstein
+  const genderTip = canGender ? 'Geschlecht wechseln (Respawn)' : '🔒 Geschlechtswechsel ist ab Rang Bernstein freigeschaltet';
 
   const swatches = SKIN_GROUPS.map(([k, l]) => `<label style="display:flex;justify-content:space-between;align-items:center;gap:8px;padding:6px 8px;background:rgba(255,255,255,0.04);border-radius:8px;font-size:13px;cursor:pointer"><span style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${l}</span><input type="color" data-col="${k}" value="${linToHex(skinState.colors[k])}" style="width:40px;height:26px;border:0;background:none;cursor:pointer;flex:none"></label>`).join('');
+  const liveMsg = skinPays
+    ? '✏️ Vorschau — Farben kosten 50 Pkt/Stück. Erst mit „Anwenden" geht der Skin live.'
+    : '🟢 Änderungen werden live im Spiel übernommen';
   panel.innerHTML = `<h2>🎨 Skin Editor — ${me.dino}</h2>
-    <div id="skLive" style="font-size:12px;color:#22c55e;margin:2px 0 14px">🟢 Änderungen werden live im Spiel übernommen</div>
-    <div class="sec-title">Geschlecht</div>
+    <div id="skLive" style="font-size:12px;color:${skinPays ? '#f59e0b' : '#22c55e'};margin:2px 0 14px">${liveMsg}</div>
+    <div class="sec-title">Geschlecht ${canGender ? '' : '<span style="color:var(--muted);font-weight:400;font-size:11px">🔒 ab Bernstein</span>'}</div>
     <div style="display:flex;gap:6px;margin:8px 0 14px">
-      <button data-gender="Female" style="flex:1" class="${skinState.gender === 'Female' ? '' : 'secondary'}">♀ Female</button>
-      <button data-gender="Male" style="flex:1" class="${skinState.gender === 'Male' ? '' : 'secondary'}">♂ Male</button>
+      <button data-gender="Female" title="${genderTip}" style="flex:1${canGender ? '' : ';opacity:.5'}" class="${skinState.gender === 'Female' ? '' : 'secondary'}">♀ Female</button>
+      <button data-gender="Male" title="${genderTip}" style="flex:1${canGender ? '' : ';opacity:.5'}" class="${skinState.gender === 'Male' ? '' : 'secondary'}">♂ Male</button>
     </div>
     <div class="sec-title">Farben</div>
     <div style="display:grid;grid-template-columns:1fr 1fr;gap:6px;margin:8px 0 14px">${swatches}</div>
     <div class="sec-title">Muster & Variation</div>
     <div style="display:flex;gap:6px;margin:8px 0 8px">${[0, 1, 2].map((i) => `<button data-pat="${i}" style="flex:1" class="${skinState.patternIndex === i ? '' : 'secondary'}">Muster ${i + 1}</button>`).join('')}</div>
     <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px"><span style="font-size:13px">Skin-Variation</span><input id="skVar" type="number" min="0" value="${skinState.skinVariation}" style="width:80px;padding:6px;border-radius:6px;border:1px solid var(--border);background:var(--input-bg);color:#eee"></div>
+    ${skinPays ? `<button id="skApply" disabled style="width:100%;margin:10px 0 4px;opacity:.5">✅ Angewendet</button>
+    <div style="font-size:11px;color:var(--muted);margin-bottom:8px">Unbestätigte Änderungen werden NICHT aufs Dino übertragen.</div>` : ''}
+    <div class="sec-title" style="margin-top:16px">🧟 Zombie-Look ${obsidian ? '' : '<span style="color:var(--muted);font-weight:400;font-size:11px">🔒 Obsidian</span>'}</div>
+    <div style="display:flex;align-items:center;gap:8px;margin:8px 0 4px">
+      <input type="range" id="skZombie" min="0" max="1" step="0.05" value="0" ${obsidian ? '' : 'disabled'} style="flex:1;accent-color:var(--accent)${obsidian ? '' : ';opacity:.45'}">
+      <span id="skZombieVal" style="font-size:12px;width:38px;text-align:right">0%</span>
+    </div>
     <div class="sec-title" style="margin-top:16px">🔗 Farben teilen</div>
     <button id="skShare" style="width:100%;margin:8px 0">📋 Farb-Code kopieren</button>
     <div style="display:flex;gap:6px;margin-bottom:4px">
       <input id="skImport" placeholder="Farb-Code einfügen…" style="flex:1;min-width:0;padding:8px;border-radius:6px;border:1px solid var(--border);background:var(--input-bg);color:#eee">
-      <button id="skImportBtn" class="secondary" style="width:auto;padding:8px 12px">Anwenden</button>
+      <button id="skImportBtn" class="secondary" style="width:auto;padding:8px 12px">${skinPays ? 'Vorschau' : 'Anwenden'}</button>
     </div>
-    <div class="sec-title" style="margin-top:16px">📁 Eigene Vorlagen <span style="color:var(--muted);font-weight:400;font-size:11px">(dino-übergreifend)</span></div>
+    <div id="skTplHead" class="sec-title" style="margin-top:16px">📁 Eigene Vorlagen</div>
     <div style="display:flex;gap:6px;margin:8px 0">
       <input id="skTplName" placeholder="Vorlagen-Name…" maxlength="30" style="flex:1;min-width:0;padding:8px;border-radius:6px;border:1px solid var(--border);background:var(--input-bg);color:#eee">
       <button id="skTplSave" style="width:auto;padding:8px 12px">💾 Speichern</button>
@@ -3146,18 +3248,25 @@ async function renderSkinEditor() {
   el('skTplSave').onclick = () => saveSkinTemplate();
   el('skShare').onclick = () => copySkinCode();
   el('skImportBtn').onclick = () => importSkinCode(el('skImport').value);
-  renderSkinTemplates();
+  if (skinPays) el('skApply').onclick = () => applySkin(false);
+  loadSkinTemplates();
   updateSkinPreview();
-  // Live-Anwendung: nach kurzer Pause automatisch übernehmen (kein Bestätigen nötig)
-  panel.querySelectorAll('[data-col]').forEach((inp) => inp.oninput = () => { skinState.colors[inp.dataset.col] = hexToLin(inp.value); updateSkinPreview(); scheduleSkinApply(); });
-  panel.querySelectorAll('[data-pat]').forEach((b) => b.onclick = () => { skinState.patternIndex = parseInt(b.dataset.pat); panel.querySelectorAll('[data-pat]').forEach((x) => x.className = x === b ? '' : 'secondary'); scheduleSkinApply(); });
-  el('skVar').oninput = () => { skinState.skinVariation = parseInt(el('skVar').value) || 0; scheduleSkinApply(); };
+  // Free: nur Vorschau (updateApplyCost) — geht erst mit „Anwenden" live. Ab Knochen: live nach kurzer Pause.
+  const onEdit = () => { if (skinPays) updateApplyCost(); else scheduleSkinApply(); };
+  panel.querySelectorAll('[data-col]').forEach((inp) => inp.oninput = () => { skinState.colors[inp.dataset.col] = hexToLin(inp.value); updateSkinPreview(); onEdit(); });
+  panel.querySelectorAll('[data-pat]').forEach((b) => b.onclick = () => { skinState.patternIndex = parseInt(b.dataset.pat); panel.querySelectorAll('[data-pat]').forEach((x) => x.className = x === b ? '' : 'secondary'); onEdit(); });
+  el('skVar').oninput = () => { skinState.skinVariation = parseInt(el('skVar').value) || 0; onEdit(); };
   panel.querySelectorAll('[data-gender]').forEach((b) => b.onclick = () => changeGender(b.dataset.gender, panel));
+  // 🧟 Zombie-Slider (Obsidian) — debounced; sonst Upsell.
+  const zin = el('skZombie');
+  if (obsidian) zin.oninput = () => { el('skZombieVal').textContent = Math.round(zin.value * 100) + '%'; clearTimeout(zombieTimer); zombieTimer = setTimeout(() => setZombie(parseFloat(zin.value)), 500); };
+  else zin.onclick = () => showToast('🧟 Der Zombie-Look ist exklusiv für Obsidian.', 'error');
 }
 // Geschlecht wechseln: The Isle kann das nur per Respawn → /me/gender (selber Dino,
 // selbes Wachstum, neues Geschlecht), danach Skin erneut anwenden (Farben behalten).
 async function changeGender(gender, panel) {
   if (!skinState || skinState.gender === gender) return;
+  if (myAboIdx() < 2) { showToast('🔒 Geschlechtswechsel gibt es ab Rang Bernstein.', 'error'); return; }
   setSkinLive('… Geschlecht wird gewechselt (Respawn)', '#f59e0b');
   try {
     const r = await fetch(`${config.tokenBase}/me/gender`, { method: 'POST', headers: { Authorization: `Bearer ${sessionToken}`, 'Content-Type': 'application/json' }, body: JSON.stringify({ gender }) });
@@ -3176,6 +3285,7 @@ function syncSkinUI() {
   const sv = el('skVar'); if (sv) sv.value = skinState.skinVariation;
   document.querySelectorAll('#skinEditor [data-pat]').forEach((x) => x.className = parseInt(x.dataset.pat) === skinState.patternIndex ? '' : 'secondary');
   updateSkinPreview();
+  updateApplyCost();   // Free-Button nach Import/Vorlage aktualisieren
 }
 let skinApplyTimer = null;
 function scheduleSkinApply() {
@@ -3205,10 +3315,10 @@ function importSkinCode(raw) {
     skinState.skinVariation = p.v || 0;
     skinState.patternIndex = p.p || 0;
     SKIN_GROUPS.forEach(([k], i) => { if (p.c && Array.isArray(p.c[i]) && p.c[i].length === 3) skinState.colors[k] = p.c[i].map(Number); });
-    syncSkinUI();
-    applySkin();
+    syncSkinUI();   // ruft updateApplyCost()
     const imp = el('skImport'); if (imp) imp.value = '';
-    showToast('🎨 Farben übernommen', 'success');
+    if (skinPays) showToast('🎨 Vorschau geladen — mit „Anwenden" bestätigen (50 Pkt pro geänderte Farbe)', 'success');
+    else { applySkin(); showToast('🎨 Farben übernommen', 'success'); }
   } catch { showToast('Ungültiger Farb-Code', 'error'); }
 }
 function updateSkinPreview() {
@@ -3224,40 +3334,62 @@ async function applySkin(auto) {
     let res = await send();
     if (res.status === 502) { await new Promise((r) => setTimeout(r, 1200)); res = await send(); } // ein Retry bei Server-Hänger
     const d = await res.json(); if (!res.ok) throw new Error(d.error || 'Fehler');
-    setSkinLive('🟢 Live übernommen', '#22c55e');
-    if (!auto) showToast('🎨 Skin angewendet!', 'success');
+    if (typeof d.points === 'number') setPointsHud(d.points);
+    setSkinBaseline(); updateApplyCost();   // angewendeter Stand = neue Baseline (Free-Kosten ab hier neu)
+    setSkinLive(d.charged ? `🟢 Übernommen (−${d.charged} Pkt)` : '🟢 Live übernommen', '#22c55e');
+    if (!auto) showToast(d.charged ? `🎨 Skin angewendet — ${d.charged} Punkte abgebucht` : '🎨 Skin angewendet!', 'success');
   } catch (err) { setSkinLive('⚠️ ' + err.message, '#ef4444'); showToast(err.message, 'error'); }
 }
 
-// ── Skin-Vorlagen (lokal, dino-übergreifend) ────────────────────────────────
-function getSkinTemplates() { try { return JSON.parse(localStorage.getItem('bf-skin-templates')) || []; } catch { return []; } }
-function setSkinTemplates(list) { localStorage.setItem('bf-skin-templates', JSON.stringify(list)); }
-function saveSkinTemplate() {
+// ── Skin-Vorlagen (server-seitig, dino-übergreifend) — Slots + Free-Kosten ───
+async function loadSkinTemplates() {
+  try {
+    const r = await fetch(`${config.tokenBase}/skin/templates`, { headers: { Authorization: `Bearer ${sessionToken}` } });
+    const d = await r.json(); if (r.ok) skinTpl = d;
+  } catch {}
+  renderSkinTemplates();
+}
+async function saveSkinTemplate() {
   if (!skinState) return;
   const name = (el('skTplName').value || '').trim();
   if (!name) { showToast('Vorlagen-Name fehlt', 'error'); return; }
-  const list = getSkinTemplates().filter((t) => t.name !== name); // gleicher Name → überschreiben
-  list.push({ name, skinVariation: skinState.skinVariation, patternIndex: skinState.patternIndex, themeIndex: skinState.themeIndex, colors: { ...skinState.colors } });
-  setSkinTemplates(list);
-  el('skTplName').value = '';
-  renderSkinTemplates();
-  showToast(`📁 Vorlage „${name}" gespeichert`, 'success');
+  try {
+    const body = { name, skinVariation: skinState.skinVariation, patternIndex: skinState.patternIndex, themeIndex: skinState.themeIndex, colors: skinState.colors };
+    const r = await fetch(`${config.tokenBase}/skin/templates`, { method: 'POST', headers: { Authorization: `Bearer ${sessionToken}`, 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+    const d = await r.json(); if (!r.ok) throw new Error(d.error || 'Fehler');
+    skinTpl = { ...skinTpl, templates: d.templates, used: d.used, limit: d.limit };
+    if (typeof d.points === 'number') setPointsHud(d.points);
+    el('skTplName').value = '';
+    renderSkinTemplates();
+    showToast(d.charged ? `📁 „${name}" gespeichert — ${d.charged} Punkte abgebucht` : `📁 Vorlage „${name}" gespeichert`, 'success');
+  } catch (e) { showToast(e.message, 'error'); }
 }
-function applySkinTemplate(t) {
-  if (!skinState) return;
-  // Nur Farben/Muster/Variation übernehmen → passt auf JEDEN Dino (nicht spezies-gebunden)
-  skinState.skinVariation = t.skinVariation || 0;
-  skinState.patternIndex = t.patternIndex || 0;
-  skinState.themeIndex = t.themeIndex || 0;
-  for (const [k] of SKIN_GROUPS) if (t.colors && t.colors[k]) skinState.colors[k] = t.colors[k].slice();
-  syncSkinUI();
-  applySkin(); // direkt anwenden
-  showToast(`🎨 Vorlage „${t.name}" angewendet`, 'success');
+async function applySkinTemplate(t) {
+  try {
+    const r = await fetch(`${config.tokenBase}/skin/templates/${t.id}/apply`, { method: 'POST', headers: { Authorization: `Bearer ${sessionToken}` } });
+    const d = await r.json(); if (!r.ok) throw new Error(d.error || 'Fehler');
+    if (typeof d.points === 'number') setPointsHud(d.points);
+    // skinState + Baseline auf die (server-seitig angewendete) Vorlage ziehen
+    skinState.skinVariation = t.skinVariation || 0;
+    skinState.patternIndex = t.patternIndex || 0;
+    skinState.themeIndex = t.themeIndex || 0;
+    for (const [k] of SKIN_GROUPS) if (t.colors && t.colors[k]) skinState.colors[k] = t.colors[k].slice();
+    syncSkinUI(); setSkinBaseline(); updateApplyCost();
+    showToast(d.charged ? `🎨 „${t.name}" angewendet — ${d.charged} Punkte` : `🎨 Vorlage „${t.name}" angewendet`, 'success');
+  } catch (e) { showToast(e.message, 'error'); }
 }
-function deleteSkinTemplate(name) { setSkinTemplates(getSkinTemplates().filter((t) => t.name !== name)); renderSkinTemplates(); }
+async function deleteSkinTemplate(id) {
+  try {
+    const r = await fetch(`${config.tokenBase}/skin/templates/${id}`, { method: 'DELETE', headers: { Authorization: `Bearer ${sessionToken}` } });
+    const d = await r.json(); if (r.ok) { skinTpl = { ...skinTpl, templates: d.templates, used: d.used, limit: d.limit }; renderSkinTemplates(); }
+  } catch {}
+}
 function renderSkinTemplates() {
   const box = el('skTplList'); if (!box) return;
-  const list = getSkinTemplates();
+  const list = skinTpl.templates || [];
+  const head = el('skTplHead');
+  if (head) head.innerHTML = `📁 Eigene Vorlagen (${list.length}/${skinTpl.limit})` +
+    (skinTpl.free ? '' : ` <span style="color:var(--muted);font-weight:400;font-size:11px">· Speichern ${skinTpl.costs?.tplSave} · Anwenden ${skinTpl.costs?.tplApply} Pkt</span>`);
   box.innerHTML = list.length ? '' : '<div style="color:var(--muted);font-size:12px">Noch keine Vorlagen gespeichert.</div>';
   for (const t of list) {
     const row = document.createElement('div');
@@ -3267,7 +3399,7 @@ function renderSkinTemplates() {
     ap.onclick = () => applySkinTemplate(t);
     const del = document.createElement('button');
     del.className = 'secondary'; del.textContent = '🗑'; del.style.cssText = 'width:auto;padding:6px 10px';
-    del.onclick = () => deleteSkinTemplate(t.name);
+    del.onclick = () => deleteSkinTemplate(t.id);
     row.append(ap, del);
     box.appendChild(row);
   }
@@ -4306,6 +4438,7 @@ async function connectWithSession(session) {
     renderHotkeys();
     if (data.name) el('hudName').textContent = data.name;
     setTier(data.tier);
+    setAboTier(data.aboTier);   // Stichtag-aware Abo-Rang fürs Perk-Gating (Themes/Color-Picker/Zombie)
     setStaff(data.staff);
     pollHud();
     if (!pollHud._timer) pollHud._timer = setInterval(pollHud, 6000);
