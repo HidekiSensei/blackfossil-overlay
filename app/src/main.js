@@ -5,6 +5,12 @@ const http = require('node:http');
 const { exec, spawn } = require('node:child_process');
 const { autoUpdater } = require('electron-updater');
 
+// ⚡ PERFORMANCE: Overlay auf die dedizierte (High-Performance-)GPU zwingen. Auf Laptops mit zwei
+// GPUs liefe das Overlay sonst oft auf der integrierten GPU, während das Spiel auf der dedizierten
+// läuft → teures Cross-GPU-Compositing (großer FPS-Verlust). Muss VOR app-ready gesetzt werden;
+// auf Single-GPU-Systemen wirkungslos (kein Nachteil, reversibel).
+app.commandLine.appendSwitch('force_high_performance_gpu');
+
 // ── Auto-Update (GitHub-Releases) ───────────────────────────────────────────
 // Ablauf: Beim Öffnen + stündlich prüfen. Bei verfügbarem Update zeigt das Overlay
 // einen Hinweis; der Download/Install wird vom Nutzer über die Einstellungen

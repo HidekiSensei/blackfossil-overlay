@@ -30,6 +30,26 @@
       backdrop-filter: var(--blur); -webkit-backdrop-filter: var(--blur);
     }
 
+    /* ⚡ PERFORMANCE — beim Spielen (Dock ZU) teure Dauer-Effekte aus. Live-Blur (backdrop-filter)
+       und Endlos-Animationen zwingen ein transparentes Vollbild-Overlay sonst dazu, jeden Frame
+       das ganze Bild neu zu komponieren → DWM nimmt dem Spiel Independent-Flip/Vollbild → große
+       FPS-Verluste. Bei OFFENEM Dock/Panel läuft die volle Optik (da schaust du aufs Overlay). */
+    body:not(.dock-on) #hud,
+    body:not(.dock-on) .toast,
+    body:not(.dock-on) #micIndicator,
+    body:not(.dock-on) #zoneBox,
+    body:not(.dock-on) #rangeBox {
+      backdrop-filter: none !important; -webkit-backdrop-filter: none !important;
+    }
+    body:not(.dock-on) .stat-fill,
+    body:not(.dock-on) .stat-fill::before,
+    body:not(.dock-on) .stat-fill::after,
+    body:not(.dock-on) .elder-glow,
+    body:not(.dock-on) .sec-title {
+      animation: none !important;
+    }
+    body:not(.dock-on) .stat-fill { transition: none !important; }
+
     /* Top-HUD */
     #hud { position: absolute; top: 14px; left: 50%; transform: translateX(-50%); display: flex; align-items: center; gap: 12px;
       background: var(--panel); border: 1px solid var(--border); border-radius: 999px; padding: 7px 16px; font-size: 13px; box-shadow: var(--glow); }
