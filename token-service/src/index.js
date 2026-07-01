@@ -87,7 +87,7 @@ const FORCE_OBSIDIAN_ROLE = process.env.ABO_FORCE_OBSIDIAN_ROLE ?? 'Joe';
 
 // ── Discord-Rollen-Check (Admin + Tier + Staff-Rang) ────────────────────────
 async function getDiscordStatus(discordId) {
-  const result = { admin: false, ingame: false, team: false, rank: 'Fossil', tier: 'Fossil', aboTier: null, aboForce: null, staff: null };
+  const result = { admin: false, ingame: false, team: false, rank: 'Fossil', tier: 'Fossil', aboTier: null, aboForce: null, staff: null, ok: false };
   if (!DISCORD_BOT_TOKEN || !DISCORD_GUILD_ID) return result;
   try {
     const headers = { Authorization: `Bot ${DISCORD_BOT_TOKEN}` };
@@ -114,10 +114,41 @@ async function getDiscordStatus(discordId) {
     result.admin = ADMIN_RANKS.includes(rank);
     result.ingame = INGAME_RANKS.includes(rank);
     result.team = TEAM_RANKS.includes(rank);
+    result.ok = true;   // Discord-Auflösung erfolgreich (vs. Fallback bei Fehler)
     return result;
   } catch {
     return result;
   }
+}
+
+// Kurzlebiger Cache für getDiscordStatus (60s). Nutzt /token, um bei jedem Overlay-Start den
+// LIVE-Status aufzulösen (Team/Rang/Abo wirken sofort, kein Neu-Login nötig). 4s-Timeout gegen
+// Discord-Hänger → null; nur erfolgreiche Auflösungen werden gecacht (Fehler sofort neu versuchen).
+const _dStatusCache = new Map();    // discordId → { at, status }
+const _dStatusInflight = new Map(); // discordId → Promise (dedup gleichzeitiger Refreshes)
+async function getDiscordStatusCached(discordId) {
+  const c = _dStatusCache.get(discordId);
+  if (c && Date.now() - c.at < 60000) return c.status;
+  if (_dStatusInflight.has(discordId)) return _dStatusInflight.get(discordId);
+  const p = (async () => {
+    const s = await Promise.race([
+      getDiscordStatus(discordId),
+      new Promise((res) => setTimeout(() => res(null), 4000)),
+    ]);
+    if (s && s.ok) _dStatusCache.set(discordId, { at: Date.now(), status: s });
+    _dStatusInflight.delete(discordId);
+    return s;
+  })();
+  _dStatusInflight.set(discordId, p);
+  return p;
+}
+// Live-aboForce (Team/Joe) aus dem Cache statt aus dem eingefrorenen JWT — so wirken Team-/
+// Rollen-Änderungen auch bei der server-seitigen Perk-Durchsetzung ohne Neu-Login. Cache-Wert
+// bis 5 Min alt wird toleriert (sessionFrom hält ihn frisch); kein Treffer → JWT-Claim als Fallback.
+function liveAboForce(s) {
+  const c = s && s.discordId ? _dStatusCache.get(s.discordId) : null;
+  if (c && c.status && c.status.ok && Date.now() - c.at < 300000) return c.status.aboForce;
+  return s ? s.aboForce : null;
 }
 
 // ── OAuth State (kurzlebig, in-memory) ─────────────────────────────────────
@@ -259,21 +290,32 @@ app.get('/token', async (req, res) => {
   });
   at.addGrant({ roomJoin: true, room: PROXIMITY_ROOM, canPublish: true, canSubscribe: true });
 
+  // LIVE-Status (60s gecacht) statt der beim Login eingefrorenen JWT-Claims → Team-/Rang-/
+  // Abo-Änderungen wirken sofort, ohne dass sich der User neu einloggen muss. Bei Discord-
+  // Fehler/Timeout: sauberer Fallback auf die JWT-Claims (kein Downgrade durch Aussetzer).
+  const live = payload.discordId ? await getDiscordStatusCached(payload.discordId) : null;
+  const st = live && live.ok ? live : null;
+  const admin = st ? st.admin : !!payload.admin;
+  const ingame = st ? st.ingame : (!!payload.ingame || !!payload.admin);
+  const team = st ? st.team : isTeamMember(payload);
+  const rank = (st && st.rank) || payload.rank || payload.tier || 'Fossil';
+  const aboForce = st ? st.aboForce : payload.aboForce;
+
   res.json({
     token: await at.toJwt(),
     url: LIVEKIT_URL,
     room: PROXIMITY_ROOM,
     identity: payload.steamId,
     name: payload.name,
-    admin: !!payload.admin,
-    ingame: !!payload.ingame || !!payload.admin,
-    team: isTeamMember(payload),
-    rank: payload.rank || payload.tier || 'Fossil',
-    tier: payload.rank || payload.tier || 'Fossil',
+    admin: !!admin,
+    ingame: !!ingame || !!admin,
+    team,
+    rank,
+    tier: rank,
     staff: null,
-    // Effektiver Abo-Rang (für Theme-Gating + Zombie-Slider im Overlay). Vor dem
-    // Go-Live-Stichtag null → Overlay zeigt Free-Verhalten. Live aus subscriptions.json.
-    aboTier: payload.aboForce || (aboPerksLive() ? aboTierFor(payload.discordId) : null),
+    // Effektiver Abo-Rang (Theme-Gating/Zombie/Skin). Team/Joe → Obsidian (aboForce, jetzt live);
+    // sonst live aus subscriptions.json ab dem Go-Live-Stichtag.
+    aboTier: aboForce || (aboPerksLive() ? aboTierFor(payload.discordId) : null),
   });
 });
 
@@ -656,7 +698,8 @@ function aboTierFor(discordId) {
 }
 // Effektiver Perk-Index (0–3): respektiert den Go-Live-Stichtag (vorher → Fossil/0).
 function aboPerkIdx(s) {
-  if (s && s.aboForce) return aboIdx(s.aboForce);   // 🧪 Joe-Test-/Comp-Override → sofort Obsidian (kein Stichtag)
+  const force = liveAboForce(s);   // 🧪 Joe-Test-/Comp-Override + Team → sofort Obsidian (LIVE, kein Stichtag)
+  if (force) return aboIdx(force);
   return aboPerksLive() ? aboIdx(aboTierFor(s && s.discordId)) : 0;
 }
 const garageLimitFor = (s) => ABO_PERKS.garageSlots[aboPerkIdx(s)];
@@ -784,7 +827,12 @@ function sessionFrom(req) {
   const auth = req.headers.authorization ?? '';
   const t = auth.startsWith('Bearer ') ? auth.slice(7) : null;
   if (!t) return null;
-  try { return jwt.verify(t, SESSION_SECRET); } catch { return null; }
+  let s;
+  try { s = jwt.verify(t, SESSION_SECRET); } catch { return null; }
+  // Live-Status im Hintergrund frisch halten (fire-and-forget, bei warmem Cache quasi gratis) →
+  // Team/Rang/Abo greifen server-seitig ohne Neu-Login. Darf die Auth NIEMALS beeinflussen.
+  if (s && s.discordId) { try { getDiscordStatusCached(s.discordId).catch(() => {}); } catch {} }
+  return s;
 }
 // Team = Owner/Admin/Support — darf Admin-Menü + TP/Kalibrierung nutzen.
 // (s.staff als Fallback für alte Sessions; FORCE_TEAM_STEAMIDS als harte Garantie.)
