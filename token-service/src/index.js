@@ -247,6 +247,9 @@ app.get('/auth/callback', async (req, res) => {
       back.searchParams.set('name', user.global_name || user.username);
       back.searchParams.set('tier', tier || 'Fossil');
       back.searchParams.set('abo', aboTier || '');   // aktueller Abo-Rang für die Website (leer = keiner)
+      // Signiertes Web-Token → erlaubt der Abo-Seite abgesicherte Aktionen (Kündigung),
+      // ohne dass jemand fremde Abos über eine geratene discordId kündigen kann.
+      back.searchParams.set('wtoken', jwt.sign({ discordId: user.id, web: true }, SESSION_SECRET, { expiresIn: '60d' }));
       return res.redirect(back.toString());
     }
 
@@ -3336,7 +3339,7 @@ app.post('/paypal/webhook', express.json({ type: '*/*', limit: '1mb', verify: (r
       const creator = creatorForCode(meta.creatorCode);
       const creatorShare = creator ? round2(net * creator.share) : 0;
       const entry = {
-        txId, subId,
+        txId, subId, provider: 'paypal',
         date: rsc.create_time || new Date().toISOString(),
         discordId: meta.discordId || null,
         tier: meta.tier || null,
@@ -3380,6 +3383,14 @@ async function stripeApi(path, params) {
     method: 'POST',
     headers: { Authorization: `Bearer ${STRIPE_SECRET_KEY}`, 'Content-Type': 'application/x-www-form-urlencoded' },
     body: new URLSearchParams(params).toString(), signal: AbortSignal.timeout(15000),
+  });
+  const d = await r.json().catch(() => ({}));
+  if (!r.ok) throw new Error(d.error?.message || `Stripe HTTP ${r.status}`);
+  return d;
+}
+async function stripeGet(path) {
+  const r = await fetch('https://api.stripe.com' + path, {
+    headers: { Authorization: `Bearer ${STRIPE_SECRET_KEY}` }, signal: AbortSignal.timeout(15000),
   });
   const d = await r.json().catch(() => ({}));
   if (!r.ok) throw new Error(d.error?.message || `Stripe HTTP ${r.status}`);
@@ -3466,9 +3477,63 @@ app.post('/stripe/webhook', express.raw({ type: '*/*', limit: '1mb' }), async (r
         withFileLock(SUBSCRIPTIONS_FILE, () => { const subs = readJson(SUBSCRIPTIONS_FILE, {}); delete subs[sub.id]; writeJsonFile(SUBSCRIPTIONS_FILE, subs); });
         console.log(`⛔ Stripe-Abo gekündigt: ${discordId} → ${tier} entzogen`);
       }
+    } else if (event.type === 'invoice.paid') {
+      // Jede (auch wiederkehrende) Zahlung → Einnahmen-Ledger (spiegelt PayPals PAYMENT.SALE.COMPLETED).
+      const inv = event.data.object;
+      const subId = inv.subscription, txId = inv.id;
+      if (subId && txId) {
+        let meta = readJson(SUBSCRIPTIONS_FILE, {})[subId] || {};
+        if (!meta.discordId) {   // Ereignis-Reihenfolge nicht garantiert → notfalls aus der Subscription lesen
+          try { const sub = await stripeGet(`/v1/subscriptions/${subId}`); meta = { discordId: sub.metadata?.discordId, tier: sub.metadata?.tier, creatorCode: sub.metadata?.creatorCode }; } catch {}
+        }
+        const gross = round2((inv.amount_paid ?? inv.total ?? 0) / 100);
+        let fee = 0;
+        try { if (inv.charge) { const ch = await stripeGet(`/v1/charges/${inv.charge}?expand[]=balance_transaction`); fee = round2((ch.balance_transaction?.fee ?? 0) / 100); } } catch {}
+        const net = round2(gross - fee);
+        const creator = creatorForCode(meta.creatorCode);
+        const creatorShare = creator ? round2(net * creator.share) : 0;
+        const entry = {
+          txId, subId, provider: 'stripe',
+          date: new Date((inv.created ?? Date.now() / 1000) * 1000).toISOString(),
+          discordId: meta.discordId || null, tier: meta.tier || null,
+          currency: (inv.currency || 'eur').toUpperCase(),
+          gross, fee, net,
+          creatorCode: creator?.code || '', creatorName: creator?.name || null,
+          creatorSharePct: creator ? creator.share : 0, creatorShare,
+          houseShare: round2(net - creatorShare), payoutStatus: 'offen',
+        };
+        withFileLock(LEDGER_FILE, () => {
+          const ledger = readJson(LEDGER_FILE, []);
+          if (ledger.some((e) => e.txId === txId)) return;   // Dedup
+          ledger.push(entry); writeJsonFile(LEDGER_FILE, ledger);
+        });
+        console.log(`💶 Stripe-Zahlung gebucht: ${gross} ${entry.currency} (netto ${net})${entry.creatorCode ? ` → ${entry.creatorCode} ${creatorShare}` : ''}`);
+      }
     }
     res.sendStatus(200);
   } catch (e) { console.error('Stripe-Webhook-Fehler:', e.message); res.sendStatus(500); }
+});
+
+// Kündigung durch den Nutzer (Abo-Seite) — abgesichert über das signierte Web-Token (wtoken),
+// NICHT über eine ungeprüfte discordId (sonst könnte jeder fremde Abos kündigen).
+app.post('/me/cancel-subscription', express.json(), async (req, res) => {
+  let discordId;
+  try { const p = jwt.verify(String(req.body?.wtoken || ''), SESSION_SECRET); discordId = String(p.discordId || ''); }
+  catch { return res.status(401).json({ error: 'Bitte neu mit Discord einloggen.' }); }
+  if (!/^\d{5,25}$/.test(discordId)) return res.status(401).json({ error: 'Ungültige Sitzung.' });
+  const subs = readJson(SUBSCRIPTIONS_FILE, {});
+  const mine = Object.entries(subs).filter(([, m]) => String(m.discordId) === discordId);
+  if (!mine.length) return res.status(404).json({ error: 'Kein aktives Abo gefunden.' });
+  let cancelled = 0; let stripeOnly = true;
+  for (const [subId, m] of mine) {
+    try {
+      if (m.provider === 'stripe') { await stripeApi(`/v1/subscriptions/${subId}`, { cancel_at_period_end: 'true' }); }
+      else { stripeOnly = false; await paypalCancelSubscription(subId, 'Kündigung durch Nutzer'); }
+      cancelled++;
+    } catch (e) { console.error('Kündigung fehlgeschlagen:', subId, e.message); }
+  }
+  // Rollen-Entzug läuft über die Provider-Webhooks (Stripe: zum Periodenende; PayPal: sofort).
+  res.json({ ok: cancelled > 0, cancelled, atPeriodEnd: stripeOnly });
 });
 
 // ── Periodischer Abgleich: aktive PayPal-Abos ↔ Discord-Rollen ──────────────
