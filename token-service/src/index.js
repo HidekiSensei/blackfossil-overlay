@@ -173,6 +173,19 @@ function newState(meta = {}) {
 
 const app = express();
 
+// CORS für die von der Website (www.blackfossil.de) per fetch aufgerufenen Endpunkte
+// (Stripe-Checkout + Kündigung). Cross-Origin POST+JSON braucht Preflight-Antwort + Allow-Origin.
+app.use((req, res, next) => {
+  if (req.path.startsWith('/stripe/') || req.path === '/me/cancel-subscription') {
+    res.set('Access-Control-Allow-Origin', '*');
+    res.set('Access-Control-Allow-Methods', 'POST, OPTIONS');
+    res.set('Access-Control-Allow-Headers', 'Content-Type');
+    res.set('Access-Control-Max-Age', '86400');
+    if (req.method === 'OPTIONS') return res.sendStatus(204);
+  }
+  next();
+});
+
 // ── 1) Login starten ───────────────────────────────────────────────────────
 app.get('/auth/login', (_req, res) => {
   const state = newState();
