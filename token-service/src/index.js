@@ -3443,7 +3443,6 @@ app.post('/stripe/checkout', express.json(), async (req, res) => {
       'subscription_data[metadata][discordId]': discordId,
       'subscription_data[metadata][tier]': tier,
       'subscription_data[metadata][creatorCode]': creatorCode,
-      allow_promotion_codes: 'true',
       locale: 'de',
       success_url: 'https://www.blackfossil.de/abo?paid=1',
       cancel_url: 'https://www.blackfossil.de/abo?cancel=1',
