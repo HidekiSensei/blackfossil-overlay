@@ -84,10 +84,12 @@ const ALL_TIER_ROLES = ['Knochen', 'Bernstein', 'Obsidian'];
 // 🧪 Test-/Comp-Rolle: wer diese Discord-Rolle hat, bekommt SOFORT volle Obsidian-Perks
 // (umgeht den Go-Live-Stichtag — fürs Testen vor dem Release & für verschenkte Ränge).
 const FORCE_OBSIDIAN_ROLE = process.env.ABO_FORCE_OBSIDIAN_ROLE ?? 'Joe';
+// 🎨 Rolle, die den Skin-Creator gratis macht (sonst Free-Verhalten) — z. B. Beta-Tester.
+const SKIN_FREE_ROLE = process.env.SKIN_FREE_ROLE ?? 'Beta Tester';
 
 // ── Discord-Rollen-Check (Admin + Tier + Staff-Rang) ────────────────────────
 async function getDiscordStatus(discordId) {
-  const result = { admin: false, ingame: false, team: false, rank: 'Fossil', tier: 'Fossil', aboTier: null, aboForce: null, staff: null, ok: false };
+  const result = { admin: false, ingame: false, team: false, rank: 'Fossil', tier: 'Fossil', aboTier: null, aboForce: null, staff: null, betaTester: false, ok: false };
   if (!DISCORD_BOT_TOKEN || !DISCORD_GUILD_ID) return result;
   try {
     const headers = { Authorization: `Bot ${DISCORD_BOT_TOKEN}` };
@@ -114,6 +116,7 @@ async function getDiscordStatus(discordId) {
     result.admin = ADMIN_RANKS.includes(rank);
     result.ingame = INGAME_RANKS.includes(rank);
     result.team = TEAM_RANKS.includes(rank);
+    result.betaTester = myRoleNames.has(SKIN_FREE_ROLE);   // 🎨 Skin-Creator gratis
     result.ok = true;   // Discord-Auflösung erfolgreich (vs. Fallback bei Fehler)
     return result;
   } catch {
@@ -149,6 +152,12 @@ function liveAboForce(s) {
   const c = s && s.discordId ? _dStatusCache.get(s.discordId) : null;
   if (c && c.status && c.status.ok && Date.now() - c.at < 300000) return c.status.aboForce;
   return s ? s.aboForce : null;
+}
+// Live-Beta-Tester-Status (Cache, sonst JWT-Claim) — macht den Skin-Creator gratis.
+function liveBeta(s) {
+  const c = s && s.discordId ? _dStatusCache.get(s.discordId) : null;
+  if (c && c.status && c.status.ok && Date.now() - c.at < 300000) return !!c.status.betaTester;
+  return !!(s && s.betaTester);
 }
 
 // ── OAuth State (kurzlebig, in-memory) ─────────────────────────────────────
@@ -228,7 +237,7 @@ app.get('/auth/callback', async (req, res) => {
 
     // Steam-ID nachschlagen + Rang/Rechte (Rang braucht kein Steam)
     const steamId = lookupSteamId(user.id);
-    const { admin, ingame, team, rank, tier, aboTier, aboForce, staff } = await getDiscordStatus(user.id);
+    const { admin, ingame, team, rank, tier, aboTier, aboForce, staff, betaTester } = await getDiscordStatus(user.id);
 
     // Web-Login (Abo-Kauf): zurück zur Website mit Discord-ID. Steam ist hier
     // NICHT Pflicht — die Abo-Rolle wird über die Discord-ID vergeben.
@@ -251,7 +260,7 @@ app.get('/auth/callback', async (req, res) => {
 
     // App-Session ausstellen (30 Tage)
     const session = jwt.sign(
-      { steamId, discordId: user.id, name: user.global_name || user.username, admin, ingame, team, rank, tier, aboForce, staff, avatar: user.avatar ?? null },
+      { steamId, discordId: user.id, name: user.global_name || user.username, admin, ingame, team, rank, tier, aboForce, staff, betaTester, avatar: user.avatar ?? null },
       SESSION_SECRET,
       { expiresIn: '30d' }
     );
@@ -316,6 +325,8 @@ app.get('/token', async (req, res) => {
     // Effektiver Abo-Rang (Theme-Gating/Zombie/Skin). Team/Joe → Obsidian (aboForce, jetzt live);
     // sonst live aus subscriptions.json ab dem Go-Live-Stichtag.
     aboTier: aboForce || (aboPerksLive() ? aboTierFor(payload.discordId) : null),
+    // 🎨 Skin-Creator gratis? Ab Knochen ODER Beta-Tester-Rolle (sonst Free = zahlt Punkte).
+    skinFree: skinFreeFor(payload),
   });
 });
 
@@ -707,7 +718,7 @@ const cooldownMsFor  = (s) => ABO_PERKS.cooldownMin[aboPerkIdx(s)] * 60_000;
 const questLimitFor  = (s) => ABO_PERKS.questsPerDay[aboPerkIdx(s)];
 const marketLimitFor = (s) => ABO_PERKS.marketSlots[aboPerkIdx(s)];
 const skinSlotsFor   = (s) => ABO_PERKS.skinSlots[aboPerkIdx(s)];
-const skinFreeFor    = (s) => aboPerkIdx(s) >= 1;   // Skin-Creator ab Knochen kostenlos (live & gratis)
+const skinFreeFor    = (s) => aboPerkIdx(s) >= 1 || liveBeta(s);   // Skin-Creator gratis ab Knochen ODER mit Beta-Tester-Rolle
 // 💰 Skin-Punkt-Kosten — gelten NUR für Free (skinFreeFor=false). Ab Knochen alles gratis.
 const SKIN_COSTS = { color: 50, tplSave: 500, tplApply: 250 };   // pro geänderte Farbe · Vorlage speichern · Vorlage anwenden
 // Aktive öffentliche Markt-Listings eines Spielers (gemeinsamer Pool gegen marketLimitFor):

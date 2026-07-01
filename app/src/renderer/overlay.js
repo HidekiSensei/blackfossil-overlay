@@ -19,6 +19,7 @@ const BF_THEMES = {
 // ── Abo-Gating (Stichtag-aware aboTier kommt aus /token) ─────────────────────
 const ABO_ORDER = ['Fossil', 'Knochen', 'Bernstein', 'Obsidian'];
 let myAboTier = 'Fossil';
+let mySkinFree = false;   // 🎨 Skin-Creator gratis (ab Knochen ODER Beta-Tester-Rolle) — aus /token
 const myAboIdx = () => Math.max(0, ABO_ORDER.indexOf(myAboTier));
 const themeUnlocked = (key) => { const t = BF_THEMES[key]; return !!t && myAboIdx() >= (t.min || 0); };
 function setAboTier(tier) {
@@ -3203,7 +3204,7 @@ async function renderSkinEditor() {
   skinState = { skinVariation: sk.skinVariation || 0, patternIndex: sk.patternIndex || 0, themeIndex: sk.themeIndex || 0, gender: me.gender === 'Female' ? 'Female' : 'Male', colors: {} };
   for (const [k] of SKIN_GROUPS) skinState.colors[k] = (sk.colors && sk.colors[k]) ? sk.colors[k] : [0.5, 0.5, 0.5];
   setSkinBaseline();
-  skinPays = myAboIdx() < 1;                 // Free zahlt + nicht-live; ab Knochen live & gratis
+  skinPays = !mySkinFree;                    // Free zahlt + nicht-live; ab Knochen ODER Beta-Tester live & gratis
   const obsidian = myAboIdx() >= 3;
   const canGender = myAboIdx() >= 2;         // Geschlechtswechsel erst ab Bernstein
   const genderTip = canGender ? 'Geschlecht wechseln (Respawn)' : '🔒 Geschlechtswechsel ist ab Rang Bernstein freigeschaltet';
@@ -4439,6 +4440,7 @@ async function connectWithSession(session) {
     if (data.name) el('hudName').textContent = data.name;
     setTier(data.tier);
     setAboTier(data.aboTier);   // Stichtag-aware Abo-Rang fürs Perk-Gating (Themes/Color-Picker/Zombie)
+    mySkinFree = !!data.skinFree;   // 🎨 Skin-Creator gratis (ab Knochen ODER Beta-Tester)
     setStaff(data.staff);
     pollHud();
     if (!pollHud._timer) pollHud._timer = setInterval(pollHud, 6000);
