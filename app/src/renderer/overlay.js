@@ -2992,12 +2992,12 @@ function renderDinoInfo() {
       <div class="di-elder-col">
         <div class="sec-title">⏳ Elder-Fortschritt</div>
         <div id="di-elder" style="margin:6px 0"></div>
-        <div class="sec-title" style="margin-top:14px">🧬 Mutationen</div>
-        <div id="di-mut" style="margin:6px 0"></div>
       </div>
       <div class="di-vitals-col">
         <div class="sec-title">📊 Vitals &amp; Token <span style="color:var(--muted);font-weight:400;font-size:11px">— Token rechts neben dem Balken einlösen</span></div>
         ${rows}
+        <div class="sec-title" style="margin-top:16px">🧬 Mutationen</div>
+        <div id="di-mut" class="mut-tbl-wrap" style="margin:6px 0"></div>
       </div>
     </div>`;
   tokenConfirmOpen = false; // frisch öffnen → keine hängende Bestätigungs-Sperre
@@ -3125,16 +3125,62 @@ function vitalsHTML(card) {
   const v = [['Gesundheit', 'health', '#22c55e'], ['Blut', 'blood', '#dc2626'], ['Ausdauer', 'stamina', '#eab308'], ['Hunger', 'hunger', '#f97316'], ['Durst', 'thirst', '#3b82f6']];
   return v.map(([l, k, c]) => { const p = Math.round((card[k] || 0) * 100); return `<div style="margin:6px 0"><div style="display:flex;justify-content:space-between;font-size:11px"><span>${l}</span><span style="color:var(--muted)">${p}%</span></div><div class="stat-track"><div class="stat-fill" style="width:${p}%;background:${c}"></div></div></div>`; }).join('');
 }
-// Mutationen nach Generation gruppiert (Basis / Eltern / Elder) mit Zähler — statt flacher Liste.
+// Deutsche Kurzbeschreibungen der Mutationen — gespiegelt aus token-service staffConfig.MUTATIONS
+// (bei Änderungen dort hier mitziehen). value → [Anzeigename, Beschreibung].
+const MUT_INFO = {
+  'Accelerated Prey Drive': ['Accelerated Prey Drive', 'Mehr Schaden gegen Tiere mit niedriger Gesundheit (10%)'],
+  'Advanced Gestation': ['Advanced Gestation', 'Schnellere Ei-Gestation/Inkubation/Cooldown (50%)'],
+  'Barometric Sensitivity': ['Barometric Sensitivity', 'Vorwarnung vor Stürmen oder Dürren'],
+  'Cellular Regeneration': ['Cellular Regeneration', 'Regeneriert Gesundheit etwas schneller (15%)'],
+  'Congenital Hypoalgesia': ['Congenital Hypoalgesia', 'Weniger Schaden gegen größere Spezies (15%)'],
+  'Efficient Digestion': ['Efficient Digestion', 'Nahrungsverbrauch verlangsamt sich (20%)'],
+  'Enlarged Meniscus': ['Enlarged Meniscus', 'Fallschaden trifft zuerst die Ausdauer'],
+  'Epidermal Fibrosis': ['Epidermal Fibrosis', 'Erhöht Blutungsresistenz (15%)'],
+  'Featherweight': ['Featherweight', 'Fußabdrücke verblassen schneller (50%)'],
+  'Hematophagy': ['Hematophagy', 'Stellt beim Fressen etwas Durst wieder her (15%)'],
+  'Hemomania': ['Hemomania', 'Zusatzschaden gegen blutende Ziele (5%)'],
+  'Hydrodynamic': ['Hydrodynamic', 'Erhöhte Schwimmgeschwindigkeit (15%)'],
+  'Hydro-regenerative': ['Hydro-regenerative', 'Schnellere HP-Regen bei Regen (25%)'],
+  'Hypervigilance': ['Hypervigilance', 'Größerer Kamerawinkel beim Essen/Trinken, besseres Hören (50%)'],
+  'Increased Inspiratory Capacity': ['Increased Inspiratory Capacity', 'Erhöhte Sauerstoffkapazität (15%)'],
+  'Infrasound Communication': ['Infrasound Communication', 'Deutlich weniger Lärm beim Sprechen (50%)'],
+  'Nocturnal': ['Nocturnal', 'Schnellere Regeneration & höheres Tempo nachts (5%)'],
+  'Osteosclerosis': ['Osteosclerosis', 'Resistenz gegen Knochenbrüche (20%)'],
+  'Photosynthetic Regeneration': ['Photosynthetic Regeneration', 'Erhöhte Ausdauerregeneration am Tag (10%)'],
+  'Photosynthetic Tissue': ['Photosynthetic Tissue', 'Schnellere Regeneration & höheres Tempo am Tag (5%)'],
+  'Reabsorption': ['Reabsorption', 'Stellt etwas Wasser bei Regen/Schwimmen wieder her'],
+  'Social Behavior': ['Social Behavior', 'Erhöhte Gruppengröße'],
+  'Submerged Optical Retention': ['Submerged Optical Retention', 'Erhöhte Sichtweite unter Wasser (5%)'],
+  'Sustained Hydration': ['Sustained Hydration', 'Wasserverbrauch verlangsamt sich (20%)'],
+  'Truculency': ['Truculency', 'Tritte schütteln festgeklammerte Tiere eher ab (5%)'],
+  'Wader': ['Wader', 'Weniger behindert beim Waten durch flaches Wasser (25%)'],
+  'Xerocole Adaptation': ['Xerocole Adaptation', 'Erhält Wasser beim Verzehr von Pflanzen (15%)'],
+  'Tactile Endurance': ['Tactile Endurance', 'Verwandelt eingehenden Schaden in Ausdauer'],
+  'Traumatic Thrombosis': ['Traumatic Thrombosis', 'Verhindert Tod durch Blutverlust beim Ruhen'],
+  'Gastronomic Regeneration': ['Gastronomic Regeneration', 'Essen stellt etwas Gesundheit wieder her'],
+  'Hypermetabolic Inanition': ['Hypermetabolic Inanition', 'Je weniger Hunger, desto mehr Schaden'],
+  'Augmented Tapetum': ['★ Augmented Tapetum', 'Erhöhte Nachtsicht'],
+  'Cannibalistic': ['★ Cannibalistic', 'Eigene Spezies als bevorzugte Beute'],
+  'Enhanced Digestion': ['★ Enhanced Digestion', 'Verringert Abbaurate von Nährstoffen'],
+  'Heightened Ghrelin': ['★ Heightened Ghrelin', 'Erhöhte Kapazität für übermäßiges Essen'],
+  'Multichambered Lungs': ['★ Multichambered Lungs', 'Verringert Schwelle für Ausdauerregeneration'],
+  'Osteophagic': ['★ Osteophagic', 'Kann Knochen fressen, heilt Knochenbrüche schneller'],
+  'Prolific Reproduction': ['★ Prolific Reproduction', 'Junge wachsen schneller, brauchen weniger Nahrung'],
+  'Reinforced Tendons': ['★ Reinforced Tendons', 'Springen kostet weniger Ausdauer'],
+  'Reniculate Kidneys': ['★ Reniculate Kidneys', 'Kann Salzwasser trinken'],
+};
+function mutName(x) { const i = MUT_INFO[x]; return i ? i[0] : x; }
+function mutDesc(x) { const i = MUT_INFO[x]; return i ? i[1] : ''; }
+// Mutationen tabellarisch nach Generation (Basis / Eltern / Elder), je Zeile Name + deutsche Kurzbeschreibung.
 function mutHTML(m) {
-  const groups = [['🧬 Basis', m?.base || []], ['🧬 Eltern', m?.parent || []], ['👑 Elder', m?.elder || []]];
+  const groups = [['Basis', m?.base || []], ['Eltern', m?.parent || []], ['Elder', m?.elder || []]];
   const total = groups.reduce((n, [, arr]) => n + arr.filter(Boolean).length, 0);
   if (!total) return '<span style="color:var(--muted);font-size:12px">Keine Mutationen</span>';
-  return '<div class="mut-gens">' + groups.map(([label, arr]) => {
+  return '<div class="mut-tbl">' + groups.map(([label, arr]) => {
     const items = (arr || []).filter(Boolean);
     if (!items.length) return '';
-    return `<div class="mut-gen"><div class="mut-gen-h">${label}<span class="mut-gen-n">${items.length}</span></div>`
-      + `<div class="mut-gen-chips">${items.map((x) => `<span class="mut-chip">${escapeHtml(x)}</span>`).join('')}</div></div>`;
+    const rows = items.map((x) => `<div class="mut-row"><span class="mut-nm">${escapeHtml(mutName(x))}</span><span class="mut-dsc">${escapeHtml(mutDesc(x))}</span></div>`).join('');
+    return `<div class="mut-grp"><div class="mut-grp-h">${label}<span class="mut-grp-n">${items.length}</span></div>${rows}</div>`;
   }).join('') + '</div>';
 }
 function closeDinoDetail() { el('dinoDetail').style.display = 'none'; }

@@ -222,11 +222,13 @@
     .di-slay-btn:hover { box-shadow: 0 6px 18px -4px rgba(239,68,68,0.95), 0 0 16px rgba(239,68,68,0.5); }
     .di-entomb { background: linear-gradient(135deg, #78716c, #44403c); box-shadow: 0 4px 14px -4px rgba(120,113,108,0.75); }
     .di-entomb:hover { box-shadow: 0 6px 18px -4px rgba(120,113,108,0.9), 0 0 16px rgba(120,113,108,0.45); }
-    /* 🧬 Mutationen — nach Generation gruppiert */
-    .mut-gens { display: flex; flex-direction: column; gap: 9px; }
-    .mut-gen-h { display: flex; align-items: center; gap: 7px; font-size: 12px; font-weight: 700; color: #ddd; margin-bottom: 4px; }
-    .mut-gen-n { font-size: 10px; font-weight: 700; color: var(--accent); background: rgba(var(--accent-rgb),0.16); border-radius: 999px; padding: 1px 7px; }
-    .mut-gen-chips { display: flex; flex-wrap: wrap; gap: 5px; }
+    /* 🧬 Mutationen — tabellarisch nach Generation, je Zeile Name + deutsche Beschreibung */
+    .mut-tbl { display: flex; flex-direction: column; gap: 12px; }
+    .mut-grp-h { display: flex; align-items: center; gap: 7px; font-size: 11px; font-weight: 700; letter-spacing: .3px; text-transform: uppercase; color: var(--accent); margin-bottom: 3px; }
+    .mut-grp-n { font-size: 10px; font-weight: 700; color: var(--muted); background: rgba(var(--accent-rgb),0.14); border-radius: 999px; padding: 0 7px; }
+    .mut-row { display: grid; grid-template-columns: minmax(130px, 38%) 1fr; gap: 3px 14px; align-items: baseline; padding: 4px 0; border-top: 1px solid rgba(255,255,255,0.06); }
+    .mut-row .mut-nm { font-size: 12px; font-weight: 600; color: #e6e6e6; }
+    .mut-row .mut-dsc { font-size: 11px; color: var(--muted); line-height: 1.4; }
     /* ⏳ Prime-Fortschritt */
     .di-prime-head { display: flex; align-items: center; justify-content: space-between; font-size: 12px; font-weight: 700; margin-bottom: 5px; }
     .di-prime-count { font-size: 11px; font-weight: 600; }
