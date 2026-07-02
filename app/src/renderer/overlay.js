@@ -95,6 +95,7 @@ function applyFx() {
   document.body.classList.toggle('bf-noblitz', fxOff);
   const b = document.getElementById('fxToggleBtn');
   if (b) { b.textContent = fxOff ? '⚡ Effekte: Aus' : '⚡ Effekte: An'; b.classList.toggle('secondary', fxOff); }
+  if (typeof updateLowSpecBtn === 'function') updateLowSpecBtn();
 }
 function toggleFx() { fxOff = !fxOff; localStorage.setItem('bf-noblitz', fxOff ? '1' : '0'); applyFx(); }
 document.addEventListener('DOMContentLoaded', applyFx);
@@ -107,6 +108,34 @@ function applyMiniToggle() {
   applyServerState();   // Sichtbarkeit neu setzen (berücksichtigt onServer + miniHidden)
 }
 function toggleMinimap() { miniHidden = !miniHidden; localStorage.setItem('bf-hide-mini', miniHidden ? '1' : '0'); applyMiniToggle(); }
+
+// ── Weichzeichner (Blur) an/aus — größter GPU-Kostenpunkt, wichtigster Low-Spec-Schalter ─────
+let blurOff = localStorage.getItem('bf-noblur') === '1';
+function applyBlur() {
+  document.body.classList.toggle('bf-noblur', blurOff);
+  const b = document.getElementById('blurToggleBtn');
+  if (b) { b.textContent = blurOff ? '🌫️ Weichzeichner: Aus' : '🌫️ Weichzeichner: An'; b.classList.toggle('secondary', blurOff); }
+  updateLowSpecBtn();
+}
+function toggleBlur() { blurOff = !blurOff; localStorage.setItem('bf-noblur', blurOff ? '1' : '0'); applyBlur(); }
+document.addEventListener('DOMContentLoaded', applyBlur);
+
+// ── Master „Low-Spec-Modus" — schaltet Blur + Effekte in einem Rutsch ───────────────────────
+function lowSpecActive() { return blurOff && fxOff; }
+function updateLowSpecBtn() {
+  const b = document.getElementById('lowSpecBtn');
+  if (!b) return;
+  const on = lowSpecActive();
+  b.textContent = on ? '⚡ Low-Spec-Modus: AN' : '⚡ Low-Spec-Modus aktivieren';
+  b.classList.toggle('secondary', !on);
+}
+function toggleLowSpec() {
+  const on = !lowSpecActive();   // war aus → alles aus; war an → alles wieder an
+  blurOff = on; fxOff = on;
+  localStorage.setItem('bf-noblur', on ? '1' : '0');
+  localStorage.setItem('bf-noblitz', on ? '1' : '0');
+  applyBlur(); applyFx();
+}
 
 // ── Karten-/Positions-State ─────────────────────────────────────────────────
 let players = [];
@@ -4768,6 +4797,10 @@ function setupEditMode() {
   const fxBtn = el('fxToggleBtn'); if (fxBtn) fxBtn.onclick = toggleFx;
   applyFx();
   const miniBtn = el('miniToggleBtn'); if (miniBtn) miniBtn.onclick = toggleMinimap;
+  const blurBtn = el('blurToggleBtn'); if (blurBtn) blurBtn.onclick = toggleBlur;
+  applyBlur();
+  const lsBtn = el('lowSpecBtn'); if (lsBtn) lsBtn.onclick = toggleLowSpec;
+  updateLowSpecBtn();
   applyMiniToggle();
   renderThemePicker();
   syncLightningFrames();   // Minimap-Blitzrahmen direkt anzeigen

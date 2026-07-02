@@ -45,10 +45,28 @@
     body:not(.dock-on) .stat-fill::before,
     body:not(.dock-on) .stat-fill::after,
     body:not(.dock-on) .elder-glow,
-    body:not(.dock-on) .sec-title {
+    body:not(.dock-on) .sec-title,
+    body:not(.dock-on) #hudHeart svg {   /* Live-HP-Herz: Herzschlag beim Spielen stoppen (dauernder Repaint) */
       animation: none !important;
     }
     body:not(.dock-on) .stat-fill { transition: none !important; }
+    /* Drop-Shadow-Filter am Herz ist beim Spielen teuer (weicher Glow, neu berechnet bei jedem
+       Repaint) — im Idle auf einen billigen statischen Schatten reduzieren. HP-Farbe/Füllung bleibt. */
+    body:not(.dock-on) #hudHeart svg { filter: drop-shadow(0 1px 2px rgba(0,0,0,0.6)) !important; }
+    /* Minimap: drehender Ring + Glow-Puls beim Spielen aus (Dauer-Repaint). Karte bleibt sichtbar. */
+    body:not(.dock-on) #minimapRing { display: none !important; }
+    body:not(.dock-on) #minimap { animation: none !important; }
+
+    /* ── Low-Spec-Schalter (Einstellungen) — erzwingen Effekte AUS, auch bei offenem Dock ──────
+       bf-noblitz (Animationen) existiert bereits weiter unten; hier NEU der Weichzeichner (Blur),
+       der größte GPU-Kostenpunkt: */
+    body.bf-noblur #hud, body.bf-noblur .toast, body.bf-noblur #micIndicator,
+    body.bf-noblur #zoneBox, body.bf-noblur #rangeBox, body.bf-noblur #settings,
+    body.bf-noblur #adminPanel, body.bf-noblur .feature-panel, body.bf-noblur #zonePanel,
+    body.bf-noblur #calibPanel, body.bf-noblur #dinoDetail .box, body.bf-noblur #bigMap,
+    body.bf-noblur .map-panel {
+      backdrop-filter: none !important; -webkit-backdrop-filter: none !important;
+    }
 
     /* Top-HUD */
     #hud { position: absolute; top: 14px; left: 50%; transform: translateX(-50%); display: flex; align-items: center; gap: 12px;
@@ -898,11 +916,14 @@
           <div id="themePicker" style="display:flex;gap:8px;flex-wrap:wrap;margin-top:4px"></div>
         </div>
         <div class="set-block">
-          <div class="set-label">⚡ Effekte</div>
-          <button id="fxToggleBtn" style="width:100%">⚡ Effekte: An</button>
-          <div class="set-label" style="margin-top:10px">🗺️ Minimap</div>
-          <button id="miniToggleBtn" style="width:100%">🗺️ Minimap: An</button>
-          <div style="font-size:11px;color:var(--muted);margin-top:6px">Schaltet alle Blitze/Leuchteffekte aus (z. B. für schwächere PCs).</div>
+          <div class="set-label">⚡ Low-Spec / Performance</div>
+          <button id="lowSpecBtn" style="width:100%">⚡ Low-Spec-Modus aktivieren</button>
+          <div style="font-size:11px;color:var(--muted);margin:6px 0 12px">Schaltet Weichzeichner + alle Effekte auf einmal aus — für schwächere PCs / mehr FPS.</div>
+          <div class="set-label">Einzeln einstellen</div>
+          <button id="blurToggleBtn" style="width:100%;margin-top:4px">🌫️ Weichzeichner: An</button>
+          <button id="fxToggleBtn" style="width:100%;margin-top:6px">⚡ Effekte: An</button>
+          <button id="miniToggleBtn" style="width:100%;margin-top:6px">🗺️ Minimap: An</button>
+          <div style="font-size:11px;color:var(--muted);margin-top:8px">🌫️ Weichzeichner (Blur) = größter FPS-Kostenpunkt. ⚡ Effekte = Animationen/Leuchten. Beim <em>Spielen</em> (Overlay-Dock zu) sind viele Effekte ohnehin automatisch aus.</div>
         </div>
       </div>
 
