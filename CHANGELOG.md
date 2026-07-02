@@ -1,5 +1,19 @@
 # Changelog
 
+## v1.2.3 — Dino-Info & Karte 🦖
+
+### 🧬 Dino-Info
+- **Mutationen neu dargestellt** — übersichtlich nach **Basis / Eltern / Elder** gruppiert und tabellarisch mit **deutscher Kurzbeschreibung** je Mutation (was sie bewirkt). Auch im Garage-/Markt-Detail.
+- **Prime-Fortschritt** — neuer Fortschrittsbalken (x/5 Bedingungen), klarere Bezeichnungen, „auto"-Markierung für automatische Bedingungen und kleine Zwischenschritt-Hinweise.
+- **⚰️ Entomben-Button** — deinen aktuellen Dino direkt aus der Dino-Info entomben (neben „💀 Slay").
+
+### 🔊 Voice
+- **Sprecher-Anzeige in Rollenfarbe** — wer gerade in deiner Nähe spricht, wird in seiner **Discord-Rollenfarbe** angezeigt. Spender, Abonnenten und Team sind so auf einen Blick erkennbar.
+
+### 🗺️ Karte
+- **Wegpunkt anpassbar** — Farbe & Größe des Wegpunkt-Markers frei einstellbar (Einstellungen → 🗺️ Karten-Marker).
+- **Spieler-Pfeil** — eigene Position/Blickrichtung bleibt beim Reinzoomen gut sichtbar; Pfeil-Farbe wählbar.
+
 ## v1.2.2 — Performance ⚡
 
 ### ⚡ Performance / FPS
