@@ -3468,6 +3468,18 @@ async function stripeGet(path) {
   if (!r.ok) throw new Error(d.error?.message || `Stripe HTTP ${r.status}`);
   return d;
 }
+// Stripe-Bearbeitungsgebühr einer Rechnung (API-Version 2025+/dahlia): invoice.charge existiert nicht
+// mehr → Weg ist invoice.payments[0].payment.payment_intent → latest_charge → balance_transaction.fee.
+async function stripeInvoiceFee(inv) {
+  try {
+    let pay = inv.payments?.data?.[0];
+    if (!pay) { const full = await stripeGet(`/v1/invoices/${inv.id}?expand[]=payments`); pay = full.payments?.data?.[0]; }
+    const piId = pay?.payment?.payment_intent;
+    if (!piId) return 0;
+    const pi = await stripeGet(`/v1/payment_intents/${piId}?expand[]=latest_charge.balance_transaction`);
+    return round2((pi.latest_charge?.balance_transaction?.fee ?? 0) / 100);
+  } catch { return 0; }
+}
 // Stripe-Webhook-Signatur prüfen: Header `t=…,v1=…`, HMAC-SHA256 über `${t}.${rawBody}`.
 function verifyStripeSig(rawBody, sigHeader) {
   try {
@@ -3551,15 +3563,18 @@ app.post('/stripe/webhook', express.raw({ type: '*/*', limit: '1mb' }), async (r
     } else if (event.type === 'invoice.paid') {
       // Jede (auch wiederkehrende) Zahlung → Einnahmen-Ledger (spiegelt PayPals PAYMENT.SALE.COMPLETED).
       const inv = event.data.object;
-      const subId = inv.subscription, txId = inv.id;
+      // Stripe-API 2025+/dahlia: invoice.subscription & invoice.charge entfernt → jetzt unter invoice.parent.subscription_details.
+      const sd = inv.parent?.subscription_details;
+      const subId = inv.subscription || sd?.subscription, txId = inv.id;
       if (subId && txId) {
         let meta = readJson(SUBSCRIPTIONS_FILE, {})[subId] || {};
-        if (!meta.discordId) {   // Ereignis-Reihenfolge nicht garantiert → notfalls aus der Subscription lesen
-          try { const sub = await stripeGet(`/v1/subscriptions/${subId}`); meta = { discordId: sub.metadata?.discordId, tier: sub.metadata?.tier, creatorCode: sub.metadata?.creatorCode }; } catch {}
+        if (!meta.discordId) {   // Reihenfolge nicht garantiert → aus Invoice-Metadaten, sonst aus der Subscription lesen
+          const pm = sd?.metadata || {};
+          if (pm.discordId) meta = { discordId: pm.discordId, tier: pm.tier, creatorCode: pm.creatorCode };
+          else { try { const sub = await stripeGet(`/v1/subscriptions/${subId}`); meta = { discordId: sub.metadata?.discordId, tier: sub.metadata?.tier, creatorCode: sub.metadata?.creatorCode }; } catch {} }
         }
         const gross = round2((inv.amount_paid ?? inv.total ?? 0) / 100);
-        let fee = 0;
-        try { if (inv.charge) { const ch = await stripeGet(`/v1/charges/${inv.charge}?expand[]=balance_transaction`); fee = round2((ch.balance_transaction?.fee ?? 0) / 100); } } catch {}
+        const fee = await stripeInvoiceFee(inv);
         const net = round2(gross - fee);
         const creator = creatorForCode(meta.creatorCode);
         const creatorShare = creator ? round2(net * creator.share) : 0;
