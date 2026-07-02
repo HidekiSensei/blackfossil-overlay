@@ -412,7 +412,7 @@ async function pollHud() {
   } catch {}
 }
 
-let config = { tokenBase: 'https://voice.blackfossil.de', hotkeys: {} };
+let config = { tokenBase: 'https://api.blackfossil.de', hotkeys: {} };
 let room = null;
 let micEnabled = false;
 let settingsOpen = false;

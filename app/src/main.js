@@ -227,7 +227,9 @@ function startGameWatch() {
   gameWatchTimer = setInterval(tick, 2000);
 }
 
-const TOKEN_BASE = 'https://voice.blackfossil.de';
+// Cutover: Overlay spricht jetzt das Go-Backend an. Unmigrierte Pfade proxyt das Backend
+// transparent zum token-service weiter (Live-Daten), Login/Voice/Positions bedient es nativ.
+const TOKEN_BASE = 'https://api.blackfossil.de';
 const SESSION_FILE = path.join(app.getPath('userData'), 'session.json');
 const HOTKEYS_FILE = path.join(app.getPath('userData'), 'hotkeys.json');
 
