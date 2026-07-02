@@ -2973,15 +2973,15 @@ function renderDinoInfo() {
     </div>`).join('');
   el('dinoInfo').classList.add('di-wide');
   el('dinoInfo').innerHTML = `
-    <div class="di-actions">
-      <button id="diEntombBtn" class="di-btn di-entomb" title="Dino eingraben (Entomb)">⚰️ Eingraben</button>
-      <button id="diSlayBtn" class="di-btn di-slay-btn" title="Aktuellen Dino töten">💀 Slay</button>
-    </div>
     <div class="di-topbar">
       <div class="di-imgwrap"><img id="di-img" alt="" onerror="this.style.visibility='hidden'"></div>
       <div style="flex:1;min-width:0">
         <div class="di-head"><span class="di-dino" id="di-dino">Dino</span><span class="di-sub" id="di-grow"></span></div>
         <div class="di-sub" id="di-name"></div>
+        <div class="di-actions">
+          <button id="diEntombBtn" class="di-btn di-entomb" title="Dino eingraben (Entomb)">⚰️ Eingraben</button>
+          <button id="diSlayBtn" class="di-btn di-slay-btn" title="Aktuellen Dino töten">💀 Slay</button>
+        </div>
         <div style="margin-top:10px">
           <div class="stat-top"><span>🌱 Wachstum</span><span class="val" id="di-grow-v">—</span></div>
           <div class="stat-track" style="height:11px"><div class="stat-fill" id="di-grow-f" style="background:#84cc16"></div></div>
