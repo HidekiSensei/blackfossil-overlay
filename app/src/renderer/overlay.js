@@ -417,6 +417,7 @@ let room = null;
 let micEnabled = false;
 let settingsOpen = false;
 let deafened = false;                                   // eingehenden Ton stummschalten
+let amDead = false;                                     // tot / kein Dino → Voice komplett aus (weder hören noch senden)
 let micDeviceId = localStorage.getItem('bf-mic-dev') || '';   // gewähltes Mikrofon
 let spkDeviceId = localStorage.getItem('bf-spk-dev') || '';   // gewähltes Ausgabegerät
 let aiSpawnMode = false;                                // Karten-Klick-Spawn aktiv
@@ -431,6 +432,7 @@ async function init() {
   el('voiceWarn').onclick = () => toggleConnect();
   el('voiceSearch').oninput = (e) => { voiceSearch = e.target.value; renderVoiceUsers(); };
   el('micBtn').onclick = () => toggleMic();
+  { const mb = el('muteAllBtn'); if (mb) mb.onclick = () => toggleMuteAll(); }
   setMicBtn();
   el('logoutBtn').onclick = () => window.bf.logout();
   el('closeBtn').onclick = () => toggleSettings(false);
@@ -687,6 +689,15 @@ function startPositionPolling() {
         const data = await res.json();
         players = data.players || [];
         me = players.find((p) => p.isYou) || null;
+        // Tot / kein Dino → Voice komplett aus (weder hören noch senden). Wechsel → Mic umschalten + Hinweis.
+        const wasDead = amDead;
+        amDead = !me || !!me.isDead;
+        if (amDead !== wasDead) {
+          if (room) applyMic();                              // sofort aufhören/wieder senden
+          if (amDead && voiceConnected) showToast('💀 Tot — Voice ist stumm bis zum Respawn.', 'warn');
+          else if (!amDead && voiceConnected) showToast('🎙️ Wieder im Spiel — Voice aktiv.', 'success');
+          refreshMicState();
+        }
         // Health läuft separat über pollVitals() (0,5s, Combat-Stat) — nicht über Positionen
         computeMoveAngles();   // Pfeil-Richtung aus tatsächlicher Karten-Bewegung
         minimapDirty = true;   // neue Positionen → Minimap neu zeichnen
@@ -723,7 +734,7 @@ function updateProximityVolumes() {
     // Pro-User-Grundlautstärke + Master-Regler obendrauf. Bei Deafen alles auf 0.
     // Dank webAudioMix:true setzt setVolume einen GainNode → Werte >1 wirken wirklich.
     const g = userGain[p.identity] ?? 1;
-    const factor = deafened ? 0 : masterGain;
+    const factor = (deafened || amDead) ? 0 : masterGain;   // tot → du hörst niemanden
     try { p.setVolume(vol * g * factor); } catch {}
   }
 }
@@ -743,7 +754,7 @@ function audibleVol(steamId) {
     vol = Math.max(0, Math.min(1, 2 * (1 - d / Rw)));
   }
   const g = userGain[steamId] ?? 1;
-  const factor = deafened ? 0 : masterGain;
+  const factor = (deafened || amDead) ? 0 : masterGain;
   return vol * g * factor;
 }
 function updateSpeakingBox(speakers) {
@@ -4512,6 +4523,7 @@ function toggleMap(force) {
 // Soll das Mikro gerade senden? (abhängig vom Voice-Modus)
 function isMicOn() {
   if (!room) return false;
+  if (amDead) return false;                                // tot → niemand hört dich
   if (voiceMode === 'ptt') return pttHeld;                 // nur während Taste gehalten
   if (voiceMode === 'ptm') return micEnabled && !ptmHeld;  // an, außer Taste gehalten
   return micEnabled;                                       // offenes Mikro: an solange aktiviert
@@ -4684,6 +4696,20 @@ function setMicBtn() {
   const b = el('micBtn'); if (!b) return;
   b.textContent = micEnabled ? '🎤 Mikro an' : '🔇 Mikro aus';
   b.classList.toggle('secondary', !micEnabled);
+  setMuteAllBtn();
+}
+function setDeafenBtn() {
+  const b = el('deafenBtn'); if (!b) return;
+  // „Ton an" leuchtet, „Ton aus" ist gedimmt (secondary) — synchron zum Mikro-Button.
+  b.textContent = deafened ? '🔇 Ton aus' : '🔊 Ton an';
+  b.classList.toggle('secondary', deafened);
+  setMuteAllBtn();
+}
+function setMuteAllBtn() {
+  const b = el('muteAllBtn'); if (!b) return;
+  const both = !micEnabled && deafened;          // Ton UND Mikro stumm?
+  b.textContent = both ? '🔔 Stumm aus' : '🔕 Alles stumm';
+  b.classList.toggle('secondary', !both);        // hervorheben, wenn aktiv
 }
 
 async function toggleMic() {
@@ -4698,9 +4724,17 @@ async function toggleMic() {
 function toggleDeafen() {
   deafened = !deafened;
   updateProximityVolumes();   // setzt alle Remote-GainNodes auf 0 bzw. zurück
-  const b = el('deafenBtn');
-  // „Ton an" leuchtet, „Ton aus" ist gedimmt (secondary) — synchron zum Mikro-Button.
-  if (b) { b.textContent = deafened ? '🔇 Ton aus' : '🔊 Ton an'; b.classList.toggle('secondary', deafened); }
+  setDeafenBtn();
+}
+
+// Ein Klick = Ton UND Mikro stumm (bzw. beides wieder an).
+async function toggleMuteAll() {
+  const both = !micEnabled && deafened;
+  if (both) { micEnabled = true; deafened = false; }
+  else { micEnabled = false; deafened = true; }
+  setMicBtn(); setDeafenBtn();                    // aktualisiert via setMuteAllBtn auch den Kombi-Button
+  updateProximityVolumes();
+  if (room) await applyMic();
 }
 
 // ── Audio-Geräteauswahl ─────────────────────────────────────────────────────
