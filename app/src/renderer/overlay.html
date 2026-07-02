@@ -214,12 +214,35 @@
     /* F5 Dino-Info: breit, Elder links + Vitals (mit Token rechts neben Balken) */
     /* ID-Selektor, damit er die ältere #dinoInfo-Breite überschreibt */
     #dinoInfo.di-wide { width: clamp(720px, 92vw, 1180px); max-width: 96vw; }
-    /* Slay-Button oben rechts im Dino-Info */
+    /* Aktions-Buttons oben rechts im Dino-Info (Entomb + Slay) */
     #dinoInfo { position: relative; }
-    .di-slay { position: absolute; top: 18px; right: 20px; width: auto; flex: none; z-index: 5;
-      padding: 7px 14px; font-size: 13px; font-weight: 700;
-      background: linear-gradient(135deg, #ef4444, #b91c1c); box-shadow: 0 4px 14px -4px rgba(239,68,68,0.8); }
-    .di-slay:hover { box-shadow: 0 6px 18px -4px rgba(239,68,68,0.95), 0 0 16px rgba(239,68,68,0.5); }
+    .di-actions { position: absolute; top: 18px; right: 20px; display: flex; gap: 8px; z-index: 5; }
+    .di-btn { width: auto; flex: none; padding: 7px 14px; font-size: 13px; font-weight: 700; }
+    .di-slay-btn { background: linear-gradient(135deg, #ef4444, #b91c1c); box-shadow: 0 4px 14px -4px rgba(239,68,68,0.8); }
+    .di-slay-btn:hover { box-shadow: 0 6px 18px -4px rgba(239,68,68,0.95), 0 0 16px rgba(239,68,68,0.5); }
+    .di-entomb { background: linear-gradient(135deg, #78716c, #44403c); box-shadow: 0 4px 14px -4px rgba(120,113,108,0.75); }
+    .di-entomb:hover { box-shadow: 0 6px 18px -4px rgba(120,113,108,0.9), 0 0 16px rgba(120,113,108,0.45); }
+    /* 🧬 Mutationen — nach Generation gruppiert */
+    .mut-gens { display: flex; flex-direction: column; gap: 9px; }
+    .mut-gen-h { display: flex; align-items: center; gap: 7px; font-size: 12px; font-weight: 700; color: #ddd; margin-bottom: 4px; }
+    .mut-gen-n { font-size: 10px; font-weight: 700; color: var(--accent); background: rgba(var(--accent-rgb),0.16); border-radius: 999px; padding: 1px 7px; }
+    .mut-gen-chips { display: flex; flex-wrap: wrap; gap: 5px; }
+    /* ⏳ Prime-Fortschritt */
+    .di-prime-head { display: flex; align-items: center; justify-content: space-between; font-size: 12px; font-weight: 700; margin-bottom: 5px; }
+    .di-prime-count { font-size: 11px; font-weight: 600; }
+    .di-prime-bar { height: 7px; border-radius: 999px; background: rgba(255,255,255,0.08); overflow: hidden; margin-bottom: 9px; }
+    .di-prime-fill { height: 100%; border-radius: 999px; transition: width .4s ease; }
+    .di-prime-list { display: flex; flex-direction: column; gap: 1px; }
+    .di-prime-row { display: flex; align-items: baseline; gap: 7px; font-size: 12px; padding: 2px 0; opacity: 0.55; }
+    .di-prime-row.is-done { opacity: 1; }
+    .di-prime-ic { flex: none; }
+    .di-prime-lbl { line-height: 1.3; }
+    .di-prime-auto { font-size: 9px; font-weight: 700; color: var(--muted); border: 1px solid var(--border); border-radius: 999px; padding: 0 5px; margin-left: 6px; vertical-align: middle; }
+    .di-prime-hint { display: block; font-size: 10px; color: var(--muted); }
+    /* Karten-Marker-Regler in den Einstellungen */
+    .mk-set-row { display: flex; align-items: center; justify-content: space-between; gap: 10px; font-size: 12px; margin: 7px 0; }
+    .mk-set-row input[type="color"] { width: 44px; height: 26px; padding: 0; border: 1px solid var(--border); border-radius: 6px; background: none; cursor: pointer; }
+    .mk-set-row input[type="range"] { flex: 1; max-width: 150px; }
     /* Generisches Bestätigungs-Popup */
     .bf-confirm-ov { position: fixed; inset: 0; z-index: 100020; display: flex; align-items: center; justify-content: center;
       background: rgba(5,3,12,0.62); backdrop-filter: blur(3px); -webkit-backdrop-filter: blur(3px); animation: bfPop .14s ease-out; }
@@ -924,6 +947,14 @@
           <button id="fxToggleBtn" style="width:100%;margin-top:6px">⚡ Effekte: An</button>
           <button id="miniToggleBtn" style="width:100%;margin-top:6px">🗺️ Minimap: An</button>
           <div style="font-size:11px;color:var(--muted);margin-top:8px">🌫️ Weichzeichner (Blur) = größter FPS-Kostenpunkt. ⚡ Effekte = Animationen/Leuchten. Beim <em>Spielen</em> (Overlay-Dock zu) sind viele Effekte ohnehin automatisch aus.</div>
+        </div>
+        <div class="set-block">
+          <div class="set-label">🗺️ Karten-Marker</div>
+          <div class="mk-set-row"><span>🚩 Wegpunkt-Farbe</span><input type="color" id="wpColorInp" value="#fbbf24"></div>
+          <div class="mk-set-row"><span>🚩 Wegpunkt-Größe</span><input type="range" id="wpSizeInp" min="0.6" max="3" step="0.1" value="1" style="accent-color:var(--accent)"></div>
+          <div class="mk-set-row"><span>📍 Spieler-Pfeil-Farbe</span><input type="color" id="selfColorInp" value="#00e5ff"></div>
+          <button id="markerResetBtn" class="secondary" style="width:100%;margin-top:8px">↩️ Marker zurücksetzen</button>
+          <div style="font-size:11px;color:var(--muted);margin-top:8px">Farbe &amp; Größe des Wegpunkts sowie die Farbe deines eigenen Positions-Pfeils. Bleibt gespeichert.</div>
         </div>
       </div>
 

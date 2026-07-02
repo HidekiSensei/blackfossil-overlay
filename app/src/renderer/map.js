@@ -350,8 +350,21 @@ export function groupColorFor(id) {
   return GROUP_COLORS[h % GROUP_COLORS.length];
 }
 // Eigene Position: auffällige, klar sichtbare Farbe (Kontrast zu Karte & Theme)
-const SELF_COLOR = '#00e5ff';
-// Kleiner Pfeil, der in Blick-/Bewegungsrichtung zeigt
+let SELF_COLOR = '#00e5ff';
+// Wegpunkt-Stil (in den Einstellungen anpassbar): Farbe + Größen-Multiplikator.
+let WP_COLOR = '#fbbf24';
+let WP_SIZE = 1;
+// Eigener Pfeil zusätzlich vergrößerbar (Standard 1).
+let SELF_SIZE = 1;
+// Von der Renderer-Seite gesetzt (localStorage) — überschreibt die Defaults.
+export function setMarkerStyle({ selfColor, selfSize, wpColor, wpSize } = {}) {
+  if (selfColor) SELF_COLOR = selfColor;
+  if (wpColor) WP_COLOR = wpColor;
+  if (typeof wpSize === 'number' && wpSize > 0) WP_SIZE = wpSize;
+  if (typeof selfSize === 'number' && selfSize > 0) SELF_SIZE = selfSize;
+}
+// Kleiner Pfeil, der in Blick-/Bewegungsrichtung zeigt.
+// Outline skaliert mit der Pfeilgröße (nicht fix), damit sie beim Reinzoomen nicht „verklumpt".
 function drawArrow(ctx, px, py, angle, size, color) {
   ctx.save();
   ctx.translate(px, py); ctx.rotate(angle);
@@ -362,7 +375,7 @@ function drawArrow(ctx, px, py, angle, size, color) {
   ctx.lineTo(-size * 0.72, -size * 0.66);
   ctx.closePath();
   ctx.fillStyle = color; ctx.fill();
-  ctx.lineWidth = 1.4; ctx.strokeStyle = 'rgba(0,0,0,0.8)'; ctx.stroke();
+  ctx.lineWidth = Math.max(0.5, size * 0.17); ctx.strokeStyle = 'rgba(0,0,0,0.8)'; ctx.stroke();
   ctx.restore();
 }
 // Heading → Karten-Winkel: den Blick-Vektor durch DIESELBE Welt→Karte-Projektion
@@ -387,15 +400,26 @@ function drawGroupMember(ctx, px, py, p, scale) {
   }
 }
 function drawPlayer(ctx, px, py, p, scale) {
-  ctx.save(); ctx.shadowColor = SELF_COLOR; ctx.shadowBlur = 8 * scale;   // Glow → klar erkennbar
-  drawArrow(ctx, px, py, arrowAngle(p), 8.5 * scale, SELF_COLOR);
+  const sz = 9 * SELF_SIZE * scale;
+  ctx.save(); ctx.shadowColor = SELF_COLOR; ctx.shadowBlur = 7 * scale;   // Glow → klar erkennbar
+  // Basis-Punkt unter dem Pfeil → immer als eigene Position erkennbar, auch bei viel Zoom.
+  ctx.beginPath(); ctx.arc(px, py, sz * 0.34, 0, Math.PI * 2);
+  ctx.fillStyle = SELF_COLOR; ctx.fill();
+  ctx.lineWidth = Math.max(0.5, sz * 0.12); ctx.strokeStyle = 'rgba(0,0,0,0.8)'; ctx.stroke();
+  ctx.shadowBlur = 0;
+  drawArrow(ctx, px, py, arrowAngle(p), sz, SELF_COLOR);
   ctx.restore();
 }
 
+// Wegpunkt: Farbe + Größe aus den Einstellungen (WP_COLOR/WP_SIZE). Rauten-Pin mit Outline.
 function drawWaypoint(ctx, px, py, scale = 1) {
-  ctx.fillStyle = '#fbbf24';
-  ctx.beginPath(); ctx.moveTo(px, py-8*scale); ctx.lineTo(px+5*scale, py); ctx.lineTo(px, py+8*scale); ctx.lineTo(px-5*scale, py); ctx.closePath();
-  ctx.fill(); ctx.strokeStyle = 'rgba(0,0,0,0.5)'; ctx.lineWidth = 1 * scale; ctx.stroke();
+  const s = scale * WP_SIZE;
+  ctx.save();
+  ctx.shadowColor = WP_COLOR; ctx.shadowBlur = 6 * scale;
+  ctx.fillStyle = WP_COLOR;
+  ctx.beginPath(); ctx.moveTo(px, py-8*s); ctx.lineTo(px+5*s, py); ctx.lineTo(px, py+8*s); ctx.lineTo(px-5*s, py); ctx.closePath();
+  ctx.fill(); ctx.strokeStyle = 'rgba(0,0,0,0.6)'; ctx.lineWidth = Math.max(0.5, 1.2 * s); ctx.stroke();
+  ctx.restore();
 }
 
 function drawTeleport(ctx, px, py, number, highlight, scale = 1) {

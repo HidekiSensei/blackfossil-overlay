@@ -386,10 +386,12 @@ app.get('/positions', async (req, res) => {
     const ov = readOv();
     if (enforceGroupDiet(ov, gamePlayers)) writeOv(ov);   // Diät-Wechsel → Auto-Kick
     const ovMembers = new Set(ovMembersOf(ov, payload.steamId));
+    const colorMap = roleColorMapCached();   // steamId → Discord-Rollenfarbe (nicht-blockierend)
     const players = gamePlayers.map((p) => ({
       steamId: p.steamId,
       name: p.playerName,
       dino: p.dinoClass,
+      roleColor: colorMap[p.steamId] ?? null,
       x: p.location?.x ?? 0,
       y: p.location?.y ?? 0,
       z: p.location?.z ?? 0,
@@ -507,6 +509,7 @@ app.get('/me', async (req, res) => {
       elderStacks: p.elderReplicationStacks ?? 0,
       isBleeding: !!p.isBleeding,
       primes: Array.from({ length: 10 }, (_, i) => !!p[`primeCondition${i + 1}`]),
+      mutations: p.mutations ?? { base: [], parent: [], elder: [] },
       skin: {
         skinVariation: p.skinVariation ?? 0,
         patternIndex: p.patternIndex ?? 0,
@@ -987,6 +990,47 @@ async function guildMembers() {
   _membersCache = { at: Date.now(), list };
   return list;
 }
+let _rolesCache = { at: 0, list: null };
+async function guildRolesCached() {
+  if (_rolesCache.list && Date.now() - _rolesCache.at < 60_000) return _rolesCache.list;
+  const list = await discordApi(`/guilds/${DISCORD_GUILD_ID}/roles`);
+  _rolesCache = { at: Date.now(), list };
+  return list;
+}
+
+// ── Rollenfarben pro Spieler (für die Sprecher-Box) ─────────────────────────
+// steamId → Discord-Farbe (Integer, wie Discord: höchste FARBIGE Rolle gewinnt;
+// 0/keine → null). Gecacht + im Hintergrund aufgefrischt, damit der 1,5s-Poll
+// von /positions NIE Discord-Calls auslöst.
+let _roleColorMap = { at: 0, map: {}, refreshing: false };
+async function refreshRoleColorMap() {
+  const [members, roles] = await Promise.all([guildMembers(), guildRolesCached()]);
+  const roleById = new Map(roles.map((r) => [r.id, r]));
+  const acc = readJson(ACCOUNTS_PATH, {});           // discordId → steamId
+  const steamByDiscord = acc;
+  const map = {};
+  for (const m of members) {
+    const did = m.user?.id;
+    const steamId = did ? steamByDiscord[did] : null;
+    if (!steamId) continue;
+    let best = null;                                 // höchste Position mit Farbe != 0
+    for (const rid of (m.roles || [])) {
+      const r = roleById.get(rid);
+      if (r && r.color && (!best || r.position > best.position)) best = r;
+    }
+    map[String(steamId)] = best ? best.color : null;
+  }
+  _roleColorMap = { at: Date.now(), map, refreshing: false };
+  return map;
+}
+// Nicht-blockierend: liefert die aktuelle Map, stößt bei Ablauf (60s) einen Hintergrund-Refresh an.
+function roleColorMapCached() {
+  if (!_roleColorMap.refreshing && Date.now() - _roleColorMap.at > 60_000) {
+    _roleColorMap.refreshing = true;
+    refreshRoleColorMap().catch(() => { _roleColorMap.refreshing = false; });
+  }
+  return _roleColorMap.map || {};
+}
 
 // ── PayPal-Helfer ────────────────────────────────────────────────────────────
 async function paypalToken() {
@@ -1182,6 +1226,21 @@ app.post('/me/slay', async (req, res) => {
     const d = await r.json().catch(() => ({}));
     if (!r.ok) return res.status(502).json({ error: d.Msg || d.error || `HTTP ${r.status}` });
     res.json({ ok: true, slayed: true });
+  } catch (e) { res.status(502).json({ error: e.message }); }
+});
+
+// Eigenen aktiven Dino eingraben (Entomb) — sicheres Ausloggen, jeder für seinen EIGENEN Dino
+app.post('/me/entomb', async (req, res) => {
+  const s = sessionFrom(req);
+  if (!s) return res.status(401).json({ error: 'Keine Session' });
+  try {
+    const r = await fetch(`${PANEL_BASE_URL}/players/${encodeURIComponent(s.steamId)}/entomb`, {
+      method: 'POST', headers: { Authorization: `Bearer ${PANEL_ADMIN_TOKEN}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify({}), signal: AbortSignal.timeout(8000),
+    });
+    const d = await r.json().catch(() => ({}));
+    if (!r.ok) return res.status(502).json({ error: d.Msg || d.error || `HTTP ${r.status}` });
+    res.json({ ok: true, entombed: true });
   } catch (e) { res.status(502).json({ error: e.message }); }
 });
 

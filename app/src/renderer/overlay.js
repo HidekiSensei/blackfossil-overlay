@@ -1,5 +1,5 @@
 import { Room, RoomEvent, Track, ParticipantEvent } from 'livekit-client';
-import { loadMapImage, drawFullMap, drawMinimap, drawHeatmap, normToWorld, worldToNorm, zoneAt, resetCal, solveAffine, getCal, setCalAffine, setZones, ZONES, loadZoneLayer, setZoneLayer, isZoneLayerVisible, groupColorFor } from './map.js';
+import { loadMapImage, drawFullMap, drawMinimap, drawHeatmap, normToWorld, worldToNorm, zoneAt, resetCal, solveAffine, getCal, setCalAffine, setZones, ZONES, loadZoneLayer, setZoneLayer, isZoneLayerVisible, groupColorFor, setMarkerStyle } from './map.js';
 
 const el = (id) => document.getElementById(id);
 
@@ -136,6 +136,40 @@ function toggleLowSpec() {
   localStorage.setItem('bf-noblitz', on ? '1' : '0');
   applyBlur(); applyFx();
 }
+
+// ── Karten-Marker-Stil (Wegpunkt-Farbe/-Größe + Spieler-Pfeil-Farbe) ─────────
+const MARKER_DEFAULTS = { wpColor: '#fbbf24', wpSize: 1, selfColor: '#00e5ff' };
+function loadMarkerStyle() {
+  return {
+    wpColor: localStorage.getItem('bf-wp-color') || MARKER_DEFAULTS.wpColor,
+    wpSize: parseFloat(localStorage.getItem('bf-wp-size')) || MARKER_DEFAULTS.wpSize,
+    selfColor: localStorage.getItem('bf-self-color') || MARKER_DEFAULTS.selfColor,
+  };
+}
+function applyMarkerStyle() {
+  const m = loadMarkerStyle();
+  setMarkerStyle(m);
+  const wc = document.getElementById('wpColorInp'); if (wc) wc.value = m.wpColor;
+  const ws = document.getElementById('wpSizeInp'); if (ws) ws.value = String(m.wpSize);
+  const sc = document.getElementById('selfColorInp'); if (sc) sc.value = m.selfColor;
+  try { renderBigMap(); } catch {}   // sofort sichtbar, falls die Karte offen ist
+}
+function setupMarkerSettings() {
+  const wc = document.getElementById('wpColorInp');
+  const ws = document.getElementById('wpSizeInp');
+  const sc = document.getElementById('selfColorInp');
+  const rb = document.getElementById('markerResetBtn');
+  const save = (k, v) => { localStorage.setItem(k, v); applyMarkerStyle(); };
+  if (wc) wc.oninput = () => save('bf-wp-color', wc.value);
+  if (ws) ws.oninput = () => save('bf-wp-size', ws.value);
+  if (sc) sc.oninput = () => save('bf-self-color', sc.value);
+  if (rb) rb.onclick = () => {
+    ['bf-wp-color', 'bf-wp-size', 'bf-self-color'].forEach((k) => localStorage.removeItem(k));
+    applyMarkerStyle();
+  };
+  applyMarkerStyle();
+}
+document.addEventListener('DOMContentLoaded', setupMarkerSettings);
 
 // ── Karten-/Positions-State ─────────────────────────────────────────────────
 let players = [];
@@ -717,17 +751,21 @@ function updateSpeakingBox(speakers) {
   const now = Date.now();
   const active = (speakers || (room ? room.activeSpeakers : []) || []).filter((p) => room && p !== room.localParticipant);
   for (const p of active) _speakSeen.set(p.identity, now);
-  const names = [];
+  const items = [];
   for (const [id, ts] of _speakSeen) {
     if (now - ts > 1500) { _speakSeen.delete(id); continue; }
     if (audibleVol(id) <= 0) continue;                        // nur wen man WIRKLICH hört (Reichweite/deafened/stumm)
     const pl = players.find((x) => x.steamId === id);
     const nm = pl && (pl.name || pl.playerName);
-    if (nm) names.push(nm);
+    if (nm) items.push({ nm, color: pl.roleColor });          // roleColor = Discord-Rollenfarbe (Integer) oder null
   }
-  if (!names.length) { box.style.display = 'none'; return; }
+  if (!items.length) { box.style.display = 'none'; return; }
   box.style.display = '';
-  box.innerHTML = `🔊 ${names.map((n) => escapeHtml(n)).join(', ')}`;
+  // Namen in der Discord-Rollenfarbe (Spender/Abonnenten/Team erkennbar); ohne Farbe = Standard.
+  box.innerHTML = `🔊 ${items.map(({ nm, color }) => {
+    const hex = (color && color > 0) ? '#' + (color >>> 0).toString(16).padStart(6, '0') : null;
+    return hex ? `<span style="color:${hex}">${escapeHtml(nm)}</span>` : escapeHtml(nm);
+  }).join(', ')}`;
 }
 
 // ── Pro-User-Lautstärke (Regler im Settings-Menü) ────────────────────────────
@@ -2856,16 +2894,20 @@ function renderLexikon() {
 // ── Elder / Prime-Bedingungen ────────────────────────────────────────────────
 const PRIME_LABELS = [
   'Sanctuary als Juvenile besucht',
-  'Genested (Get Nested In)',
-  'Perfekte Ernährung (1% je Makro)',
+  'Genested (in ein Nest gelegt)',
+  'Perfekte Ernährung',
   'Mass-Migration-Zone besucht',
   '2 Migrations-Zonen besucht',
   '4 Patrol-Zonen besucht',
-  'Nie unfruchtbar (auto)',
-  'Keine Muskelkrämpfe (auto)',
+  'Nie unfruchtbar',
+  'Keine Muskelkrämpfe',
   'Kinder zu Subadult großgezogen',
-  'Spezies-Bonus (auto)',
+  'Spezies-Bonus',
 ];
+// Bedingungen, die das Spiel automatisch erfüllt (kein aktives Zutun nötig) → als „auto" markiert.
+const PRIME_AUTO = new Set([6, 7, 9]);
+// Zwischenschritt-Hinweise pro Bedingung (da echte Teil-Zähler nicht in den Daten stehen).
+const PRIME_HINT = { 2: '1% je Makronährstoff', 4: '2 verschiedene Zonen', 5: '4 verschiedene Zonen' };
 let prevPrimes = null;
 let primeDino = null;   // Dino, für den prevPrimes gilt — bei Wechsel neu baselinen
 // Prüft auf neu erfüllte Prime-Bedingungen und meldet sie per Toast.
@@ -2878,9 +2920,22 @@ function checkPrimes(primes, dino) {
 }
 function elderHTML(primes) {
   const p = primes || [];
+  const need = 5;
   const met = p.filter(Boolean).length;
-  const head = `<div style="font-size:12px;color:${met >= 5 ? '#22c55e' : 'var(--muted)'};margin-bottom:6px">${met}/5 Bedingungen für Prime${met >= 5 ? ' — erreicht! 👑' : ` (noch ${5 - met})`}</div>`;
-  return head + p.map((v, i) => `<div style="display:flex;align-items:center;gap:7px;font-size:12px;padding:2px 0;${v ? '' : 'opacity:0.55'}"><span>${v ? '✅' : '⬜'}</span><span>${PRIME_LABELS[i]}</span></div>`).join('');
+  const done = met >= need;
+  const pct = Math.min(100, Math.round(met / need * 100));
+  const head = `
+    <div class="di-prime-head">
+      <span class="di-prime-title" style="color:${done ? '#22c55e' : 'var(--text)'}">${done ? '👑 Prime erreicht!' : 'Prime-Fortschritt'}</span>
+      <span class="di-prime-count" style="color:${done ? '#22c55e' : 'var(--muted)'}">${met}/${need}${done ? '' : ` · noch ${need - met}`}</span>
+    </div>
+    <div class="di-prime-bar"><div class="di-prime-fill" style="width:${pct}%;background:${done ? '#22c55e' : 'var(--accent)'}"></div></div>`;
+  const rows = p.map((v, i) => {
+    const hint = PRIME_HINT[i] ? `<span class="di-prime-hint">${PRIME_HINT[i]}</span>` : '';
+    const auto = PRIME_AUTO.has(i) ? `<span class="di-prime-auto">auto</span>` : '';
+    return `<div class="di-prime-row${v ? ' is-done' : ''}"><span class="di-prime-ic">${v ? '✅' : '⬜'}</span><span class="di-prime-lbl">${PRIME_LABELS[i]}${auto}${hint}</span></div>`;
+  }).join('');
+  return head + `<div class="di-prime-list">${rows}</div>`;
 }
 
 // ── Dino-Info (animierte Vital-Balken + Elder-Checker) ──────────────────────
@@ -2918,7 +2973,10 @@ function renderDinoInfo() {
     </div>`).join('');
   el('dinoInfo').classList.add('di-wide');
   el('dinoInfo').innerHTML = `
-    <button id="diSlayBtn" class="di-slay" title="Aktuellen Dino töten">💀 Slay</button>
+    <div class="di-actions">
+      <button id="diEntombBtn" class="di-btn di-entomb" title="Dino eingraben (Entomb)">⚰️ Eingraben</button>
+      <button id="diSlayBtn" class="di-btn di-slay-btn" title="Aktuellen Dino töten">💀 Slay</button>
+    </div>
     <div class="di-topbar">
       <div class="di-imgwrap"><img id="di-img" alt="" onerror="this.style.visibility='hidden'"></div>
       <div style="flex:1;min-width:0">
@@ -2934,6 +2992,8 @@ function renderDinoInfo() {
       <div class="di-elder-col">
         <div class="sec-title">⏳ Elder-Fortschritt</div>
         <div id="di-elder" style="margin:6px 0"></div>
+        <div class="sec-title" style="margin-top:14px">🧬 Mutationen</div>
+        <div id="di-mut" style="margin:6px 0"></div>
       </div>
       <div class="di-vitals-col">
         <div class="sec-title">📊 Vitals &amp; Token <span style="color:var(--muted);font-weight:400;font-size:11px">— Token rechts neben dem Balken einlösen</span></div>
@@ -2945,6 +3005,10 @@ function renderDinoInfo() {
       title: '💀 Dino töten?', danger: true, confirmLabel: 'Ja, töten',
       body: 'Dein <b>aktueller Dino</b> wird sofort getötet (Lightning Strike). Das kann nicht rückgängig gemacht werden.',
       onConfirm: slayMyDino }); }
+  { const eb = el('diEntombBtn'); if (eb) eb.onclick = () => bfConfirm({
+      title: '⚰️ Dino eingraben?', confirmLabel: 'Ja, eingraben',
+      body: 'Dein <b>aktueller Dino</b> wird eingegraben (Entomb).',
+      onConfirm: entombMyDino }); }
   updateDinoInfo();
   if (dinoTimer) clearInterval(dinoTimer);
   dinoTimer = setInterval(updateDinoInfo, 2000);
@@ -2973,6 +3037,15 @@ async function slayMyDino() {
     const d = await res.json(); if (!res.ok) throw new Error(d.error || 'Fehler');
     showToast('💀 Dein Dino wurde getötet.', 'success');
   } catch (e) { showToast(e.message || 'Slay fehlgeschlagen', 'error'); }
+}
+async function entombMyDino() {
+  try {
+    const res = await fetch(`${config.tokenBase}/me/entomb`, {
+      method: 'POST', headers: { Authorization: `Bearer ${sessionToken}` },
+    });
+    const d = await res.json(); if (!res.ok) throw new Error(d.error || 'Fehler');
+    showToast('⚰️ Dein Dino wird eingegraben.', 'success');
+  } catch (e) { showToast(e.message || 'Eingraben fehlgeschlagen', 'error'); }
 }
 
 // Token-Zellen rechts neben den passenden Vital-Balken füllen
@@ -3052,7 +3125,18 @@ function vitalsHTML(card) {
   const v = [['Gesundheit', 'health', '#22c55e'], ['Blut', 'blood', '#dc2626'], ['Ausdauer', 'stamina', '#eab308'], ['Hunger', 'hunger', '#f97316'], ['Durst', 'thirst', '#3b82f6']];
   return v.map(([l, k, c]) => { const p = Math.round((card[k] || 0) * 100); return `<div style="margin:6px 0"><div style="display:flex;justify-content:space-between;font-size:11px"><span>${l}</span><span style="color:var(--muted)">${p}%</span></div><div class="stat-track"><div class="stat-fill" style="width:${p}%;background:${c}"></div></div></div>`; }).join('');
 }
-function mutHTML(m) { const a = [...(m?.base || []), ...(m?.parent || []), ...(m?.elder || [])].filter(Boolean); return a.length ? a.map((x) => `<span class="mut-chip">${x}</span>`).join('') : '<span style="color:var(--muted);font-size:12px">Keine Mutationen</span>'; }
+// Mutationen nach Generation gruppiert (Basis / Eltern / Elder) mit Zähler — statt flacher Liste.
+function mutHTML(m) {
+  const groups = [['🧬 Basis', m?.base || []], ['🧬 Eltern', m?.parent || []], ['👑 Elder', m?.elder || []]];
+  const total = groups.reduce((n, [, arr]) => n + arr.filter(Boolean).length, 0);
+  if (!total) return '<span style="color:var(--muted);font-size:12px">Keine Mutationen</span>';
+  return '<div class="mut-gens">' + groups.map(([label, arr]) => {
+    const items = (arr || []).filter(Boolean);
+    if (!items.length) return '';
+    return `<div class="mut-gen"><div class="mut-gen-h">${label}<span class="mut-gen-n">${items.length}</span></div>`
+      + `<div class="mut-gen-chips">${items.map((x) => `<span class="mut-chip">${escapeHtml(x)}</span>`).join('')}</div></div>`;
+  }).join('') + '</div>';
+}
 function closeDinoDetail() { el('dinoDetail').style.display = 'none'; }
 function showDinoDetail(card, ctx) {
   const box = el('dinoDetail').querySelector('.box');
@@ -4155,6 +4239,7 @@ async function updateDinoInfo() {
     el('di-name').textContent = 'Verbinde dich mit dem Server, um deine Stats zu sehen.';
     { const im = el('di-img'); if (im) im.style.visibility = 'hidden'; }
     el('di-elder').innerHTML = '<span style="color:var(--muted);font-size:12px">—</span>';
+    { const mu = el('di-mut'); if (mu) mu.innerHTML = '<span style="color:var(--muted);font-size:12px">—</span>'; }
     Object.keys(VITAL_TOKEN).forEach((k) => { const c = el(`di-tok-${k}`); if (c) c.innerHTML = ''; });
     DI_STATS.forEach((s) => { el(`di-${s.key}-f`).style.width = '0%'; el(`di-${s.key}-v`).textContent = '—'; });
     { const gf = el('di-grow-f'); if (gf) gf.style.width = '0%'; const gv = el('di-grow-v'); if (gv) gv.textContent = '—'; }
@@ -4162,6 +4247,7 @@ async function updateDinoInfo() {
     return;
   }
   el('di-elder').innerHTML = elderHTML(d.primes);
+  { const mu = el('di-mut'); if (mu) mu.innerHTML = mutHTML(d.mutations); }
   checkPrimes(d.primes, d.dino);   // schnellere Benachrichtigung solange F5 offen ist (2s)
   renderDinoTokens(d.tokens);
   el('di-dino').textContent = d.dino || 'Dino';
