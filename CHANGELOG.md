@@ -1,5 +1,10 @@
 # Changelog
 
+## v1.2.4 — Fix: Farbthemen fürs Team 🎨
+
+### 🔧 Fixes
+- **Team-Mitglieder** haben jetzt zuverlässig **alle Farbthemen** freigeschaltet (keine Schloss-Symbole mehr), inklusive **🎨 Eigene Farbe** mit Color-Picker — wie es für Obsidian/Team gedacht ist.
+
 ## v1.2.3 — Dino-Info & Karte 🦖
 
 ### 🧬 Dino-Info

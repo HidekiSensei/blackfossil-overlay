@@ -4600,7 +4600,9 @@ async function connectWithSession(session) {
     renderHotkeys();
     if (data.name) el('hudName').textContent = data.name;
     setTier(data.tier);
-    setAboTier(data.aboTier);   // Stichtag-aware Abo-Rang fürs Perk-Gating (Themes/Color-Picker/Zombie)
+    // Team/Admin bekommen die vollen Obsidian-Perks (Themes/Color-Picker/Zombie) — unabhängig vom
+    // Abo bzw. falls die Discord-Rollen-Auflösung serverseitig mal nicht greift (sonst Schlösser für Teamler).
+    setAboTier((data.team || data.admin) ? 'Obsidian' : data.aboTier);
     mySkinFree = !!data.skinFree;   // 🎨 Skin-Creator gratis (ab Knochen ODER Beta-Tester)
     setStaff(data.staff);
     pollHud();
