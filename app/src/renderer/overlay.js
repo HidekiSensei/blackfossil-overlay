@@ -2979,7 +2979,7 @@ function renderDinoInfo() {
         <div class="di-head"><span class="di-dino" id="di-dino">Dino</span><span class="di-sub" id="di-grow"></span></div>
         <div class="di-sub" id="di-name"></div>
         <div class="di-actions">
-          <button id="diEntombBtn" class="di-btn di-entomb" title="Dino eingraben (Entomb)">⚰️ Eingraben</button>
+          <button id="diEntombBtn" class="di-btn di-entomb" title="Dino entomben">⚰️ Entomben</button>
           <button id="diSlayBtn" class="di-btn di-slay-btn" title="Aktuellen Dino töten">💀 Slay</button>
         </div>
         <div style="margin-top:10px">
@@ -3006,8 +3006,8 @@ function renderDinoInfo() {
       body: 'Dein <b>aktueller Dino</b> wird sofort getötet (Lightning Strike). Das kann nicht rückgängig gemacht werden.',
       onConfirm: slayMyDino }); }
   { const eb = el('diEntombBtn'); if (eb) eb.onclick = () => bfConfirm({
-      title: '⚰️ Dino eingraben?', confirmLabel: 'Ja, eingraben',
-      body: 'Dein <b>aktueller Dino</b> wird eingegraben (Entomb).',
+      title: '⚰️ Dino entomben?', confirmLabel: 'Ja, entomben',
+      body: 'Dein <b>aktueller Dino</b> wird entombt (Entomb).',
       onConfirm: entombMyDino }); }
   updateDinoInfo();
   if (dinoTimer) clearInterval(dinoTimer);
@@ -3044,8 +3044,8 @@ async function entombMyDino() {
       method: 'POST', headers: { Authorization: `Bearer ${sessionToken}` },
     });
     const d = await res.json(); if (!res.ok) throw new Error(d.error || 'Fehler');
-    showToast('⚰️ Dein Dino wird eingegraben.', 'success');
-  } catch (e) { showToast(e.message || 'Eingraben fehlgeschlagen', 'error'); }
+    showToast('⚰️ Dein Dino wird entombt.', 'success');
+  } catch (e) { showToast(e.message || 'Entomben fehlgeschlagen', 'error'); }
 }
 
 // Token-Zellen rechts neben den passenden Vital-Balken füllen
