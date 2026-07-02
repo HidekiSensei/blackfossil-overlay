@@ -1,5 +1,11 @@
 # Changelog
 
+## v1.2.2 — Performance ⚡
+
+### ⚡ Performance / FPS
+- **Deutlich weniger FPS-Verlust im Spiel** — teure Dauer-Effekte (Weichzeichner, animierte Vitalbalken, HP-Herz, drehender Minimap-Ring) laufen jetzt nur noch, wenn das Dock/Panel offen ist. Beim Spielen bleibt das Overlay statisch und GPU-schonend.
+- **Neues „⚡ Low-Spec / Performance"-Menü in den Einstellungen** — Master-Schalter „Low-Spec-Modus" plus Einzelschalter für **🌫️ Weichzeichner**, **⚡ Effekte** und **🗺️ Minimap**. Alle Einstellungen bleiben gespeichert.
+
 ## v1.1.1 — Bugfix
 
 ### 🔧 Fixes
