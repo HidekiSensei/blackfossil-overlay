@@ -622,13 +622,13 @@
     body.bf-noblitz #logoFx { filter: drop-shadow(0 3px 9px rgba(0,0,0,0.55)); }
 
     /* Lebensanzeige (Herz) — permanent sichtbar, skalierbar via --info-scale */
-    #hudHeart { position: fixed; top: 96px; left: 16px; width: 88px; z-index: 55;
+    #hudHeart { position: fixed; top: 96px; left: 16px; width: 150px; z-index: 55;
       display: flex; flex-direction: column; align-items: center;
       transform-origin: top left; transform: scale(var(--info-scale, 1)); --heart-color: #ef4444; }
     #hudHeart svg { width: 100%; height: auto; overflow: visible;
-      filter: drop-shadow(0 2px 6px rgba(0,0,0,0.55)) drop-shadow(0 0 10px var(--heart-color));
-      animation: heartBeat 1.5s ease-in-out infinite; }
-    #hudHeart #heartPath { transition: none; }
+      filter: drop-shadow(0 2px 6px rgba(0,0,0,0.6)); }
+    #hudHeart svg text { font-variant-numeric: tabular-nums; paint-order: stroke;
+      stroke: rgba(0,0,0,0.55); stroke-width: 0.6px; }
     #heartVal { margin-top: 2px; font-size: 19px; font-weight: 900; color: #fff; letter-spacing: .3px;
       text-shadow: 0 1px 3px #000, 0 0 8px var(--heart-color); font-variant-numeric: tabular-nums; }
     @keyframes heartBeat { 0%,100% { transform: scale(1); } 14% { transform: scale(1.1); } 28% { transform: scale(1); } 42% { transform: scale(1.05); } 56% { transform: scale(1); } }
@@ -727,19 +727,47 @@
   <img id="logoFx" src="assets/logo.png" alt="Black Fossil">
 
   <!-- Part 3b: Lebensanzeige — Kreis mit Herz, füllt/leert sich nach HP. Permanent, verschiebbar + skalierbar -->
-  <div id="hudHeart" title="Lebensanzeige (HP)">
-    <svg viewBox="0 0 48 48" aria-hidden="true">
-      <defs><linearGradient id="hpGrad" x1="0" y1="0" x2="0" y2="1">
-        <stop id="hpE0" offset="0" stop-color="rgba(255,255,255,0.12)"/>
-        <stop id="hpE1" offset="1" stop-color="rgba(255,255,255,0.12)"/>
-        <stop id="hpF1" offset="1" stop-color="#ef4444"/>
-        <stop id="hpF2" offset="1" stop-color="#ef4444"/>
-      </linearGradient></defs>
-      <circle cx="24" cy="24" r="22" fill="rgba(8,5,18,0.55)" stroke="var(--heart-color)" stroke-width="2.2"/>
-      <path id="heartPath" transform="translate(11.4,12) scale(0.79)" fill="url(#hpGrad)" stroke="rgba(255,255,255,0.4)" stroke-width="0.8"
-            d="M23.6,0c-3.4,0-6.3,2.7-7.6,5.6C14.7,2.7,11.8,0,8.4,0C3.8,0,0,3.8,0,8.4c0,9.4,9.5,11.9,16,21.2c6.1-9.3,16-12.1,16-21.2C32,3.8,28.2,0,23.6,0z"/>
+  <div id="hudHeart" title="Grow · Grow-Rate · HP">
+    <svg viewBox="0 0 190 202" aria-hidden="true">
+      <defs>
+        <linearGradient id="ggGrad" x1="0" y1="0" x2="0" y2="1">
+          <stop offset="0" stop-color="rgba(255,255,255,0.10)"/>
+          <stop id="ggE1" offset="1" stop-color="rgba(255,255,255,0.10)"/>
+          <stop id="ggF1" offset="1" stop-color="#8fae54"/>
+          <stop id="ggF2" offset="1" stop-color="#8fae54"/>
+        </linearGradient>
+        <linearGradient id="grGrad" x1="0" y1="0" x2="0" y2="1">
+          <stop offset="0" stop-color="rgba(255,255,255,0.10)"/>
+          <stop id="grE1" offset="1" stop-color="rgba(255,255,255,0.10)"/>
+          <stop id="grF1" offset="1" stop-color="#e7cf7a"/>
+          <stop id="grF2" offset="1" stop-color="#e7cf7a"/>
+        </linearGradient>
+        <linearGradient id="ghGrad" x1="0" y1="0" x2="0" y2="1">
+          <stop offset="0" stop-color="rgba(255,255,255,0.10)"/>
+          <stop id="ghE1" offset="1" stop-color="rgba(255,255,255,0.10)"/>
+          <stop id="ghF1" offset="1" stop-color="#ef4444"/>
+          <stop id="ghF2" offset="1" stop-color="#ef4444"/>
+        </linearGradient>
+      </defs>
+      <!-- GROW -->
+      <polygon points="114,100 92,61.9 48,61.9 26,100 48,138.1 92,138.1" fill="rgba(8,5,18,0.58)"/>
+      <polygon points="114,100 92,61.9 48,61.9 26,100 48,138.1 92,138.1" fill="url(#ggGrad)"/>
+      <polygon points="114,100 92,61.9 48,61.9 26,100 48,138.1 92,138.1" fill="none" stroke="#cabf92" stroke-width="2.4"/>
+      <text id="growVal" x="70" y="105" text-anchor="middle" font-size="21" font-weight="800" fill="#fff">—</text>
+      <text x="70" y="124" text-anchor="middle" font-size="9.5" font-weight="700" fill="#e9e0c4" letter-spacing="1.5">GROW</text>
+      <!-- GROW-RATE -->
+      <polygon points="180,61.9 158,23.8 114,23.8 92,61.9 114,100 158,100" fill="rgba(8,5,18,0.58)"/>
+      <polygon points="180,61.9 158,23.8 114,23.8 92,61.9 114,100 158,100" fill="url(#grGrad)"/>
+      <polygon points="180,61.9 158,23.8 114,23.8 92,61.9 114,100 158,100" fill="none" stroke="#cabf92" stroke-width="2.4"/>
+      <text id="rateVal" x="136" y="64" text-anchor="middle" font-size="16" font-weight="800" fill="#fff">—</text>
+      <text x="136" y="80" text-anchor="middle" font-size="8" font-weight="700" fill="#e9e0c4" letter-spacing="0.5">RATE</text>
+      <!-- HP -->
+      <polygon points="180,138.1 158,100 114,100 92,138.1 114,176.2 158,176.2" fill="rgba(8,5,18,0.58)"/>
+      <polygon points="180,138.1 158,100 114,100 92,138.1 114,176.2 158,176.2" fill="url(#ghGrad)"/>
+      <polygon points="180,138.1 158,100 114,100 92,138.1 114,176.2 158,176.2" fill="none" stroke="#cabf92" stroke-width="2.4"/>
+      <text id="heartVal" x="136" y="141" text-anchor="middle" font-size="16" font-weight="800" fill="#fff">—</text>
+      <text x="136" y="157" text-anchor="middle" font-size="8" font-weight="700" fill="#f3d6d2" letter-spacing="1.5">HP</text>
     </svg>
-    <span id="heartVal">—</span>
   </div>
 
   <!-- Edit-Mode-Banner -->

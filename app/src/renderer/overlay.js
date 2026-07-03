@@ -382,19 +382,32 @@ function updateHud(d) {
   checkPrimes(d.primes, d.dino);   // immer aufrufen → Offline/Dino-Wechsel resettet die Basis
   updateHeart(d);                   // permanente Lebensanzeige
 }
-// Herz-Lebensanzeige (Part 3b): Herz füllt sich von unten nach HP, Farbe nach HP; grau/leer wenn offline
+// Grow-Waben-HUD: 3 Honigwaben (Grow · Grow-Rate · HP), füllen sich von unten.
+// Wird von pollVitals (0,5 s) UND updateHud (/me, 6 s) aufgerufen — beide liefern
+// grow/carbs/protein/lipid/health/online.
+function setHex(fillFrac, col, e1id, f1id, f2id) {
+  const line = 1 - Math.max(0, Math.min(1, fillFrac)); // 0 = voll (von unten), 1 = leer
+  const e1 = document.getElementById(e1id), f1 = document.getElementById(f1id), f2 = document.getElementById(f2id);
+  if (e1) e1.setAttribute('offset', line);
+  if (f1) { f1.setAttribute('offset', line); f1.setAttribute('stop-color', col); }
+  if (f2) f2.setAttribute('stop-color', col);
+}
 function updateHeart(d) {
-  const val = document.getElementById('heartVal'); const wrap = document.getElementById('hudHeart');
-  const e1 = document.getElementById('hpE1'); const f1 = document.getElementById('hpF1'); const f2 = document.getElementById('hpF2');
-  if (!val || !wrap || !e1 || !f1 || !f2) return;
-  const online = d && d.online && typeof d.health === 'number';
-  const pct = online ? Math.max(0, Math.min(100, Math.round(d.health * 100))) : 0;
-  const col = !online ? '#666' : pct > 50 ? '#22c55e' : pct > 25 ? '#f59e0b' : '#ef4444';
-  const fillLine = 1 - pct / 100;                 // 0 = voll (Füllung von unten), 1 = leer
-  e1.setAttribute('offset', fillLine); f1.setAttribute('offset', fillLine);
-  f1.setAttribute('stop-color', col); f2.setAttribute('stop-color', col);
-  wrap.style.setProperty('--heart-color', col);
-  val.textContent = online ? pct + '%' : '—';
+  const online = !!(d && d.online);
+  const gray = '#555';
+  // GROW (aktueller Wachstumsstand 0..100 %)
+  const grow = online && typeof d.grow === 'number' ? Math.max(0, Math.min(1, d.grow)) : 0;
+  setHex(grow, online ? '#8fae54' : gray, 'ggE1', 'ggF1', 'ggF2');
+  { const v = document.getElementById('growVal'); if (v) v.textContent = online ? Math.round(grow * 100) + '%' : '—'; }
+  // GROW-RATE = Σ Nährstoffe (0..3) → Anzeige 0..300 %, Füllung /3
+  const nut = online ? ((d.carbs || 0) + (d.protein || 0) + (d.lipid || 0)) : 0;
+  setHex(nut / 3, online ? '#e7cf7a' : gray, 'grE1', 'grF1', 'grF2');
+  { const v = document.getElementById('rateVal'); if (v) v.textContent = online ? Math.round(nut * 100) + '%' : '—'; }
+  // HP (Farbe nach Höhe)
+  const hp = online && typeof d.health === 'number' ? Math.max(0, Math.min(100, Math.round(d.health * 100))) : 0;
+  const hcol = !online ? gray : hp > 50 ? '#22c55e' : hp > 25 ? '#f59e0b' : '#ef4444';
+  setHex(hp / 100, hcol, 'ghE1', 'ghF1', 'ghF2');
+  { const v = document.getElementById('heartVal'); if (v) v.textContent = online ? hp + '%' : '—'; }
 }
 // HP/Vitals separat & schnell pollen (Combat-Stat → möglichst live). Eigener leichter Endpoint.
 async function pollVitals() {
