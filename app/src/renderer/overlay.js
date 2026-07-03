@@ -399,8 +399,9 @@ function updateHeart(d) {
   const grow = online && typeof d.grow === 'number' ? Math.max(0, Math.min(1, d.grow)) : 0;
   setHex(grow, online ? '#8fae54' : gray, 'ggE1', 'ggF1', 'ggF2');
   { const v = document.getElementById('growVal'); if (v) v.textContent = online ? Math.round(grow * 100) + '%' : '—'; }
-  // GROW-RATE = Σ Nährstoffe (0..3) → Anzeige 0..300 %, Füllung /3
-  const nut = online ? ((d.carbs || 0) + (d.protein || 0) + (d.lipid || 0)) : 0;
+  // GROW-RATE = Σ Nährstoffe (0..3) → Anzeige 0..300 %, Füllung /3.
+  // Ab 75 % Grow stoppt das Wachstum (Adult) → Rate auf 0.
+  const nut = (online && grow <= 0.75) ? ((d.carbs || 0) + (d.protein || 0) + (d.lipid || 0)) : 0;
   setHex(nut / 3, online ? '#e7cf7a' : gray, 'grE1', 'grF1', 'grF2');
   { const v = document.getElementById('rateVal'); if (v) v.textContent = online ? Math.round(nut * 100) + '%' : '—'; }
   // HP (Farbe nach Höhe)
