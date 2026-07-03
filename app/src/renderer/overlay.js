@@ -236,6 +236,7 @@ let isTeam = false;      // Owner/Admin/Support
 let isStaff = false;     // isIngame || isTeam → sieht Support-Tools (Dino-Token etc.)
 let zoneEditMode = false;
 let activeZoneId = null; // id der aktuell gewählten Zone (Editor)
+let zonesDirty = false;  // ungespeicherte lokale Zonen-Änderungen → Auto-Refresh pausiert
 let pttHeld = false, ptmHeld = false;
 
 let voiceConnected = false; // im LiveKit-Raum verbunden?
@@ -463,9 +464,9 @@ async function init() {
   el('zoneBtn').onclick = () => toggleZonePanel();
   el('zoneNewBtn').onclick = () => createZone(el('zoneTypeSel').value);
   el('zoneAddBtn').onclick = () => captureZonePoint();
-  el('zoneUndoBtn').onclick = () => { const z = getActiveZone(); if (z) { z.points.pop(); updateZoneInfo(); renderZoneList(); renderBigMap(); } };
-  el('zoneClearBtn').onclick = () => { const z = getActiveZone(); if (z) { z.points = []; updateZoneInfo(); renderZoneList(); renderBigMap(); } };
-  el('zoneName').oninput = () => { const z = getActiveZone(); if (z) { z.name = el('zoneName').value; renderZoneList(); if (mapOpen) renderBigMap(); } };
+  el('zoneUndoBtn').onclick = () => { const z = getActiveZone(); if (z) { z.points.pop(); zonesDirty = true; updateZoneInfo(); renderZoneList(); renderBigMap(); } };
+  el('zoneClearBtn').onclick = () => { const z = getActiveZone(); if (z) { z.points = []; zonesDirty = true; updateZoneInfo(); renderZoneList(); renderBigMap(); } };
+  el('zoneName').oninput = () => { const z = getActiveZone(); if (z) { z.name = el('zoneName').value; zonesDirty = true; renderZoneList(); if (mapOpen) renderBigMap(); } };
   el('zoneSaveBtn').onclick = () => saveZones();
 
   window.bf.onHotkey(handleHotkey);
@@ -536,7 +537,7 @@ async function init() {
   // bei allen erscheinen. NICHT während man selbst editiert (sonst würden ungespeicherte
   // Punkte vom Server-Stand überschrieben).
   if (!loadServerZones._timer) {
-    loadServerZones._timer = setInterval(() => { if (!zoneEditMode) loadServerZones(); }, 60000);
+    loadServerZones._timer = setInterval(() => { if (!zoneEditMode && !zonesDirty) loadServerZones(); }, 60000);
   }
   // Zonen-Layer-Bilder vorladen (fehlende werden still ignoriert) → bei Toggle neu zeichnen
   Promise.all(['sanctuary', 'patrol', 'migration'].map((k) => loadZoneLayer(k))).then(() => renderBigMap());
@@ -1588,6 +1589,7 @@ function syncZoneName() {
 function createZone(type) {
   const z = newZone(type);
   activeZoneId = z.id;
+  zonesDirty = true;
   syncZoneName();
   renderZoneList();
   updateZoneInfo();
@@ -1597,6 +1599,7 @@ function createZone(type) {
 function deleteZone(id) {
   const i = ZONES.findIndex((z) => z.id === id);
   if (i >= 0) ZONES.splice(i, 1);
+  zonesDirty = true;
   if (activeZoneId === id) { activeZoneId = null; syncZoneName(); }
   renderZoneList();
   updateZoneInfo();
@@ -1659,6 +1662,7 @@ async function captureZonePoint() {
     const meNow = (data.players || []).find((p) => p.isYou);
     if (!meNow) return;
     z.points.push({ x: meNow.x, y: meNow.y });
+    zonesDirty = true;
     updateZoneInfo();
     renderZoneList();
     if (mapOpen) renderBigMap();
@@ -1672,6 +1676,7 @@ async function saveZones() {
       headers: { Authorization: `Bearer ${sessionToken}`, 'Content-Type': 'application/json' },
       body: JSON.stringify({ zones: ZONES.map((z) => ({ id: z.id, type: z.type, name: z.name, points: z.points })) }),
     });
+    if (res.ok) zonesDirty = false; // gespeichert → Auto-Refresh wieder erlaubt
     el('zoneInfo').innerHTML = res.ok
       ? '<span style="color:#22c55e">✅ Zonen für alle gespeichert!</span>'
       : '<span style="color:#ef4444">❌ Speichern fehlgeschlagen</span>';
@@ -1683,7 +1688,7 @@ async function saveZones() {
 async function loadServerZones() {
   try {
     const res = await fetch(`${config.tokenBase}/zones`);
-    if (res.ok) { const d = await res.json(); setZones(d); }
+    if (res.ok) { const d = await res.json(); setZones(d); zonesDirty = false; }
   } catch {}
   renderZoneList();
   renderBigMap();
