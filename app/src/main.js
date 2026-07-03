@@ -241,7 +241,7 @@ const DEFAULT_HOTKEYS = {
   'dock-toggle':     'F5',   // Overlay-/Dock-Modus (zusätzlich zur „^"-Taste)
   'map-toggle':      '',
   'dino-info':       '',
-  'zone-capture':    '',
+  'zone-capture':    'F6',   // Zonen-Eckpunkt setzen (im Zonen-Editor)
   'skin-editor':     '',
   'garage':          '',
   'market':          '',
@@ -262,8 +262,12 @@ const HOLD_ACTIONS = ['voice-ptt', 'voice-ptm'];
 let HOTKEYS = loadHotkeys();
 
 function loadHotkeys() {
-  try { return { ...DEFAULT_HOTKEYS, ...JSON.parse(fs.readFileSync(HOTKEYS_FILE, 'utf8')) }; }
-  catch { return { ...DEFAULT_HOTKEYS }; }
+  let hk;
+  try { hk = { ...DEFAULT_HOTKEYS, ...JSON.parse(fs.readFileSync(HOTKEYS_FILE, 'utf8')) }; }
+  catch { hk = { ...DEFAULT_HOTKEYS }; }
+  // Alt-Configs hatten zone-capture unbelegt ('') → F6 erzwingen (UI verspricht F6).
+  if (!hk['zone-capture']) hk['zone-capture'] = 'F6';
+  return hk;
 }
 function saveHotkeys() { try { fs.writeFileSync(HOTKEYS_FILE, JSON.stringify(HOTKEYS)); } catch {} }
 

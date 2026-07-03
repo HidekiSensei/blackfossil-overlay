@@ -1687,7 +1687,8 @@ async function saveZones() {
 
 async function loadServerZones() {
   try {
-    const res = await fetch(`${config.tokenBase}/zones`);
+    // GET /zones braucht Auth (RequireActor) → ohne Header 401 = Zonen laden nie.
+    const res = await fetch(`${config.tokenBase}/zones`, { headers: { Authorization: `Bearer ${sessionToken}` } });
     if (res.ok) { const d = await res.json(); setZones(d); zonesDirty = false; }
   } catch {}
   renderZoneList();
