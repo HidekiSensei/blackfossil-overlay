@@ -532,6 +532,12 @@ async function init() {
   await loadMapImage('assets/map.jpg');
   await loadServerCalibration();
   await loadServerZones();
+  // Zonen periodisch nachladen, damit von Admins neu gezeichnete Zonen OHNE Neustart
+  // bei allen erscheinen. NICHT während man selbst editiert (sonst würden ungespeicherte
+  // Punkte vom Server-Stand überschrieben).
+  if (!loadServerZones._timer) {
+    loadServerZones._timer = setInterval(() => { if (!zoneEditMode) loadServerZones(); }, 60000);
+  }
   // Zonen-Layer-Bilder vorladen (fehlende werden still ignoriert) → bei Toggle neu zeichnen
   Promise.all(['sanctuary', 'patrol', 'migration'].map((k) => loadZoneLayer(k))).then(() => renderBigMap());
 
