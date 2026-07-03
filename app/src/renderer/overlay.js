@@ -1079,7 +1079,7 @@ async function calibTeleport(x, y, z) {
     method: 'POST', headers: { Authorization: `Bearer ${sessionToken}`, 'Content-Type': 'application/json' },
     body: JSON.stringify(body),
   });
-  const d = await res.json(); if (!res.ok) throw new Error(d.error || 'Fehler');
+  const d = await res.json(); if (!res.ok) throw new Error(apiErr(d));
   await new Promise((r) => setTimeout(r, 700)); // kurz warten, bis die Position ankommt
   return { x: d.x, y: d.y };
 }
@@ -1205,7 +1205,7 @@ async function useTp() {
   if (!t) return;
   try {
     const res = await fetch(`${config.tokenBase}/teleports/${t.id}/use`, { method: 'POST', headers: { Authorization: `Bearer ${sessionToken}` } });
-    const d = await res.json(); if (!res.ok) throw new Error(d.error || 'Fehler');
+    const d = await res.json(); if (!res.ok) throw new Error(apiErr(d));
     showToast(`✈️ Teleportiert zu ${t.name}`, 'success');
     myPoints = d.points ?? myPoints;
     pollHud();
@@ -1300,7 +1300,7 @@ async function saveDinoLimits() {
   const res = el('dinoLimitResult'); if (res) res.textContent = 'Speichere…';
   try {
     const r = await fetch(`${config.tokenBase}/admin/dino-limits`, { method: 'POST', headers: { Authorization: `Bearer ${sessionToken}`, 'Content-Type': 'application/json' }, body: JSON.stringify({ limits }) });
-    const d = await r.json(); if (!r.ok) throw new Error(d.error || 'Fehler');
+    const d = await r.json(); if (!r.ok) throw new Error(apiErr(d));
     dinoLimits = d.limits || {};
     if (res) res.textContent = '✅ Gespeichert.';
     showToast('🦖 Dino-Limits gespeichert', 'success');
@@ -1386,7 +1386,7 @@ async function admLoadUserInfo() {
       method: 'POST', headers: { Authorization: `Bearer ${sessionToken}`, 'Content-Type': 'application/json' },
       body: JSON.stringify({ steamId: u.steamId }),
     });
-    const d = await res.json(); if (!res.ok) throw new Error(d.error || 'Fehler');
+    const d = await res.json(); if (!res.ok) throw new Error(apiErr(d));
     const toks = Object.entries(d.tokens || {}).filter(([, n]) => n > 0).map(([k, n]) => `${k} ×${n}`).join(', ') || '—';
     const dino = d.dino && d.dino.online
       ? `${escapeHtml(d.dino.dinoClass || '?')} · ${Math.round((d.dino.grow || 0) * 100)}%${d.dino.elderReplicationStacks ? ` · 🪦${d.dino.elderReplicationStacks}` : ''}`
@@ -1409,7 +1409,7 @@ async function admLightning() {
       method: 'POST', headers: { Authorization: `Bearer ${sessionToken}`, 'Content-Type': 'application/json' },
       body: JSON.stringify({ steamId: admSelectedSteamId }),
     });
-    const d = await res.json(); if (!res.ok) throw new Error(d.error || 'Fehler');
+    const d = await res.json(); if (!res.ok) throw new Error(apiErr(d));
     showToast(d.slayed ? '⚡ Spieler geslayed' : '⚡ Blitz gesendet (kein aktiver Dino?)', d.slayed ? 'success' : '');
   } catch (e) { showToast(e.message, 'error'); }
 }
@@ -1438,7 +1438,7 @@ async function admGift() {
       method: 'POST', headers: { Authorization: `Bearer ${sessionToken}`, 'Content-Type': 'application/json' },
       body: JSON.stringify(body),
     });
-    const d = await res.json(); if (!res.ok) throw new Error(d.error || 'Fehler');
+    const d = await res.json(); if (!res.ok) throw new Error(apiErr(d));
     el('giftResult').textContent = `✅ An ${d.affected} Spieler vergeben.`;
     showToast(`🎁 ${amount}× ${typeLabel} → ${d.affected} Spieler`, 'success');
   } catch (e) { el('giftResult').textContent = ''; showToast(e.message, 'error'); }
@@ -1469,7 +1469,7 @@ async function createTp() {
       method: 'POST', headers: { Authorization: `Bearer ${sessionToken}`, 'Content-Type': 'application/json' },
       body: JSON.stringify({ name, price, cooldownMin }),
     });
-    const d = await res.json(); if (!res.ok) throw new Error(d.error || 'Fehler');
+    const d = await res.json(); if (!res.ok) throw new Error(apiErr(d));
     showToast(`📍 TP-Punkt "${name}" erstellt`, 'success');
     el('tpName').value = ''; el('tpPrice').value = ''; el('tpCooldown').value = '';
     await loadTeleports();
@@ -1479,7 +1479,7 @@ async function createTp() {
 async function deleteTp(t) {
   try {
     const res = await fetch(`${config.tokenBase}/teleports/${t.id}`, { method: 'DELETE', headers: { Authorization: `Bearer ${sessionToken}` } });
-    if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.error || 'Fehler'); }
+    if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(apiErr(d)); }
     showToast(`TP-Punkt #${t.number} gelöscht`, '');
     await loadTeleports();
   } catch (e) { showToast(e.message, 'error'); }
@@ -1495,7 +1495,7 @@ async function adminCalibrate() {
       body: JSON.stringify({ affine: getCal() }),
     });
     if (res.ok) showToast('🌍 Kalibrierung global für alle gespeichert', 'success');
-    else { const d = await res.json().catch(() => ({})); showToast(d.error || 'Global-Speichern fehlgeschlagen', 'error'); }
+    else { const d = await res.json().catch(() => ({})); showToast(apiErr(d, 'Global-Speichern fehlgeschlagen'), 'error'); }
   } catch (e) { showToast(e.message, 'error'); }
 }
 
@@ -2029,7 +2029,7 @@ async function sendGroupChat(text) {
       method: 'POST', headers: { Authorization: `Bearer ${sessionToken}`, 'Content-Type': 'application/json' },
       body: JSON.stringify({ text }),
     });
-    const d = await res.json(); if (!res.ok) throw new Error(d.error || 'Fehler');
+    const d = await res.json(); if (!res.ok) throw new Error(apiErr(d));
   } catch (e) { showToast(e.message, 'error'); return; }
   pollGroupChat();   // eigene Nachricht sofort nachladen
 }
@@ -2145,7 +2145,7 @@ async function loadOvInvitable() {
 async function ovInvite(sid) {
   try {
     const r = await fetch(`${config.tokenBase}/ovgroup/invite`, { method: 'POST', headers: { Authorization: `Bearer ${sessionToken}`, 'Content-Type': 'application/json' }, body: JSON.stringify({ toSteamId: sid }) });
-    const d = await r.json(); if (!r.ok) throw new Error(d.error || 'Fehler');
+    const d = await r.json(); if (!r.ok) throw new Error(apiErr(d));
     showToast('📨 Einladung gesendet', 'success');
     ovInvitable = ovInvitable.filter((p) => p.steamId !== sid); if (featureOpen === 'group') renderGroup();
   } catch (e) { showToast(e.message, 'error'); }
@@ -2153,7 +2153,7 @@ async function ovInvite(sid) {
 async function ovAccept(gid) {
   try {
     const r = await fetch(`${config.tokenBase}/ovgroup/accept`, { method: 'POST', headers: { Authorization: `Bearer ${sessionToken}`, 'Content-Type': 'application/json' }, body: JSON.stringify({ gid }) });
-    const d = await r.json(); if (!r.ok) throw new Error(d.error || 'Fehler');
+    const d = await r.json(); if (!r.ok) throw new Error(apiErr(d));
     showToast('✅ Overlay-Gruppe beigetreten', 'success'); loadOvGroup();
   } catch (e) { showToast(e.message, 'error'); }
 }
@@ -2622,7 +2622,7 @@ async function sendSupportMsg() {
   try {
     const r = await fetch(`${config.tokenBase}/me/ticket-send`, { method: 'POST', headers: { Authorization: `Bearer ${sessionToken}`, 'Content-Type': 'application/json' }, body: JSON.stringify({ channelId: supSel, message }) });
     const d = await r.json().catch(() => ({}));
-    if (!r.ok) { showToast(d.error || 'Senden fehlgeschlagen', 'error'); inp.value = message; }
+    if (!r.ok) { showToast(apiErr(d, 'Senden fehlgeschlagen'), 'error'); inp.value = message; }
     else { await loadSupportMessages(); }
   } catch { showToast('Senden fehlgeschlagen', 'error'); inp.value = message; }
   if (el('supInput')) { el('supInput').disabled = false; el('supInput').focus(); }
@@ -2676,7 +2676,7 @@ async function submitSupportTicket(category, getKnown) {
   try {
     const r = await fetch(`${config.tokenBase}/me/ticket-open`, { method: 'POST', headers: { Authorization: `Bearer ${sessionToken}`, 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
     const d = await r.json().catch(() => ({}));
-    if (!r.ok) { showToast(d.error || 'Konnte Ticket nicht öffnen', 'error'); if (btn) btn.disabled = false; return; }
+    if (!r.ok) { showToast(apiErr(d, 'Konnte Ticket nicht öffnen'), 'error'); if (btn) btn.disabled = false; return; }
     showToast('🎫 Ticket wird erstellt…', 'success');
     supComposing = false;
     const chat = el('supChat'); if (chat) chat.innerHTML = '<div class="sup-empty">🎫 Dein Ticket wird angelegt – gleich erscheint es links in der Liste.</div>';
@@ -2690,7 +2690,7 @@ async function supAction(path, body, okMsg) {
   try {
     const r = await fetch(`${config.tokenBase}${path}`, { method: 'POST', headers: { Authorization: `Bearer ${sessionToken}`, 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
     const d = await r.json().catch(() => ({}));
-    if (!r.ok) { showToast(d.error || 'Aktion fehlgeschlagen', 'error'); return false; }
+    if (!r.ok) { showToast(apiErr(d, 'Aktion fehlgeschlagen'), 'error'); return false; }
     if (okMsg) showToast(okMsg, 'success');
     setTimeout(loadSupportTickets, 1500);
     setTimeout(() => { if (supSel && featureOpen === 'support') loadSupportMessages(); }, 1800);
@@ -2882,7 +2882,7 @@ async function rollRpQuest() {
   try {
     const r = await fetch(`${config.tokenBase}/me/quest/roll`, { method: 'POST', headers: { Authorization: `Bearer ${sessionToken}`, 'Content-Type': 'application/json' }, body: JSON.stringify({ type: 'rp' }) });
     const d = await r.json();
-    if (!r.ok) err = d.error || 'Fehler'; else result = d;
+    if (!r.ok) err = apiErr(d); else result = d;
   } catch { err = 'Verbindungsfehler'; }
   const wait = Math.max(0, 1700 - (Date.now() - started));
   setTimeout(() => {
@@ -2906,7 +2906,7 @@ async function startQuest(btn) {
   try {
     const r = await fetch(`${config.tokenBase}/me/quest/start`, { method: 'POST', headers: { Authorization: `Bearer ${sessionToken}`, 'Content-Type': 'application/json' }, body: JSON.stringify({}) });
     const d = await r.json();
-    if (!r.ok) { showToast(d.error || 'Start fehlgeschlagen', 'error'); if (btn) { btn.disabled = false; renderQuests(); } return; }
+    if (!r.ok) { showToast(apiErr(d, 'Start fehlgeschlagen'), 'error'); if (btn) { btn.disabled = false; renderQuests(); } return; }
     questState.active = d.active;
     showToast('🚀 Quest gestartet! Wachse als Quest-Dino auf Prime + 80%.', 'success');
     renderQuests();
@@ -3147,7 +3147,7 @@ async function slayMyDino() {
     const res = await fetch(`${config.tokenBase}/me/slay`, {
       method: 'POST', headers: { Authorization: `Bearer ${sessionToken}` },
     });
-    const d = await res.json(); if (!res.ok) throw new Error(d.error || 'Fehler');
+    const d = await res.json(); if (!res.ok) throw new Error(apiErr(d));
     showToast('💀 Dein Dino wurde getötet.', 'success');
   } catch (e) { showToast(e.message || 'Slay fehlgeschlagen', 'error'); }
 }
@@ -3156,7 +3156,7 @@ async function entombMyDino() {
     const res = await fetch(`${config.tokenBase}/me/entomb`, {
       method: 'POST', headers: { Authorization: `Bearer ${sessionToken}` },
     });
-    const d = await res.json(); if (!res.ok) throw new Error(d.error || 'Fehler');
+    const d = await res.json(); if (!res.ok) throw new Error(apiErr(d));
     showToast('⚰️ Dein Dino wird entombt.', 'success');
   } catch (e) { showToast(e.message || 'Entomben fehlgeschlagen', 'error'); }
 }
@@ -3198,7 +3198,7 @@ async function redeemOverlayToken(id, label, emoji) {
       method: 'POST', headers: { Authorization: `Bearer ${sessionToken}`, 'Content-Type': 'application/json' },
       body: JSON.stringify({ type: id }),
     });
-    const d = await res.json(); if (!res.ok) throw new Error(d.error || 'Fehler');
+    const d = await res.json(); if (!res.ok) throw new Error(apiErr(d));
     showToast(`${emoji} ${label} eingelöst!`, 'success');
   } catch (e) { showToast(e.message, 'error'); }
   updateDinoInfo();
@@ -3359,10 +3359,18 @@ function showDinoDetail(card, ctx) {
 }
 
 // Gemeinsame POST-Aktion mit Toast-Feedback
+// Fehlermeldung robust extrahieren: Backend liefert {error:{code,message}}, der
+// token-service (proxied) {error:"text"}. Sonst gäbe „throw new Error(d.error)" bei
+// einem Objekt die Meldung „[object Object]".
+function apiErr(d, fallback) {
+  const e = d && d.error;
+  if (e && typeof e === 'object') return e.message || e.code || fallback || 'Fehler';
+  return e || fallback || 'Fehler';
+}
 async function apiAction(path, body, okMsg, reload) {
   try {
     const res = await fetch(`${config.tokenBase}${path}`, { method: 'POST', headers: { Authorization: `Bearer ${sessionToken}`, 'Content-Type': 'application/json' }, body: JSON.stringify(body || {}) });
-    const d = await res.json(); if (!res.ok) throw new Error(d.error || 'Fehler');
+    const d = await res.json(); if (!res.ok) throw new Error(apiErr(d));
     showToast(okMsg.replace('{dino}', d.dino || ''), 'success'); pollHud(); if (reload) await reload();
   } catch (err) { showToast(err.message, 'error'); }
 }
@@ -3458,7 +3466,7 @@ function updateApplyCost() {
 async function setZombie(value) {
   try {
     const r = await fetch(`${config.tokenBase}/me/zombie`, { method: 'POST', headers: { Authorization: `Bearer ${sessionToken}`, 'Content-Type': 'application/json' }, body: JSON.stringify({ value }) });
-    const d = await r.json(); if (!r.ok) throw new Error(d.error || 'Fehler');
+    const d = await r.json(); if (!r.ok) throw new Error(apiErr(d));
     showToast('🧟 Zombie-Look aktualisiert', 'success');
   } catch (e) { showToast(e.message, 'error'); }
 }
@@ -3543,7 +3551,7 @@ async function changeGender(gender, panel) {
   setSkinLive('… Geschlecht wird gewechselt (Respawn)', '#f59e0b');
   try {
     const r = await fetch(`${config.tokenBase}/me/gender`, { method: 'POST', headers: { Authorization: `Bearer ${sessionToken}`, 'Content-Type': 'application/json' }, body: JSON.stringify({ gender }) });
-    const d = await r.json(); if (!r.ok) throw new Error(d.error || 'Fehler');
+    const d = await r.json(); if (!r.ok) throw new Error(apiErr(d));
     skinState.gender = gender;
     panel.querySelectorAll('[data-gender]').forEach((x) => x.className = x.dataset.gender === gender ? '' : 'secondary');
     setSkinLive('🟢 Geschlecht gewechselt', '#22c55e');
@@ -3606,7 +3614,7 @@ async function applySkin(auto) {
     const send = () => fetch(`${config.tokenBase}/skin`, { method: 'POST', headers: { Authorization: `Bearer ${sessionToken}`, 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
     let res = await send();
     if (res.status === 502) { await new Promise((r) => setTimeout(r, 1200)); res = await send(); } // ein Retry bei Server-Hänger
-    const d = await res.json(); if (!res.ok) throw new Error(d.error || 'Fehler');
+    const d = await res.json(); if (!res.ok) throw new Error(apiErr(d));
     if (typeof d.points === 'number') setPointsHud(d.points);
     setSkinBaseline(); updateApplyCost();   // angewendeter Stand = neue Baseline (Free-Kosten ab hier neu)
     setSkinLive(d.charged ? `🟢 Übernommen (−${d.charged} Pkt)` : '🟢 Live übernommen', '#22c55e');
@@ -3629,7 +3637,7 @@ async function saveSkinTemplate() {
   try {
     const body = { name, skinVariation: skinState.skinVariation, patternIndex: skinState.patternIndex, themeIndex: skinState.themeIndex, colors: skinState.colors };
     const r = await fetch(`${config.tokenBase}/skin/templates`, { method: 'POST', headers: { Authorization: `Bearer ${sessionToken}`, 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
-    const d = await r.json(); if (!r.ok) throw new Error(d.error || 'Fehler');
+    const d = await r.json(); if (!r.ok) throw new Error(apiErr(d));
     skinTpl = { ...skinTpl, templates: d.templates, used: d.used, limit: d.limit };
     if (typeof d.points === 'number') setPointsHud(d.points);
     el('skTplName').value = '';
@@ -3640,7 +3648,7 @@ async function saveSkinTemplate() {
 async function applySkinTemplate(t) {
   try {
     const r = await fetch(`${config.tokenBase}/skin/templates/${t.id}/apply`, { method: 'POST', headers: { Authorization: `Bearer ${sessionToken}` } });
-    const d = await r.json(); if (!r.ok) throw new Error(d.error || 'Fehler');
+    const d = await r.json(); if (!r.ok) throw new Error(apiErr(d));
     if (typeof d.points === 'number') setPointsHud(d.points);
     // skinState + Baseline auf die (server-seitig angewendete) Vorlage ziehen
     skinState.skinVariation = t.skinVariation || 0;
@@ -4322,7 +4330,7 @@ async function acLink() {
   const out = el('acLinkResult'); out.textContent = '…';
   try {
     const r = await fetch(`${config.tokenBase}/admin/accounts/link`, { method: 'POST', headers: { ...acHdr(), 'Content-Type': 'application/json' }, body: JSON.stringify({ discordId: did, steamId: sid }) });
-    const d = await r.json(); if (!r.ok) throw new Error(d.error || 'Fehler');
+    const d = await r.json(); if (!r.ok) throw new Error(apiErr(d));
     showToast('🔗 Verknüpft', 'success'); pollHud();
     let msg = '✅ Verknüpft.'; if (d.previous) msg += ` Vorher: ${d.previous}.`; if (d.alsoLinkedTo && d.alsoLinkedTo.length) msg += ` ⚠️ Diese SteamID ist auch verknüpft mit: ${d.alsoLinkedTo.join(', ')}.`;
     out.textContent = msg;
