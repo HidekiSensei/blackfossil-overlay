@@ -649,8 +649,14 @@ async function init() {
   const session = await window.bf.getSession();
   // Voice verbindet NICHT sofort — erst wenn man laut Positions-Poll auf dem
   // BlackFossil-Server ist (siehe applyServerState). Off-Server kein Voice.
-  if (session) { sessionToken = session; startPositionPolling(); }
-  else setMicState('disconnected', 'Keine Session');
+  if (session) {
+    sessionToken = session;
+    startPositionPolling();
+    // Zonen (und Kalibrierung) JETZT nachladen — der erste Load in init() lief noch OHNE
+    // sessionToken (→ 401). Ohne das erscheinen die Zonen erst beim 60s-Auto-Refresh.
+    loadServerCalibration();
+    loadServerZones();
+  } else setMicState('disconnected', 'Keine Session');
 }
 
 // ── Server-Gating ────────────────────────────────────────────────────────────
