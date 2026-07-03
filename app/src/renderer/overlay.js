@@ -1,5 +1,5 @@
 import { Room, RoomEvent, Track, ParticipantEvent } from 'livekit-client';
-import { loadMapImage, drawFullMap, drawMinimap, drawHeatmap, normToWorld, worldToNorm, zoneAt, resetCal, solveAffine, getCal, setCalAffine, setZones, ZONES, loadZoneLayer, setZoneLayer, isZoneLayerVisible, groupColorFor, setMarkerStyle } from './map.js';
+import { loadMapImage, drawFullMap, drawMinimap, drawHeatmap, normToWorld, worldToNorm, zoneAt, resetCal, solveAffine, getCal, setCalAffine, setZones, newZone, ZONES, ZONE_TYPES, ZONE_META, loadZoneLayer, setZoneLayer, isZoneLayerVisible, groupColorFor, setMarkerStyle } from './map.js';
 
 const el = (id) => document.getElementById(id);
 
@@ -198,8 +198,7 @@ let heatmapMode = false;
 // und klickst sie an → solveAffine schiebt nur die DARSTELLUNG zurecht (kein Umrechnen
 // der Teleport-Ziele!).
 function pickCalibTargets(n) {
-  const pts = [...((ZONES.pvp && ZONES.pvp.points) || []), ...((ZONES.pve && ZONES.pve.points) || [])]
-    .map((p) => ({ x: p.x, y: p.y }));
+  const pts = ZONES.flatMap((z) => z.points || []).map((p) => ({ x: p.x, y: p.y }));
   if (pts.length <= n) return pts;
   // Farthest-Point-Sampling: maximal weit auseinander liegende Punkte wählen
   const cx = pts.reduce((s, p) => s + p.x, 0) / pts.length;
@@ -236,7 +235,7 @@ let isIngame = false;    // Owner/Admin/Moderator — Ingame-Tools (Admin-Panel)
 let isTeam = false;      // Owner/Admin/Support
 let isStaff = false;     // isIngame || isTeam → sieht Support-Tools (Dino-Token etc.)
 let zoneEditMode = false;
-let activeZone = null; // 'pvp' | 'pve'
+let activeZoneId = null; // id der aktuell gewählten Zone (Editor)
 let pttHeld = false, ptmHeld = false;
 
 let voiceConnected = false; // im LiveKit-Raum verbunden?
@@ -460,13 +459,13 @@ async function init() {
   el('calibSolve').onclick = () => solveCalibration();
   el('calibReset').onclick = () => { resetCal(); calibPairs = []; saveCalibPairs(); armedRef = null; renderCalibList(); renderBigMap(); };
 
-  // Zonen-Aufnahme
+  // Zonen-Aufnahme (mehrere benannte Zonen)
   el('zoneBtn').onclick = () => toggleZonePanel();
-  el('zonePvpBtn').onclick = () => selectZone('pvp');
-  el('zonePveBtn').onclick = () => selectZone('pve');
+  el('zoneNewBtn').onclick = () => createZone(el('zoneTypeSel').value);
   el('zoneAddBtn').onclick = () => captureZonePoint();
-  el('zoneUndoBtn').onclick = () => { if (activeZone) { ZONES[activeZone].points.pop(); updateZoneInfo(); renderBigMap(); } };
-  el('zoneClearBtn').onclick = () => { if (activeZone) { ZONES[activeZone].points = []; updateZoneInfo(); renderBigMap(); } };
+  el('zoneUndoBtn').onclick = () => { const z = getActiveZone(); if (z) { z.points.pop(); updateZoneInfo(); renderZoneList(); renderBigMap(); } };
+  el('zoneClearBtn').onclick = () => { const z = getActiveZone(); if (z) { z.points = []; updateZoneInfo(); renderZoneList(); renderBigMap(); } };
+  el('zoneName').oninput = () => { const z = getActiveZone(); if (z) { z.name = el('zoneName').value; renderZoneList(); if (mapOpen) renderBigMap(); } };
   el('zoneSaveBtn').onclick = () => saveZones();
 
   window.bf.onHotkey(handleHotkey);
@@ -1556,37 +1555,106 @@ function solveCalibration() {
 
 // ── Zonen-Aufnahme ───────────────────────────────────────────────────────────
 function toggleZonePanel(force) {
-  if (!isAdmin) return;
+  if (!isStaff) return;
   zoneEditMode = force !== undefined ? force : !zoneEditMode;
   el('zonePanel').style.display = zoneEditMode ? 'block' : 'none';
   el('zoneBtn').style.background = zoneEditMode ? 'var(--accent)' : 'var(--panel)';
-  if (zoneEditMode) updateZoneInfo();
+  if (zoneEditMode) { renderZoneList(); syncZoneName(); updateZoneInfo(); }
 }
 
-function selectZone(which) {
-  activeZone = which;
-  el('zonePvpBtn').style.background = which === 'pvp' ? 'rgba(239,68,68,0.25)' : 'transparent';
-  el('zonePveBtn').style.background = which === 'pve' ? 'rgba(34,197,94,0.25)' : 'transparent';
+function getActiveZone() {
+  return ZONES.find((z) => z.id === activeZoneId) || null;
+}
+
+function selectZone(id) {
+  activeZoneId = id;
+  syncZoneName();
+  renderZoneList();
   updateZoneInfo();
+  if (mapOpen) renderBigMap();
+}
+
+function syncZoneName() {
+  const z = getActiveZone();
+  el('zoneName').value = z ? (z.name || '') : '';
+}
+
+function createZone(type) {
+  const z = newZone(type);
+  activeZoneId = z.id;
+  syncZoneName();
+  renderZoneList();
+  updateZoneInfo();
+  if (mapOpen) renderBigMap();
+}
+
+function deleteZone(id) {
+  const i = ZONES.findIndex((z) => z.id === id);
+  if (i >= 0) ZONES.splice(i, 1);
+  if (activeZoneId === id) { activeZoneId = null; syncZoneName(); }
+  renderZoneList();
+  updateZoneInfo();
+  if (mapOpen) renderBigMap();
+}
+
+// Liste aller Zonen im Panel (farbiger Punkt + Name/Typ + Punktzahl; klicken = wählen, ✕ = löschen)
+function renderZoneList() {
+  const wrap = el('zoneList');
+  if (!wrap) return;
+  if (!ZONES.length) {
+    wrap.innerHTML = '<div style="color:var(--muted);padding:4px 2px">Noch keine Zonen — Typ wählen und „＋ Neue Zone".</div>';
+    return;
+  }
+  // nach Typ-Reihenfolge sortiert anzeigen
+  const order = (t) => { const i = ZONE_TYPES.indexOf(t); return i < 0 ? 99 : i; };
+  const sorted = ZONES.slice().sort((a, b) => order(a.type) - order(b.type));
+  wrap.innerHTML = '';
+  for (const z of sorted) {
+    const meta = ZONE_META[z.type] || ZONE_META.pvp;
+    const active = z.id === activeZoneId;
+    const row = document.createElement('div');
+    row.style.cssText = `display:flex;align-items:center;gap:7px;padding:6px 7px;border-radius:6px;cursor:pointer;border:1px solid ${active ? meta.color : 'var(--border)'};background:${active ? meta.color + '22' : 'transparent'}`;
+    const dot = document.createElement('span');
+    dot.style.cssText = `flex:0 0 auto;width:10px;height:10px;border-radius:50%;background:${meta.color}`;
+    const label = document.createElement('span');
+    label.style.cssText = 'flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:#eee';
+    label.textContent = z.name || meta.label;
+    const cnt = document.createElement('span');
+    cnt.style.cssText = 'flex:0 0 auto;color:var(--muted);font-size:11px';
+    cnt.textContent = `${z.points.length}P`;
+    const del = document.createElement('span');
+    del.style.cssText = 'flex:0 0 auto;color:var(--muted);cursor:pointer;padding:0 2px';
+    del.textContent = '✕';
+    del.title = 'Zone löschen';
+    del.onclick = (e) => { e.stopPropagation(); deleteZone(z.id); };
+    row.onclick = () => selectZone(z.id);
+    row.append(dot, label, cnt, del);
+    wrap.appendChild(row);
+  }
 }
 
 function updateZoneInfo() {
-  if (!activeZone) { el('zoneInfo').textContent = 'Keine Zone gewählt'; return; }
-  const n = ZONES[activeZone].points.length;
-  el('zoneInfo').innerHTML = `<b style="color:${activeZone === 'pvp' ? '#ef4444' : '#22c55e'}">${ZONES[activeZone].label}</b> · ${n} Punkt(e) — F6 an jeder Ecke`;
+  const z = getActiveZone();
+  if (!z) { el('zoneInfo').textContent = 'Keine Zone gewählt'; return; }
+  const meta = ZONE_META[z.type] || ZONE_META.pvp;
+  const nm = z.name || meta.label;
+  el('zoneInfo').innerHTML = `<b style="color:${meta.color}">${meta.label}</b> · ${nm} · ${z.points.length} Punkt(e) — F6 an jeder Ecke`;
 }
 
 // Aktuelle Live-Position als Zonen-Eckpunkt aufnehmen (frische Abfrage für Präzision)
 async function captureZonePoint() {
-  if (!zoneEditMode || !activeZone) return;
+  if (!zoneEditMode) return;
+  const z = getActiveZone();
+  if (!z) { el('zoneInfo').innerHTML = '<span style="color:#f59e0b">Zuerst eine Zone wählen/anlegen.</span>'; return; }
   try {
     const res = await fetch(`${config.tokenBase}/positions`, { headers: { Authorization: `Bearer ${sessionToken}` } });
     if (!res.ok) return;
     const data = await res.json();
     const meNow = (data.players || []).find((p) => p.isYou);
     if (!meNow) return;
-    ZONES[activeZone].points.push({ x: meNow.x, y: meNow.y });
+    z.points.push({ x: meNow.x, y: meNow.y });
     updateZoneInfo();
+    renderZoneList();
     if (mapOpen) renderBigMap();
   } catch {}
 }
@@ -1596,7 +1664,7 @@ async function saveZones() {
     const res = await fetch(`${config.tokenBase}/zones`, {
       method: 'POST',
       headers: { Authorization: `Bearer ${sessionToken}`, 'Content-Type': 'application/json' },
-      body: JSON.stringify({ pvp: ZONES.pvp.points, pve: ZONES.pve.points }),
+      body: JSON.stringify({ zones: ZONES.map((z) => ({ id: z.id, type: z.type, name: z.name, points: z.points })) }),
     });
     el('zoneInfo').innerHTML = res.ok
       ? '<span style="color:#22c55e">✅ Zonen für alle gespeichert!</span>'
@@ -1609,8 +1677,10 @@ async function saveZones() {
 async function loadServerZones() {
   try {
     const res = await fetch(`${config.tokenBase}/zones`);
-    if (res.ok) { const d = await res.json(); if (d.pvp || d.pve) setZones(d); }
+    if (res.ok) { const d = await res.json(); setZones(d); }
   } catch {}
+  renderZoneList();
+  renderBigMap();
 }
 
 // Zentrale Kalibrierung vom Server laden (alle Clients beim Start)
@@ -4509,7 +4579,7 @@ function toggleMap(force) {
   if (mapOpen) {
     // Panels wieder einblenden falls noch aktiv (Punkte bleiben erhalten)
     if (calibMode) { el('calibPanel').style.display = 'block'; renderCalibList(); }
-    if (zoneEditMode) { el('zonePanel').style.display = 'block'; updateZoneInfo(); }
+    if (zoneEditMode) { el('zonePanel').style.display = 'block'; renderZoneList(); syncZoneName(); updateZoneInfo(); }
     loadTeleports();
     renderBigMap();
   }
@@ -4608,7 +4678,7 @@ async function connectWithSession(session) {
     // Kalibrierung & Zonen sind fertig (server-gespeichert) — Tools ausgeblendet,
     // damit niemand versehentlich etwas überschreibt. Bei Bedarf wieder einblendbar.
     el('calibBtn').style.display = 'none';
-    el('zoneBtn').style.display = 'none';
+    el('zoneBtn').style.display = isStaff ? 'block' : 'none';
     renderHotkeys();
     if (data.name) el('hudName').textContent = data.name;
     setTier(data.tier);

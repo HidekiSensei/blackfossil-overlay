@@ -792,17 +792,25 @@
         background:var(--panel);border:1px solid var(--border);color:#eee;border-radius:8px;
         font-size:13px;font-weight:600;cursor:pointer">📐 Zonen</button>
 
-      <!-- Zonen-Aufnahme-Panel -->
-      <div id="zonePanel" style="display:none;position:absolute;top:56px;right:12px;width:270px;
+      <!-- Zonen-Aufnahme-Panel (mehrere benannte Zonen) -->
+      <div id="zonePanel" style="display:none;position:absolute;top:56px;right:12px;width:290px;
         background:var(--panel);border:1px solid var(--border);border-radius:10px;padding:14px;font-size:12px">
-        <div style="font-weight:700;margin-bottom:6px">📐 Zonen aufnehmen</div>
+        <div style="font-weight:700;margin-bottom:6px">📐 Zonen verwalten</div>
         <div style="color:var(--muted);margin-bottom:10px;line-height:1.4">
-          Zone wählen → im Spiel die Form abfliegen → an jeder Ecke <b>F6</b> drücken.
-          Reihenfolge = Umrandung. Dann speichern.</div>
+          Typ wählen → <b>Neue Zone</b> → im Spiel die Form abfliegen → an jeder Ecke <b>F6</b> drücken.
+          Reihenfolge = Umrandung. Dann für alle speichern.</div>
         <div style="display:flex;gap:6px;margin-bottom:8px">
-          <button id="zonePvpBtn" style="flex:1;padding:8px;border-radius:6px;border:1px solid var(--border);background:transparent;color:#ef4444;cursor:pointer;font-weight:600">PVP</button>
-          <button id="zonePveBtn" style="flex:1;padding:8px;border-radius:6px;border:1px solid var(--border);background:transparent;color:#22c55e;cursor:pointer;font-weight:600">PVE</button>
+          <select id="zoneTypeSel" style="flex:1;padding:7px;border-radius:6px;border:1px solid var(--border);background:var(--panel);color:#eee;cursor:pointer">
+            <option value="pvp">PvP</option>
+            <option value="pve">PvE</option>
+            <option value="sanctuary">Sanctuary</option>
+            <option value="patrol">Patrol</option>
+            <option value="migration">Migration</option>
+          </select>
+          <button id="zoneNewBtn" style="width:auto;padding:8px 10px;border-radius:6px;border:0;background:var(--accent);color:#fff;font-weight:600;cursor:pointer">＋ Neue Zone</button>
         </div>
+        <div id="zoneList" style="max-height:180px;overflow-y:auto;margin-bottom:8px;display:flex;flex-direction:column;gap:4px"></div>
+        <input id="zoneName" placeholder="Name (optional)" style="width:100%;box-sizing:border-box;padding:7px;margin-bottom:8px;border-radius:6px;border:1px solid var(--border);background:var(--panel);color:#eee;font-size:12px">
         <div id="zoneInfo" style="color:var(--muted);margin-bottom:8px">Keine Zone gewählt</div>
         <div style="display:flex;gap:6px">
           <button id="zoneAddBtn" style="flex:1;padding:8px;border-radius:6px;border:0;background:var(--accent);color:#fff;cursor:pointer">＋ Punkt (F6)</button>

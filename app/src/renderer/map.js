@@ -2,26 +2,17 @@
 // Kalibrierung wird in localStorage gespeichert und ist live justierbar.
 
 // ── Zonen (Welt-Koordinaten, vom Server) ────────────────────────────────────
-export const ZONES = {
-  pvp: {
-    label: 'PVP', color: '#ef4444',
-    points: [
-      { x: 364958.415, y: -323066.7 },
-      { x: 324911.477, y: -290337.75 },
-      { x: 247492.094, y: -356983.359 },
-      { x: 310160.555, y: -437747.444 },
-    ],
-  },
-  pve: {
-    label: 'PVE', color: '#22c55e',
-    points: [
-      { x: -274705.875, y: 32377.529 },
-      { x: -197118.469, y: 52323.938 },
-      { x: -241417.556, y: 152630.258 },
-      { x: -333486.383, y: 124673.398 },
-    ],
-  },
+// Mehrere benannte Zonen über 5 Typen. Array wird IN PLACE mutiert (ES-Module-
+// Live-Binding: niemals neu zuweisen). Jedes Element: { id, type, name, points }.
+export const ZONE_TYPES = ['pvp', 'pve', 'sanctuary', 'patrol', 'migration'];
+export const ZONE_META = {
+  pvp:       { color: '#ef4444', label: 'PvP' },
+  pve:       { color: '#22c55e', label: 'PvE' },
+  sanctuary: { color: '#3b82f6', label: 'Sanctuary' },
+  patrol:    { color: '#a855f7', label: 'Patrol' },
+  migration: { color: '#f59e0b', label: 'Migration' },
 };
+export const ZONES = [];
 
 // ── Kalibrierung als affine Abbildung Welt → normalisiert [0..1] ─────────────
 // nx = a*wx + b*wy + e ;  ny = c*wx + d*wy + f
@@ -35,10 +26,37 @@ function loadCal() {
   try { return { ...DEFAULTS, ...JSON.parse(localStorage.getItem(CAL_KEY)) }; }
   catch { return { ...DEFAULTS }; }
 }
-// Zonen-Polygone vom Server übernehmen
+// Zonen-Polygone vom Server übernehmen (ZONES in place ersetzen)
+function randZoneId() {
+  return 'z_' + Math.random().toString(36).slice(2, 10) + Date.now().toString(36).slice(-4);
+}
 export function setZones(data) {
-  if (Array.isArray(data.pvp)) ZONES.pvp.points = data.pvp;
-  if (Array.isArray(data.pve)) ZONES.pve.points = data.pve;
+  ZONES.length = 0;
+  if (data && Array.isArray(data.zones)) {
+    for (const z of data.zones) {
+      ZONES.push({
+        id: z.id || randZoneId(),
+        type: ZONE_TYPES.includes(z.type) ? z.type : 'pvp',
+        name: z.name || '',
+        points: Array.isArray(z.points) ? z.points : [],
+      });
+    }
+    return;
+  }
+  // Legacy-Fallback: einzelne pvp/pve-Polygone
+  if (data && Array.isArray(data.pvp) && data.pvp.length) {
+    ZONES.push({ id: randZoneId(), type: 'pvp', name: '', points: data.pvp });
+  }
+  if (data && Array.isArray(data.pve) && data.pve.length) {
+    ZONES.push({ id: randZoneId(), type: 'pve', name: '', points: data.pve });
+  }
+}
+// Neue leere Zone anlegen (Editor)
+export function newZone(type) {
+  const t = ZONE_TYPES.includes(type) ? type : 'pvp';
+  const z = { id: randZoneId(), type: t, name: '', points: [] };
+  ZONES.push(z);
+  return z;
 }
 
 export function getCal() { return cal; }
@@ -322,23 +340,33 @@ export function drawMinimap(view, players, me, speakRange = 0, waypoints = [], z
 
 // ── Helfer ───────────────────────────────────────────────────────────────────
 function drawZones(ctx, project) {
-  for (const z of Object.values(ZONES)) {
-    if (!z.points.length) continue;
+  for (const z of ZONES) {
+    if (!z.points || !z.points.length) continue;
+    const meta = ZONE_META[z.type] || ZONE_META.pvp;
+    const color = meta.color;
     // Punkte in Aufnahme-Reihenfolge (unterstützt komplexe/konkave Formen)
     const pts = z.points.map((p) => {
       const { nx, ny } = worldToNorm(p.x, p.y);
       return project(nx, ny);
     });
-    ctx.beginPath();
-    pts.forEach((pt, i) => i ? ctx.lineTo(pt.px, pt.py) : ctx.moveTo(pt.px, pt.py));
-    ctx.closePath();
-    ctx.fillStyle = z.color + '22';
-    ctx.strokeStyle = z.color; ctx.lineWidth = 2;
-    ctx.fill(); ctx.stroke();
+    if (pts.length < 2) {
+      // Einzelpunkt: kleiner Marker, kein Polygon
+      const pt = pts[0];
+      ctx.beginPath(); ctx.arc(pt.px, pt.py, 4, 0, Math.PI * 2);
+      ctx.fillStyle = color; ctx.fill();
+    } else {
+      ctx.beginPath();
+      pts.forEach((pt, i) => i ? ctx.lineTo(pt.px, pt.py) : ctx.moveTo(pt.px, pt.py));
+      ctx.closePath();
+      ctx.fillStyle = color + '22';
+      ctx.strokeStyle = color; ctx.lineWidth = 2;
+      ctx.fill(); ctx.stroke();
+    }
     // Label im Schwerpunkt
-    const cx = pts.reduce((s,p)=>s+p.px,0)/pts.length, cy = pts.reduce((s,p)=>s+p.py,0)/pts.length;
-    ctx.fillStyle = z.color; ctx.font = 'bold 13px system-ui'; ctx.textAlign = 'center';
-    ctx.fillText(z.label, cx, cy);
+    const cx = pts.reduce((s, p) => s + p.px, 0) / pts.length;
+    const cy = pts.reduce((s, p) => s + p.py, 0) / pts.length;
+    ctx.fillStyle = color; ctx.font = 'bold 13px system-ui'; ctx.textAlign = 'center';
+    ctx.fillText(z.name || meta.label, cx, cy);
   }
 }
 
@@ -435,8 +463,10 @@ function drawTeleport(ctx, px, py, number, highlight, scale = 1) {
 
 // ── Welche Zone? (Point-in-Polygon) ─────────────────────────────────────────
 export function zoneAt(wx, wy) {
-  for (const [key, z] of Object.entries(ZONES)) {
-    if (pointInPolygon(wx, wy, z.points)) return z.label;
+  for (const z of ZONES) {
+    if (z.points && z.points.length >= 3 && pointInPolygon(wx, wy, z.points)) {
+      return z.name || (ZONE_META[z.type] || ZONE_META.pvp).label;
+    }
   }
   return null;
 }
