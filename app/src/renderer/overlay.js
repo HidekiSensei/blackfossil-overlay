@@ -424,6 +424,42 @@ async function pollHud() {
     const res = await fetch(`${config.tokenBase}/me`, { headers: { Authorization: `Bearer ${sessionToken}` } });
     if (res.ok) updateHud(await res.json());
   } catch {}
+  pollGrowStatus();
+}
+
+// ── Grow-Boost/Stop-Timer (HUD-Pill, nur sichtbar wenn aktiv) ─────────────────
+// Server-Sync alle 6s (über pollHud) + lokaler 1s-Countdown für einen flüssigen Balken.
+// Der Timer läuft nur online (Backend zählt nur dann runter) → lokal nur dekrementieren, wenn on-server.
+let growTimerState = null; // { kind:'boost'|'stop', remaining, total, targetPct }
+async function pollGrowStatus() {
+  if (!sessionToken) return;
+  try {
+    const res = await fetch(`${config.tokenBase}/me/grow-status`, { headers: { Authorization: `Bearer ${sessionToken}` } });
+    if (!res.ok) return;
+    const d = await res.json();
+    if ((d.boostRemaining || 0) > 0) growTimerState = { kind: 'boost', remaining: d.boostRemaining, total: d.boostTotal || d.boostRemaining };
+    else if ((d.stopRemaining || 0) > 0) growTimerState = { kind: 'stop', remaining: d.stopRemaining, total: d.stopTotal || d.stopRemaining, targetPct: d.stopTargetPct || 0 };
+    else growTimerState = null;
+    renderGrowTimer();
+  } catch {}
+}
+function renderGrowTimer() {
+  const box = el('growTimer'); if (!box) return;
+  const s = growTimerState;
+  if (!s || !me) { box.style.display = 'none'; return; } // nur on-server + aktiv
+  box.style.display = 'block';
+  el('gtIcon').textContent = s.kind === 'boost' ? '📈' : '⏹️';
+  el('gtLabel').textContent = s.kind === 'boost' ? 'Grow-Boost' : `Grow-Stop · ${s.targetPct} %`;
+  const m = Math.floor(s.remaining / 60), sec = s.remaining % 60;
+  el('gtTime').textContent = `${m}:${String(sec).padStart(2, '0')}`;
+  const pct = s.total > 0 ? Math.max(0, Math.min(100, (s.remaining / s.total) * 100)) : 0;
+  el('gtFill').style.width = pct + '%';
+}
+function tickGrowTimer() {
+  if (!growTimerState) return;
+  if (me && growTimerState.remaining > 0) growTimerState.remaining -= 1; // Timer läuft nur online
+  if (growTimerState.remaining <= 0) growTimerState = null;
+  renderGrowTimer();
 }
 
 let config = { tokenBase: 'https://api.blackfossil.de', hotkeys: {} };
@@ -683,12 +719,14 @@ function applyServerState() {
   el('serverBanner').style.display = onServer ? 'none' : 'block';
   const mw = el('minimapWrap'); if (mw) mw.style.display = (onServer && !miniHidden) ? '' : 'none';
   const hud = el('hud'); if (hud) hud.style.display = onServer ? '' : 'none';
+  renderGrowTimer(); // Grow-Timer folgt dem Server-Gating (versteckt sich off-server)
   updateVoiceWarn();
   if (onServer === wasOnServer) return;
   wasOnServer = onServer;
   if (onServer) {
     // Auf dem Server → Voice verbinden (nur hier erlaubt)
     if (!room && sessionToken) connectWithSession(sessionToken);
+    pollGrowStatus(); // nach (Re-)Login sofort den Grow-Timer wiederherstellen (überlebt Relog)
   } else {
     // Server verlassen → Voice trennen + alle Overlay-Fenster schließen
     if (room) { try { room.disconnect(); } catch {} room = null; micEnabled = false; voiceConnected = false; setMicState('disconnected'); }
@@ -1258,6 +1296,7 @@ function showAdminTab(t) {
   if (t === 'dtoken') ensureDtLoaded();
   else if (t === 'pvp') ensurePvpLoaded();
   else if (t === 'account') renderAccount();
+  else if (t === 'lootbox') ensureLootboxCfgLoaded();
   else if (t === 'server') renderServer();
   bfScheduleFrameSync && bfScheduleFrameSync();
 }
@@ -1356,6 +1395,7 @@ const GIFT_TYPES = [
   { value: 'lipid', label: '🥑 Lipid-Token' },
   { value: 'heal', label: '❤️ Heal-Token' },
   { value: 'grow_boost', label: '📈 Grow-Boost-Token' },
+  { value: 'grow_stop', label: '⏹️ Grow-Stop-Token' },
   { value: 'insta_grow', label: '⚡ Insta-Grow-Token' },
 ];
 function ensureGiftTypeOptions() {
@@ -1961,12 +2001,13 @@ function toggleFeature(id) {
   else if (id === 'lexikon') renderLexikon();
   else if (id === 'skinEditor') renderSkinEditor();
   else if (id === 'quests') { loadQuest(); startQuestPoll(); }
+  else if (id === 'lootbox') renderLootbox();
   else if (id === 'support') { renderSupport(); startSupportPoll(); }
   el(id).style.display = 'block';
   updateInteractive();
 }
 function closeAllFeatures(skipInteractive) {
-  ['dinoInfo', 'skinEditor', 'garage', 'market', 'group', 'profile', 'lexikon', 'quests', 'support'].forEach((id) => { el(id).style.display = 'none'; });
+  ['dinoInfo', 'skinEditor', 'garage', 'market', 'group', 'profile', 'lexikon', 'quests', 'lootbox', 'support'].forEach((id) => { el(id).style.display = 'none'; });
   const tc = el('ticketChat'); if (tc) tc.style.display = 'none';   // Ticket-Chat mit schließen
   stopQuestPoll();
   stopSupportPoll();
@@ -3112,7 +3153,19 @@ function renderDinoInfo() {
         <div class="sec-title" style="margin-top:16px">🧬 Mutationen</div>
         <div id="di-mut" class="mut-tbl-wrap" style="margin:6px 0"></div>
       </div>
+    </div>
+    <div id="diGrowDock" class="di-grow-dock">
+      <div id="diGrowTab" class="di-grow-tab">📈 Grow-Boosts <span class="gd-caret" id="diGrowCaret">▶</span></div>
+      <div class="di-grow-panel"><div class="di-grow-inner">
+        <div class="sec-title" style="margin-bottom:8px">📈 Grow-Token</div>
+        <div id="diGrowList"><div style="font-size:12px;color:var(--muted)">Lade…</div></div>
+      </div></div>
     </div>`;
+  { const gt = el('diGrowTab'); if (gt) gt.onclick = () => {
+      const dock = el('diGrowDock'); const open = dock.classList.toggle('open');
+      const c = el('diGrowCaret'); if (c) c.textContent = open ? '◀' : '▶';
+      bfScheduleFrameSync && bfScheduleFrameSync();
+    }; }
   tokenConfirmOpen = false; // frisch öffnen → keine hängende Bestätigungs-Sperre
   { const sb = el('diSlayBtn'); if (sb) sb.onclick = () => bfConfirm({
       title: '💀 Dino töten?', danger: true, confirmLabel: 'Ja, töten',
@@ -3205,6 +3258,341 @@ async function redeemOverlayToken(id, label, emoji) {
 }
 
 function stopDinoInfo() { if (dinoTimer) { clearInterval(dinoTimer); dinoTimer = null; } }
+
+// ── Lootbox (Slot-Machine) + Grow-Token (Seitenmenü am Dino-Tab) ─────────────
+const LB_TOKEN_META = {
+  hunger: ['🍖', 'Hunger'], thirst: ['💧', 'Durst'], protein: ['🥩', 'Protein'],
+  carbs: ['🌿', 'Carbs'], lipid: ['🥑', 'Lipid'], heal: ['❤️', 'Heal'],
+  grow_boost: ['📈', 'Grow-Boost'], grow_stop: ['⏹️', 'Grow-Stop'], insta_grow: ['⚡', 'Insta-Grow'],
+};
+function lbTok(id) { return LB_TOKEN_META[id] || ['🎁', id]; }
+const LB_SPIN = Object.values(LB_TOKEN_META).map((x) => x[0]); // Emoji-Pool für die drehenden Walzen
+const lbSleep = (ms) => new Promise((r) => setTimeout(r, ms));
+// Grow-Token (keine Vital-Bar) → ausklappbares Seitenmenü am Dino-Tab.
+const GROW_REDEEM = [
+  { id: 'grow_boost', desc: 'Beschleunigt dein Wachstum ~1 Stunde lang (+~20 % pro Stunde aktiver Spielzeit). Pausiert in der PvE-Zone.' },
+  { id: 'grow_stop', desc: 'Stoppt dein Wachstum 1 Stunde lang auf einer Wunsch-Prozentzahl.' },
+  { id: 'insta_grow', desc: 'Setzt dein Wachstum sofort auf 80 % (du musst lebend im Spiel sein).' },
+];
+let lbOpening = false;
+let lbCurGrowPct = 0;
+let lbCost = 0;
+let growPickOpen = false; // Grow-Stop-Slider offen → 2s-Refresh nicht überschreiben
+
+// ── Lootbox-Panel (Dock) ─────────────────────────────────────────────────────
+function renderLootbox() {
+  const panel = el('lootbox');
+  panel.innerHTML = `<h2>🎁 Lootbox</h2>
+    <div id="lbBox"><div style="color:var(--muted);font-size:13px">Lade…</div></div>
+    <button class="closeFeature secondary" style="width:100%;margin-top:14px">Schließen</button>`;
+  panel.querySelector('.closeFeature').onclick = () => closeAllFeatures();
+  loadLootbox();
+}
+
+async function loadLootbox() {
+  try {
+    const lb = await fetch(`${config.tokenBase}/lootbox`, { headers: { Authorization: `Bearer ${sessionToken}` } }).then((r) => r.json());
+    renderLootboxBox(lb);
+  } catch (e) {
+    const b = el('lbBox'); if (b) b.innerHTML = '<div style="color:#ef4444;font-size:13px">Lootbox konnte nicht geladen werden.</div>';
+  }
+}
+
+function renderLootboxBox(lb) {
+  const box = el('lbBox'); if (!box) return;
+  lbCost = lb.cost || 0;
+  const chances = (lb.chances || []).map((c) => { const [e, l] = lbTok(c.id); return `<div><span>${e} ${l}</span><span style="color:var(--muted)">${(c.pct || 0).toFixed(1)} %</span></div>`; }).join('');
+  box.innerHTML = `
+    <div class="lb-hero"><div class="lb-box">🎁</div></div>
+    <div class="lb-chips" id="lbChips"></div>
+    <div class="lb-slot"><div class="lb-reel" id="lbR0">❔</div><div class="lb-reel" id="lbR1">❔</div><div class="lb-reel" id="lbR2">❔</div></div>
+    <div id="lbResult"></div>
+    <button id="lbOpenBtn" style="width:100%;margin-top:8px"></button>
+    <details style="margin-top:12px"><summary style="cursor:pointer;font-size:12px;color:var(--muted);user-select:none">🎲 Drop-Chancen anzeigen</summary>
+      <div class="lb-chance-grid" style="margin-top:8px">${chances}</div>
+    </details>`;
+  const btn = el('lbOpenBtn'); if (btn) btn.onclick = () => openLootbox();
+  updateLbAvail(lb.points, lb.freeBoxes);
+}
+
+// Punkte-/Gratis-Box-Chips + Öffnen-Button aktualisieren, OHNE die Walzen neu zu bauen.
+function updateLbAvail(pts, free) {
+  pts = pts || 0; free = free || 0;
+  const chips = el('lbChips');
+  if (chips) chips.innerHTML = `<span class="lb-chip">💰 ${pts.toLocaleString('de-DE')} Pkt.</span>${free > 0 ? `<span class="lb-chip free">🎁 ${free} Gratis-Box${free > 1 ? 'en' : ''}</span>` : ''}`;
+  const btn = el('lbOpenBtn');
+  if (btn) {
+    const canOpen = free > 0 || pts >= lbCost;
+    btn.disabled = !canOpen || lbOpening;
+    btn.textContent = free > 0 ? `🎁 Gratis-Box öffnen (${free} übrig)` : (canOpen ? `🎁 Box öffnen — ${lbCost.toLocaleString('de-DE')} Pkt.` : `🎁 Box — ${lbCost.toLocaleString('de-DE')} Pkt. (zu wenig Punkte)`);
+  }
+}
+
+function lbLockReel(reel, emoji, jackpot) {
+  if (!reel) return;
+  reel.dataset.locked = '1';
+  reel.textContent = emoji;
+  reel.classList.remove('spin');
+  reel.classList.add('locked');
+  if (jackpot) reel.classList.add('jackpot');
+}
+
+async function openLootbox() {
+  if (lbOpening) return; lbOpening = true;
+  const btn = el('lbOpenBtn'); if (btn) { btn.disabled = true; btn.textContent = '🎰 Dreht…'; }
+  const res = el('lbResult'); if (res) res.innerHTML = '';
+  const reels = [el('lbR0'), el('lbR1'), el('lbR2')].filter(Boolean);
+  reels.forEach((r) => { r.classList.remove('locked', 'jackpot'); r.dataset.locked = ''; r.classList.add('spin'); });
+  const spin = setInterval(() => { reels.forEach((r) => { if (!r.dataset.locked) r.textContent = LB_SPIN[Math.floor(Math.random() * LB_SPIN.length)]; }); }, 70);
+
+  let d = null, err = null;
+  try {
+    const r = await fetch(`${config.tokenBase}/lootbox/open`, { method: 'POST', headers: { Authorization: `Bearer ${sessionToken}`, 'Content-Type': 'application/json' }, body: '{}' });
+    d = await r.json(); if (!r.ok) throw new Error(apiErr(d));
+  } catch (e) { err = e; }
+  await lbSleep(750); // Mindest-Spin für Spannung
+
+  if (err || !d) {
+    clearInterval(spin);
+    reels.forEach((r) => { r.classList.remove('spin'); r.textContent = '❔'; });
+    lbOpening = false;
+    showToast((err && err.message) || 'Lootbox fehlgeschlagen', 'error');
+    updateLbAvail(0, 0); loadLootbox(); // Button-Zustand zurücksetzen
+    return;
+  }
+
+  const jackpot = d.outcome === 'jackpot';
+  for (const idx of [0, 2, 1]) { // links, rechts, dann mitte einrasten
+    lbLockReel(reels[idx], lbTok((d.reels || [])[idx])[0], jackpot);
+    await lbSleep(480);
+  }
+  clearInterval(spin);
+
+  const [e, l] = lbTok(d.reward);
+  if (res) res.innerHTML = `<div class="lb-result${jackpot ? ' jackpot' : ''}"><div style="font-size:15px">${jackpot ? '🎉 JACKPOT! ' : ''}${e} <b>${d.count}× ${l}</b> gewonnen!</div></div>`;
+  showToast(`${e} ${d.count}× ${l} gewonnen!`, 'success');
+  if (typeof d.points === 'number') setPointsHud(d.points);
+  lbOpening = false;
+  updateLbAvail(d.points, d.freeBoxes);
+}
+
+// ── Grow-Token-Seitenmenü (am Dino-Tab, gefüllt aus updateDinoInfo) ───────────
+function renderDiGrow(tokens) {
+  const list = el('diGrowList'); if (!list) return;
+  if (growPickOpen) return; // Slider/Picker offen → nicht überschreiben
+  const offline = tokens === null;
+  tokens = tokens || {};
+  // IMMER alle drei Grow-Aktionen zeigen (auch mit 0 → damit Grow-Stop sichtbar/entdeckbar ist).
+  list.innerHTML = GROW_REDEEM.map((g) => {
+    const [e, l] = lbTok(g.id); const n = tokens[g.id] || 0;
+    const action = offline
+      ? '<span style="font-size:10px;color:var(--muted)">offline</span>'
+      : (n > 0 ? `<button data-grow="${g.id}">Einlösen</button>` : '<span style="font-size:10px;color:var(--muted)">🎁 aus Lootbox</span>');
+    return `<div class="di-grow-card"${n > 0 ? '' : ' style="opacity:.6"'}><div class="gc-head"><b>${e} ${l} ×${n}</b>${action}</div><div class="gc-desc">${g.desc}</div></div>`;
+  }).join('');
+  list.querySelectorAll('[data-grow]').forEach((b) => { b.onclick = () => redeemGrowToken(b.dataset.grow); });
+}
+
+function redeemGrowToken(id) {
+  if (id === 'grow_stop') { showGrowStopPicker(); return; }
+  if (id === 'insta_grow') { showInstaGrowPicker(); return; }
+  const [e, l] = lbTok(id);
+  if (!window.confirm(`${e} ${l} einlösen?`)) return;
+  doRedeemGrow({ type: id });
+}
+
+function showGrowStopPicker() {
+  const wrap = el('diGrowList'); if (!wrap) return;
+  growPickOpen = true;
+  const start = Math.max(lbCurGrowPct || 50, 5);
+  wrap.innerHTML = `<div style="border:1px solid var(--accent);border-radius:10px;padding:11px;background:rgba(var(--accent-rgb),.1)">
+    <div style="font-size:12px;margin-bottom:8px">⏹️ <b>Grow-Stop</b> — bei wie viel % 1 Stunde stoppen?</div>
+    <div style="display:flex;align-items:center;gap:8px;margin-bottom:8px">
+      <input id="gsRange" type="range" min="5" max="100" value="${start}" style="flex:1">
+      <span id="gsVal" style="min-width:42px;text-align:right;font-weight:600">${start} %</span>
+    </div>
+    ${lbCurGrowPct ? `<div style="font-size:10px;color:var(--muted);margin-bottom:9px">Du bist bei ~${lbCurGrowPct} % — Ziel muss ≥ sein.</div>` : '<div style="font-size:10px;color:var(--muted);margin-bottom:9px">Greift, sobald du im Spiel bist.</div>'}
+    <div style="display:flex;gap:6px">
+      <button id="gsGo" style="flex:1">✅ Aktivieren</button>
+      <button id="gsCancel" class="secondary" style="flex:1">Zurück</button>
+    </div></div>`;
+  const range = el('gsRange'), val = el('gsVal');
+  range.oninput = () => { val.textContent = range.value + ' %'; };
+  el('gsGo').onclick = () => { growPickOpen = false; doRedeemGrow({ type: 'grow_stop', targetPct: parseInt(range.value, 10) }); };
+  el('gsCancel').onclick = () => { growPickOpen = false; updateDinoInfo(); };
+}
+
+async function doRedeemGrow(body) {
+  try {
+    const r = await fetch(`${config.tokenBase}/tokens/redeem`, { method: 'POST', headers: { Authorization: `Bearer ${sessionToken}`, 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+    const d = await r.json(); if (!r.ok) throw new Error(apiErr(d));
+    let msg = 'Token eingelöst!';
+    if (body.type === 'grow_boost') msg = '📈 Grow-Boost aktiv (~1 Stunde).';
+    else if (body.type === 'insta_grow') msg = '⚡ Insta-Grow eingelöst!';
+    else if (body.type === 'grow_stop') msg = `⏹️ Grow-Stop bei ${body.targetPct} % aktiv (~1 Stunde).`;
+    showToast(msg, 'success');
+    pollGrowStatus(); // Timer-Pill sofort aktualisieren
+  } catch (e) { showToast(e.message, 'error'); }
+  updateDinoInfo();
+}
+
+// ── Insta-Grow: Mutations-Picker (Katalog aus dem Bot portiert) ──────────────
+// diet-Zuordnung je Spezies (unbekannt → 'both').
+const DIET_MAP = {
+  Allosaurus: 'carni', Carnotaurus: 'carni', Ceratosaurus: 'carni', Deinosuchus: 'carni', Dilophosaurus: 'carni',
+  Herrerasaurus: 'carni', Omniraptor: 'carni', Pteranodon: 'carni', Troodon: 'carni', Tyrannosaurus: 'carni', Rex: 'carni',
+  Diabloceratops: 'herbi', Dryosaurus: 'herbi', Hypsilophodon: 'herbi', Kentrosaurus: 'herbi', Maiasaura: 'herbi', Maiasaurus: 'herbi',
+  Pachycephalosaurus: 'herbi', Stegosaurus: 'herbi', Tenontosaurus: 'herbi', Triceratops: 'herbi',
+  Beipiaosaurus: 'both', Gallimimus: 'both',
+};
+// Mutations-Katalog: v=Ingame-Name, l=Label, d=diet, s=Basis-Slots, h=hidden(★), f=femaleOnly, x=Beschreibung.
+const MUT_CATALOG = [
+  { v: 'Accelerated Prey Drive', l: 'Accelerated Prey Drive', d: 'carni', s: [1, 2, 3], x: 'Mehr Schaden gegen Tiere mit niedriger Gesundheit (10%)' },
+  { v: 'Advanced Gestation', l: 'Advanced Gestation', d: 'both', f: 1, s: [1, 2, 3], x: 'Schnellere Ei-Gestation/Inkubation/Cooldown (50%)' },
+  { v: 'Barometric Sensitivity', l: 'Barometric Sensitivity', d: 'herbi', s: [1, 2, 3], x: 'Vorwarnung vor Stürmen oder Dürren' },
+  { v: 'Cellular Regeneration', l: 'Cellular Regeneration', d: 'both', s: [1, 2, 3], x: 'Regeneriert Gesundheit etwas schneller (15%)' },
+  { v: 'Congenital Hypoalgesia', l: 'Congenital Hypoalgesia', d: 'both', s: [1, 2, 3], x: 'Weniger Schaden gegen größere Spezies (15%)' },
+  { v: 'Efficient Digestion', l: 'Efficient Digestion', d: 'both', s: [1, 2, 3], x: 'Nahrungsverbrauch verlangsamt sich (20%)' },
+  { v: 'Enlarged Meniscus', l: 'Enlarged Meniscus', d: 'both', s: [1, 2, 3], x: 'Fallschaden trifft zuerst die Ausdauer' },
+  { v: 'Epidermal Fibrosis', l: 'Epidermal Fibrosis', d: 'both', s: [1, 2, 3], x: 'Erhöht Blutungsresistenz (15%)' },
+  { v: 'Featherweight', l: 'Featherweight', d: 'both', s: [1, 2, 3], x: 'Fußabdrücke verblassen schneller (50%)' },
+  { v: 'Hematophagy', l: 'Hematophagy', d: 'both', s: [1, 2, 3], x: 'Stellt beim Fressen etwas Durst wieder her (15%)' },
+  { v: 'Hemomania', l: 'Hemomania', d: 'carni', s: [1, 2, 3], x: 'Zusatzschaden gegen blutende Ziele (5%)' },
+  { v: 'Hydrodynamic', l: 'Hydrodynamic', d: 'both', s: [1, 2, 3], x: 'Erhöhte Schwimmgeschwindigkeit (15%)' },
+  { v: 'Hydro-regenerative', l: 'Hydro-regenerative', d: 'both', s: [1, 2, 3], x: 'Schnellere HP-Regen bei Regen (25%)' },
+  { v: 'Hypervigilance', l: 'Hypervigilance', d: 'herbi', s: [1, 2, 3], x: 'Größerer Kamerawinkel beim Essen/Trinken, besseres Hören (50%)' },
+  { v: 'Increased Inspiratory Capacity', l: 'Increased Inspiratory Capacity', d: 'both', s: [1, 2, 3], x: 'Erhöhte Sauerstoffkapazität (15%)' },
+  { v: 'Infrasound Communication', l: 'Infrasound Communication', d: 'both', s: [1, 2, 3], x: 'Deutlich weniger Lärm beim Sprechen (50%)' },
+  { v: 'Nocturnal', l: 'Nocturnal', d: 'both', s: [1, 2, 3], x: 'Schnellere Regen. & höheres Tempo nachts (5%)' },
+  { v: 'Osteosclerosis', l: 'Osteosclerosis', d: 'both', s: [1, 2, 3], x: 'Resistenz gegen Knochenbrüche (20%)' },
+  { v: 'Photosynthetic Regeneration', l: 'Photosynthetic Regeneration', d: 'herbi', s: [1, 2, 3], x: 'Erhöhte Ausdauerregen. am Tag (10%)' },
+  { v: 'Photosynthetic Tissue', l: 'Photosynthetic Tissue', d: 'both', s: [1, 2, 3], x: 'Schnellere Regen. & höheres Tempo am Tag (5%)' },
+  { v: 'Reabsorption', l: 'Reabsorption', d: 'both', s: [1, 2, 3], x: 'Stellt etwas Wasser bei Regen/Schwimmen wieder her' },
+  { v: 'Social Behavior', l: 'Social Behavior', d: 'both', s: [1, 2, 3], x: 'Erhöhte Gruppengröße' },
+  { v: 'Submerged Optical Retention', l: 'Submerged Optical Retention', d: 'both', s: [1, 2, 3], x: 'Erhöhte Sichtweite unter Wasser (5%)' },
+  { v: 'Sustained Hydration', l: 'Sustained Hydration', d: 'both', s: [1, 2, 3], x: 'Wasserverbrauch verlangsamt sich (20%)' },
+  { v: 'Truculency', l: 'Truculency', d: 'herbi', s: [1, 2, 3], x: 'Tritte schütteln festgeklammerte Tiere eher ab (5%)' },
+  { v: 'Wader', l: 'Wader', d: 'both', s: [1, 2, 3], x: 'Weniger behindert beim Waten durch flaches Wasser (25%)' },
+  { v: 'Xerocole Adaptation', l: 'Xerocole Adaptation', d: 'herbi', s: [1, 2, 3], x: 'Erhält Wasser beim Verzehr von Pflanzen (15%)' },
+  { v: 'Tactile Endurance', l: 'Tactile Endurance', d: 'herbi', s: [2], x: 'Verwandelt eingehenden Schaden in Ausdauer' },
+  { v: 'Traumatic Thrombosis', l: 'Traumatic Thrombosis', d: 'both', s: [2], x: 'Verhindert Tod durch Blutverlust beim Ruhen' },
+  { v: 'Gastronomic Regeneration', l: 'Gastronomic Regeneration', d: 'both', s: [2], x: 'Essen stellt etwas Gesundheit wieder her' },
+  { v: 'Hypermetabolic Inanition', l: 'Hypermetabolic Inanition', d: 'carni', s: [2], x: 'Je weniger Hunger, desto mehr Schaden' },
+  { v: 'Augmented Tapetum', l: 'Augmented Tapetum', d: 'carni', h: 1, s: [2, 3], x: 'Erhöhte Nachtsicht' },
+  { v: 'Cannibalistic', l: 'Cannibalistic', d: 'carni', h: 1, s: [2, 3], x: 'Eigene Spezies als bevorzugte Beute' },
+  { v: 'Enhanced Digestion', l: 'Enhanced Digestion', d: 'both', h: 1, s: [2, 3], x: 'Verringert Abbaurate von Nährstoffen' },
+  { v: 'Heightened Ghrelin', l: 'Heightened Ghrelin', d: 'both', h: 1, s: [2], x: 'Erhöhte Kapazität für übermäßiges Essen' },
+  { v: 'Multichambered Lungs', l: 'Multichambered Lungs', d: 'both', h: 1, s: [2, 3], x: 'Verringert Schwelle für Ausdauerregeneration' },
+  { v: 'Osteophagic', l: 'Osteophagic', d: 'carni', h: 1, s: [2, 3], x: 'Kann Knochen fressen, heilt Knochenbrüche schneller' },
+  { v: 'Prolific Reproduction', l: 'Prolific Reproduction', d: 'both', f: 1, h: 1, s: [2, 3], x: 'Junge wachsen schneller, brauchen weniger Nahrung' },
+  { v: 'Reinforced Tendons', l: 'Reinforced Tendons', d: 'both', h: 1, s: [2, 3], x: 'Springen kostet weniger Ausdauer' },
+  { v: 'Reniculate Kidneys', l: 'Reniculate Kidneys', d: 'both', h: 1, s: [2, 3], x: 'Kann Salzwasser trinken' },
+];
+// Erlaubte Mutationen für (Slot + Kontext). Slot 4 = Union aus Slot 2/3 (nur wenn freigeschaltet).
+function mutForSlot(slot, ctx) {
+  return MUT_CATALOG.filter((m) => {
+    const allowed = slot === 4 ? (ctx.fourth && (m.s.includes(2) || m.s.includes(3))) : m.s.includes(slot);
+    if (!allowed) return false;
+    if (m.d !== 'both' && m.d !== ctx.diet) return false;
+    if (m.f && ctx.gender !== 'female') return false;
+    return true;
+  });
+}
+
+async function showInstaGrowPicker() {
+  let d = null;
+  try { d = await fetch(`${config.tokenBase}/me`, { headers: { Authorization: `Bearer ${sessionToken}` } }).then((r) => r.json()); } catch {}
+  if (!d || !d.online) { showToast('Du musst lebend im Spiel auf einem Dino sein.', 'error'); return; }
+  if ((d.grow || 0) >= 0.80) { showToast(`Dein Dino ist schon bei ${Math.round((d.grow || 0) * 100)} % — Insta-Grow geht nur bis 80 %.`, 'error'); return; }
+  const diet = DIET_MAP[d.dino] || 'both';
+  const gender = /female|^1$|^f$/i.test(String(d.gender || '')) ? 'female' : 'male';
+  const met = Array.isArray(d.primes) ? d.primes.filter(Boolean).length : 0;
+  const fourth = !!(d.isElder || d.isPrime || met / 10 >= 0.5);
+  const ctx = { diet, gender, fourth };
+  const slotCount = fourth ? 4 : 3;
+  // Aktuelle Mutationen vorbelegen (nur bekannte) → „nicht ändern" = bleibt erhalten.
+  const curBase = (d.mutations && Array.isArray(d.mutations.base)) ? d.mutations.base : [];
+  const sel = new Array(slotCount).fill(null).map((_, i) => {
+    const v = curBase[i];
+    return (v && MUT_CATALOG.some((m) => m.v === v)) ? v : null;
+  });
+  let openSlot = null;
+
+  const ov = document.createElement('div'); ov.className = 'bf-confirm-ov';
+  ov.innerHTML = `<div class="bf-confirm" style="max-width:460px;width:92%">
+    <div class="bf-confirm-t">⚡ Insta-Grow — Mutationen wählen</div>
+    <div class="bf-confirm-b" style="text-align:left;max-height:60vh;overflow-y:auto">
+      <div style="margin-bottom:10px">Dein <b>${escapeHtml(d.dino || 'Dino')}</b> wächst auf <b>80 %</b>. Prime-/Elder-Fortschritt bleibt erhalten.${fourth ? '' : ' <span style="color:var(--muted)">(4. Slot ab ≥50 % Prime/Elder)</span>'}</div>
+      <div id="igSlots"></div>
+    </div>
+    <div class="bf-confirm-btns"><button class="secondary bf-c-no">Abbrechen</button><button class="bf-c-yes">⚡ Boosten</button></div>
+  </div>`;
+  document.body.appendChild(ov);
+  const close = () => ov.remove();
+  ov.querySelector('.bf-c-no').onclick = close;
+  ov.addEventListener('mousedown', (e) => { if (e.target === ov) close(); });
+
+  function renderSlots() {
+    const box = ov.querySelector('#igSlots'); if (!box) return;
+    box.innerHTML = '';
+    for (let slot = 1; slot <= slotCount; slot++) {
+      const cur = sel[slot - 1];
+      const curMut = MUT_CATALOG.find((m) => m.v === cur);
+      const taken = new Set(sel.filter((v, i) => v && i !== slot - 1)); // in anderen Slots gewählt → hier raus
+      const opts = mutForSlot(slot, ctx).filter((m) => !taken.has(m.v));
+      const items = ['<div class="ig-dd-item" data-val=""><div class="nm" style="color:var(--muted)">— leer —</div></div>']
+        .concat(opts.map((m) => `<div class="ig-dd-item${m.v === cur ? ' sel' : ''}" data-val="${escapeHtml(m.v)}"><div class="nm">${m.h ? '★ ' : ''}${escapeHtml(m.l)}</div><div class="ds">${escapeHtml(m.x)}</div></div>`)).join('');
+      const wrap = document.createElement('div'); wrap.className = 'ig-slot';
+      wrap.innerHTML = `
+        <div class="ig-slot-h">🧬 Slot ${slot}${slot === 4 ? ' <span style="color:var(--muted);font-weight:400">(Prime/Elder)</span>' : ''}</div>
+        <button class="bf-select ig-dd-btn" data-slot="${slot}"><span>${curMut ? `${curMut.h ? '★ ' : ''}${escapeHtml(curMut.l)}` : '<span style="color:var(--muted)">— leer —</span>'}</span><span style="color:var(--muted)">▾</span></button>
+        ${curMut ? `<div class="ig-selDesc">${escapeHtml(curMut.x)}</div>` : ''}
+        <div class="ig-dd-menu" data-menu="${slot}"${openSlot === slot ? '' : ' style="display:none"'}>${items}</div>`;
+      box.appendChild(wrap);
+    }
+    box.querySelectorAll('.ig-dd-btn').forEach((b) => { b.onclick = () => { const s = parseInt(b.dataset.slot, 10); openSlot = openSlot === s ? null : s; renderSlots(); }; });
+    box.querySelectorAll('.ig-dd-item').forEach((it) => { it.onclick = () => {
+      const s = parseInt(it.closest('.ig-dd-menu').dataset.menu, 10);
+      sel[s - 1] = it.dataset.val || null; openSlot = null; renderSlots();
+    }; });
+  }
+  renderSlots();
+
+  ov.querySelector('.bf-c-yes').onclick = () => { close(); doRedeemGrow({ type: 'insta_grow', mutations: sel.map((v) => v || null) }); };
+}
+
+// ── Admin: Lootbox-Drop-Gewichte + Box-Preis (Vorlage: Dino-Limits) ──────────
+function ensureLootboxCfgLoaded() { loadLootboxConfig(); }
+async function loadLootboxConfig() {
+  const root = el('lbCfgRoot'); if (!root) return;
+  root.innerHTML = '<div class="dt-muted">Lade…</div>';
+  try {
+    const r = await fetch(`${config.tokenBase}/admin/lootbox-config`, { headers: { Authorization: `Bearer ${sessionToken}` } });
+    const d = await r.json(); if (!r.ok) throw new Error(apiErr(d));
+    const tokens = d.tokens || [], weights = d.weights || {};
+    const rows = tokens.map((t) => { const [e, l] = lbTok(t); return `<div class="dlimit-row"><span>${e} ${l}</span><input type="number" min="0" data-tok="${t}" value="${weights[t] || 0}" class="bf-select"></div>`; }).join('');
+    root.innerHTML = `
+      <div style="font-size:12px;color:var(--muted);margin-bottom:10px">Box-Preis (Punkte) + Drop-Gewichte. Höheres Gewicht = häufigerer Drop; die Chancen ergeben sich relativ zur Summe.</div>
+      <div class="dlimit-row"><span><b>💰 Box-Preis (Pkt.)</b></span><input type="number" min="0" id="lbCfgCost" value="${d.cost || 0}" class="bf-select"></div>
+      <div style="height:10px"></div>
+      ${rows}
+      <button id="lbCfgSave" style="width:100%;margin-top:12px">💾 Speichern</button>
+      <div id="lbCfgResult" style="margin-top:8px;font-size:12px"></div>`;
+    el('lbCfgSave').onclick = () => saveLootboxConfig();
+  } catch (e) { root.innerHTML = `<div style="color:#ef4444">⚠️ ${escapeHtml(e.message)}</div>`; }
+}
+async function saveLootboxConfig() {
+  const cost = parseInt(el('lbCfgCost').value, 10) || 0;
+  const weights = {};
+  document.querySelectorAll('#lbCfgRoot input[data-tok]').forEach((inp) => { const v = parseInt(inp.value, 10); weights[inp.dataset.tok] = v > 0 ? v : 0; });
+  const res = el('lbCfgResult'); if (res) res.textContent = 'Speichere…';
+  try {
+    const r = await fetch(`${config.tokenBase}/admin/lootbox-config`, { method: 'POST', headers: { Authorization: `Bearer ${sessionToken}`, 'Content-Type': 'application/json' }, body: JSON.stringify({ cost, weights }) });
+    const d = await r.json(); if (!r.ok) throw new Error(apiErr(d));
+    if (res) res.textContent = '✅ Gespeichert.';
+    showToast('🎁 Lootbox-Konfiguration gespeichert', 'success');
+  } catch (e) { if (res) res.textContent = '⚠️ ' + e.message; showToast(e.message, 'error'); }
+}
 
 // ── Garage (Ein-/Ausparken) ─────────────────────────────────────────────────
 // ── Geteilte Dino-Karten (Garage & Markt) ──────────────────────────────────
@@ -4410,6 +4798,8 @@ async function updateDinoInfo() {
     Object.keys(VITAL_TOKEN).forEach((k) => { const c = el(`di-tok-${k}`); if (c) c.innerHTML = ''; });
     DI_STATS.forEach((s) => { el(`di-${s.key}-f`).style.width = '0%'; el(`di-${s.key}-v`).textContent = '—'; });
     { const gf = el('di-grow-f'); if (gf) gf.style.width = '0%'; const gv = el('di-grow-v'); if (gv) gv.textContent = '—'; }
+    lbCurGrowPct = 0;
+    renderDiGrow(null); // offline: Grow-Menü-Hinweis
     checkPrimes(null);   // offline → Prime-Basis zurücksetzen
     return;
   }
@@ -4423,6 +4813,8 @@ async function updateDinoInfo() {
   const gp = Math.round((d.grow || 0) * 100);
   el('di-grow').textContent = `Wachstum ${gp}%`;
   { const gf = el('di-grow-f'); if (gf) gf.style.width = gp + '%'; const gv = el('di-grow-v'); if (gv) gv.textContent = gp + '%'; }
+  lbCurGrowPct = gp;
+  renderDiGrow(d.tokens); // Grow-Token-Seitenmenü aktualisieren
 
   DI_STATS.forEach((s) => {
     const pct = Math.max(0, Math.min(100, Math.round((d[s.key] ?? 0) * 100)));
@@ -4567,6 +4959,7 @@ const DOCK_ICONS = {
   lexikon:  dockSvg('<path d="M2 3h6a4 4 0 0 1 4 4v14a3 3 0 0 0-3-3H2z"/><path d="M22 3h-6a4 4 0 0 0-4 4v14a3 3 0 0 1 3-3h7z"/>'),
   garage:   dockSvg('<path d="M21 8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16Z"/><path d="m3.3 7 8.7 5 8.7-5"/><path d="M12 22V12"/>'),
   market:   dockSvg('<circle cx="8" cy="21" r="1"/><circle cx="19" cy="21" r="1"/><path d="M2 2h2l2.6 12.4a2 2 0 0 0 2 1.6h9.7a2 2 0 0 0 2-1.6L21.3 6H5.1"/>'),
+  lootbox:  dockSvg('<rect x="3" y="8" width="18" height="4" rx="1"/><path d="M12 8v13"/><path d="M19 12v7a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2v-7"/><path d="M7.5 8a2.5 2.5 0 0 1 0-5C11 3 12 8 12 8S13 3 16.5 3a2.5 2.5 0 0 1 0 5"/>'),
   map:      dockSvg('<path d="m3 6 6-3 6 3 6-3v15l-6 3-6-3-6 3z"/><path d="M9 3v15"/><path d="M15 6v15"/>'),
   skin:     dockSvg('<circle cx="13.5" cy="6.5" r=".8" fill="currentColor" stroke="none"/><circle cx="17.5" cy="10.5" r=".8" fill="currentColor" stroke="none"/><circle cx="6.5" cy="12.5" r=".8" fill="currentColor" stroke="none"/><circle cx="8.5" cy="7.5" r=".8" fill="currentColor" stroke="none"/><path d="M12 2C6.5 2 2 6.5 2 12s4.5 10 10 10c.9 0 1.6-.7 1.6-1.7 0-.4-.2-.8-.4-1.1-.3-.3-.4-.7-.4-1.1a1.6 1.6 0 0 1 1.6-1.6H16c3 0 5.5-2.5 5.5-5.5C22 6 17.5 2 12 2z"/>'),
   settings: dockSvg('<circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.6 1.6 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.6 1.6 0 0 0-1.8-.3 1.6 1.6 0 0 0-1 1.5V21a2 2 0 0 1-4 0v-.1a1.6 1.6 0 0 0-1-1.5 1.6 1.6 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.6 1.6 0 0 0 .3-1.8 1.6 1.6 0 0 0-1.5-1H3a2 2 0 0 1 0-4h.1a1.6 1.6 0 0 0 1.5-1 1.6 1.6 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.6 1.6 0 0 0 1.8.3H9a1.6 1.6 0 0 0 1-1.5V3a2 2 0 0 1 4 0v.1a1.6 1.6 0 0 0 1 1.5 1.6 1.6 0 0 0 1.8-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.6 1.6 0 0 0-.3 1.8V9a1.6 1.6 0 0 0 1.5 1H21a2 2 0 0 1 0 4h-.1a1.6 1.6 0 0 0-1.5 1z"/>'),
@@ -4729,6 +5122,7 @@ async function connectWithSession(session) {
     setStaff(data.staff);
     pollHud();
     if (!pollHud._timer) pollHud._timer = setInterval(pollHud, 6000);
+    if (!tickGrowTimer._timer) tickGrowTimer._timer = setInterval(tickGrowTimer, 1000);
     if (!pollGroupChat._timer) pollGroupChat._timer = setInterval(pollGroupChat, 4000);
     if (!pollVitals._timer) { pollVitals(); pollVitals._timer = setInterval(pollVitals, 500); }   // HP live (0,5s)
     loadTeleports();

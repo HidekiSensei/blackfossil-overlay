@@ -1,5 +1,17 @@
 # Changelog
 
+## v1.5.0 — Lootbox & Grow-Boosts direkt im Overlay 🎁
+
+### ✨ Neu
+- **🎁 Lootbox-Panel** (neuer Dock-Button): Boxen mit **Punkten** oder **Gratis-Boxen** öffnen, Drop-Chancen sehen und den Gewinn direkt ins Token-Inventar bekommen — komplett im Overlay, kein Discord mehr nötig.
+- **📈 Grow-Boost** (Token): beschleunigt dein Wachstum **~1 Stunde** lang (+~20 %/h aktiver Spielzeit).
+- **⏹️ Grow-Stop** (neuer Token): **stoppt** dein Wachstum **1 Stunde** lang auf einer **selbst gewählten Prozentzahl** — per Schieberegler einstellbar.
+- **⚡ Insta-Grow** (Token): setzt dein Wachstum sofort auf 80 %.
+- Alle Grow-Token werden im Lootbox-Panel unter **„Deine Grow-Token"** angezeigt und mit einem Klick eingelöst.
+
+### 🛡️ Admin
+- Neuer Admin-Tab **🎁 Lootbox**: **Box-Preis** und **Drop-Gewichte** je Token live einstellbar.
+
 ## v1.2.4 — Fix: Farbthemen fürs Team 🎨
 
 ### 🔧 Fixes
