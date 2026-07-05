@@ -5035,7 +5035,10 @@ function isMicOn() {
 // Mikro-Sendezustand an den Voice-Modus angleichen
 async function applyMic() {
   if (!room) return;
-  try { await room.localParticipant.setMicrophoneEnabled(isMicOn()); } catch {}
+  // B-5: Fehler beim (De)Aktivieren nicht mehr verschlucken — sonst blieb „andere hören mich nicht"
+  // komplett unsichtbar. Jetzt im DevTools-Log sichtbar.
+  try { await room.localParticipant.setMicrophoneEnabled(isMicOn()); }
+  catch (e) { console.error('[voice] Mikro (de)aktivieren fehlgeschlagen:', e); }
   if (isMicOn()) ensureMicProcessor();   // Gain-Processor auf den frischen Track legen
   refreshMicState();
 }
@@ -5050,6 +5053,12 @@ function createMicGainProcessor() {
     name: 'bf-mic-gain',
     async init(opts) {
       const ctx = opts.audioContext;
+      // B-5: Ein suspendierter AudioContext liefert einen STUMMEN verarbeiteten Track → andere hören
+      // einen nicht (Voice „einseitig") oder nur kurz, obwohl man verbunden ist. Kontext aufwecken und
+      // aufgeweckt HALTEN (Browser suspendieren AudioContexts sonst wieder bei Inaktivität).
+      const wake = () => { if (ctx.state === 'suspended') ctx.resume().catch(() => {}); };
+      wake();
+      ctx.addEventListener('statechange', wake);
       src = ctx.createMediaStreamSource(new MediaStream([opts.track]));
       gain = ctx.createGain();
       gain.gain.value = micGain;
@@ -5140,7 +5149,13 @@ async function connect({ token, url }) {
   //   der Context wird auch auf den lokalen Teilnehmer gesetzt (Mikro-Gain-Processor).
   // adaptiveStream/dynacast: nur für Video sinnvoll; für reines Audio aus (vermeidet
   //   pausierte Subscriptions → Cutouts).
-  room = new Room({ adaptiveStream: false, dynacast: false, webAudioMix: true });
+  room = new Room({
+    adaptiveStream: false, dynacast: false, webAudioMix: true,
+    // B-6: Auto-Gain-Control AUS — sonst regelt der Browser das Mikro über die Zeit selbstständig
+    // leiser (mehrere Melder: „Mikro wird mit der Zeit leiser") und kämpft gegen den manuellen
+    // Mic-Gain-Regler. Echo-Cancellation & Noise-Suppression bleiben an (LiveKit-Default).
+    audioCaptureDefaults: { autoGainControl: false },
+  });
   room
     .on(RoomEvent.Connected, () => { voiceConnected = true; refreshMicState(); el('connBtn').textContent = 'Trennen'; broadcastRange(); updateVoiceWarn(); setConnQuality(room.localParticipant.connectionQuality); startConnStats(); })
     .on(RoomEvent.Disconnected, () => { voiceConnected = false; el('connBtn').textContent = 'Verbinden'; setMicState('disconnected'); updateVoiceWarn(); stopConnStats(); renderConnInd(); _speakSeen.clear(); updateSpeakingBox(); })
