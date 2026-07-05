@@ -3700,7 +3700,11 @@ function showDinoDetail(card, ctx) {
     const sameSpecies = myDino && slotDino && myDino === slotDino;
     // Ausparken (nur gleiche Spezies, aktueller Dino geht verloren) + Swapen (jede Spezies, tauscht)
     const unparkBtn = sameSpecies ? `<button id="ddUnpark" style="width:100%">⬆️ Ausparken</button>` : '';
-    const swapBtn = `<button id="ddSwap" class="secondary" style="width:100%">🔄 Swapen (Dino tauschen)</button>`;
+    // B-7: Swap-Cooldown sichtbar machen — Button sperren + Restzeit anzeigen, statt stumm zu scheitern.
+    const swapCd = garageCooldowns.swap || 0;
+    const swapBtn = swapCd > 0
+      ? `<button id="ddSwap" class="secondary" style="width:100%;opacity:.55;cursor:not-allowed" disabled title="Swap noch im Cooldown">🔄 Swapen — noch ${fmtCd(swapCd)}</button>`
+      : `<button id="ddSwap" class="secondary" style="width:100%">🔄 Swapen (Dino tauschen)</button>`;
     action = unparkBtn + swapBtn
       + sellBtn
       + `<button id="ddDelete" class="secondary" style="width:100%;color:#fca5a5;border-color:#7f1d1d">🗑️ Aus Garage löschen</button>`;
@@ -3727,7 +3731,7 @@ function showDinoDetail(card, ctx) {
   el('dinoDetail').style.display = 'flex';
   box.querySelector('#ddClose').onclick = closeDinoDetail;
   const u = box.querySelector('#ddUnpark'); if (u) u.onclick = () => { closeDinoDetail(); unparkById(card.id); };
-  const sw = box.querySelector('#ddSwap'); if (sw) sw.onclick = () => { closeDinoDetail(); apiAction('/garage/swap', { slotId: card.id }, '🔄 Gswapt zu {dino}', loadGarage); };
+  const sw = box.querySelector('#ddSwap'); if (sw && !sw.disabled) sw.onclick = () => { closeDinoDetail(); apiAction('/garage/swap', { slotId: card.id }, '🔄 Gswapt zu {dino}', loadGarage); };
   const b = box.querySelector('#ddBuy'); if (b) b.onclick = () => { closeDinoDetail(); buyOfferId(card.id); };
   const wd = box.querySelector('#ddWithdraw'); if (wd) wd.onclick = () => { closeDinoDetail(); apiAction('/market/withdraw', { offerId: card.id }, '↩️ Angebot zurückgezogen', loadMarket); };
   const ss = box.querySelector('#ddSellServer');
@@ -3766,6 +3770,7 @@ const unparkById = (id) => apiAction('/garage/unpark', { slotId: id }, '⬆️ {
 const buyOfferId = (id) => apiAction('/market/buy', { offerId: id }, '🦖 {dino} gekauft!', loadMarket);
 
 // ── Garage (Karten-Grid) ─────────────────────────────────────────────────────
+let garageCooldowns = {}; // zuletzt geladene Cooldowns (park/unpark/swap) — für die Swap-Sperre im Dino-Detail (B-7)
 async function renderGarage() {
   el('garage').classList.add('gr-wide');
   el('garage').innerHTML = `<h2>🚗 Garage <span id="garageCount" style="font-size:13px;color:var(--muted);font-weight:400"></span></h2>
@@ -3797,10 +3802,12 @@ async function loadGarage() {
     if (cnt && data.limit != null) cnt.textContent = `· ${data.count ?? slots.length}/${data.limit} Tokens`;
     // Cooldown-Hinweise + Park-Button sperren
     const cd = data.cooldowns || {};
+    garageCooldowns = cd; // fürs Swap-Cooldown-Gating im Dino-Detail (B-7)
     const cdBox = el('garageCd');
     const parts = [];
     if (cd.park > 0) parts.push(`⏳ Einparken in ${fmtCd(cd.park)} wieder möglich`);
     if (cd.unpark > 0) parts.push(`⏳ Ausparken in ${fmtCd(cd.unpark)} wieder möglich`);
+    if (cd.swap > 0) parts.push(`⏳ Swapen in ${fmtCd(cd.swap)} wieder möglich`); // B-7: Swap-Countdown sichtbar machen
     if (cdBox) { cdBox.style.display = parts.length ? 'block' : 'none'; cdBox.innerHTML = parts.join('<br>'); }
     const parkBtn = el('parkBtn');
     if (parkBtn) {
