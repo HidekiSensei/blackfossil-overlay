@@ -1298,7 +1298,74 @@ function showAdminTab(t) {
   else if (t === 'account') renderAccount();
   else if (t === 'lootbox') ensureLootboxCfgLoaded();
   else if (t === 'server') renderServer();
+  else if (t === 'warn') renderWarnPane();
   bfScheduleFrameSync && bfScheduleFrameSync();
+}
+
+// ── Verwarnungen (Staff) ─────────────────────────────────────────────────────
+function renderWarnPane() {
+  const box = el('warnBody'); if (!box) return;
+  const inp = 'width:100%;box-sizing:border-box;padding:8px;border-radius:8px;border:1px solid var(--border);background:var(--input-bg);color:#eee;margin-top:4px';
+  box.innerHTML = `
+    <div style="font-weight:600;font-size:14px;margin-bottom:4px">⚠️ User verwarnen</div>
+    <div style="font-size:11px;color:var(--muted);margin-bottom:8px">Discord- ODER Steam-ID reicht — die andere wird automatisch verknüpft. Die laufende Nummer (1./2./3. …) zählt das System.</div>
+    <div style="display:flex;gap:8px">
+      <div style="flex:1"><label style="font-size:11px;color:var(--muted)">Discord-ID</label><input id="wnDiscord" placeholder="z. B. 4785…" style="${inp}"></div>
+      <div style="flex:1"><label style="font-size:11px;color:var(--muted)">Steam-ID</label><input id="wnSteam" placeholder="7656…" style="${inp}"></div>
+    </div>
+    <label style="font-size:11px;color:var(--muted);margin-top:8px;display:block">Regel-Paragraph *</label>
+    <input id="wnPara" placeholder="z. B. §3.2 Combat-Logging" maxlength="120" style="${inp}">
+    <label style="font-size:11px;color:var(--muted);margin-top:8px;display:block">Grund *</label>
+    <textarea id="wnReason" rows="3" placeholder="Was ist passiert?" maxlength="1000" style="${inp};resize:vertical"></textarea>
+    <button id="wnSubmit" style="width:100%;margin-top:10px">⚠️ Verwarnen</button>
+    <hr style="border:none;border-top:1px solid var(--border);margin:16px 0 12px">
+    <div style="font-weight:600;font-size:14px;margin-bottom:6px">🔎 Verwarnungen durchsuchen</div>
+    <div style="display:flex;gap:8px">
+      <input id="wnSearch" placeholder="User-ID / Steam / Grund / Paragraph…" style="${inp};margin-top:0;flex:1">
+      <button id="wnSearchBtn" class="secondary" style="width:auto;padding:8px 16px">Suchen</button>
+    </div>
+    <div id="wnResults" style="margin-top:10px"></div>`;
+
+  el('wnSubmit').onclick = async () => {
+    const discordId = el('wnDiscord').value.trim();
+    const steamId = el('wnSteam').value.trim();
+    const ruleParagraph = el('wnPara').value.trim();
+    const reason = el('wnReason').value.trim();
+    if (!discordId && !steamId) { showToast('Discord- oder Steam-ID nötig', 'error'); return; }
+    if (!ruleParagraph || !reason) { showToast('Paragraph und Grund sind Pflicht', 'error'); return; }
+    await apiAction('/admin/warnings', { discordId, steamId, reason, ruleParagraph }, '⚠️ Verwarnung erfasst', () => {
+      el('wnDiscord').value = ''; el('wnSteam').value = ''; el('wnPara').value = ''; el('wnReason').value = '';
+      warnSearch('');
+    });
+  };
+  el('wnSearchBtn').onclick = () => warnSearch(el('wnSearch').value.trim());
+  el('wnSearch').onkeydown = (e) => { if (e.key === 'Enter') warnSearch(el('wnSearch').value.trim()); };
+  warnSearch('');
+}
+
+async function warnSearch(q) {
+  const box = el('wnResults'); if (!box) return;
+  box.innerHTML = '<div style="color:var(--muted);font-size:12px">Lade…</div>';
+  try {
+    const res = await fetch(`${config.tokenBase}/admin/warnings${q ? `?q=${encodeURIComponent(q)}` : ''}`, { headers: { Authorization: `Bearer ${sessionToken}` } });
+    const d = await res.json(); if (!res.ok) throw new Error(apiErr(d));
+    const items = d.items || [];
+    if (!items.length) { box.innerHTML = `<div style="color:var(--muted);font-size:12px">${q ? 'Keine Treffer.' : 'Noch keine Verwarnungen erfasst.'}</div>`; return; }
+    box.innerHTML = items.slice(0, 50).map((w) => {
+      const who = w.discordId ? `Discord ${w.discordId}` : (w.steamId ? `Steam ${w.steamId}` : '—');
+      const dt = w.createdAtMs ? new Date(w.createdAtMs).toLocaleDateString('de-DE') : '';
+      const col = w.warnNumber >= 3 ? '#ef4444' : (w.warnNumber === 2 ? '#f97316' : '#f59e0b');
+      return `<div style="border:1px solid var(--border);border-radius:8px;padding:8px 10px;margin-bottom:6px">
+        <div style="display:flex;justify-content:space-between;align-items:center">
+          <span style="font-weight:600;font-size:13px">${escapeHtml(who)}</span>
+          <span style="color:${col};font-weight:700;font-size:12px">${w.warnNumber}. Verwarnung</span>
+        </div>
+        <div style="font-size:12px;margin-top:3px">📖 ${escapeHtml(w.ruleParagraph || '—')}</div>
+        <div style="font-size:12px;color:var(--muted);margin-top:2px">📝 ${escapeHtml(w.reason || '—')}</div>
+        <div style="font-size:10px;color:var(--muted);margin-top:3px">${escapeHtml(w.issuedByName || 'Staff')} · ${dt}</div>
+      </div>`;
+    }).join('');
+  } catch (err) { box.innerHTML = `<div style="color:#ef4444;font-size:12px">${escapeHtml(err.message || 'Fehler')}</div>`; }
 }
 function closeAdminPanel() {
   adminOpen = false;
