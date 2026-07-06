@@ -5394,10 +5394,14 @@ async function connect({ token, url }) {
   //   pausierte Subscriptions → Cutouts).
   room = new Room({
     adaptiveStream: false, dynacast: false, webAudioMix: true,
-    // B-6: Auto-Gain-Control AUS — sonst regelt der Browser das Mikro über die Zeit selbstständig
-    // leiser (mehrere Melder: „Mikro wird mit der Zeit leiser") und kämpft gegen den manuellen
-    // Mic-Gain-Regler. Echo-Cancellation & Noise-Suppression bleiben an (LiveKit-Default).
-    audioCaptureDefaults: { autoGainControl: false },
+    // AGC WIEDER AN (Hotfix v1.6.1): B-6 hatte Auto-Gain-Control ausgeschaltet → seit v1.6.0 waren
+    // ALLE unfassbar leise (leise Mikros wurden nicht mehr angehoben) UND die „Sprecher in der Nähe"-
+    // Anzeige blieb leer (LiveKit erkennt aktive Sprecher über den Audio-Pegel → zu leise = keine
+    // Erkennung → #speakingBox bleibt versteckt). AGC an stellt beides wieder her. Der manuelle
+    // Mic-Gain-Regler ist ein separater Web-Audio-GainNode auf dem gesendeten Track und wirkt
+    // unabhaengig davon weiter. (Falls „Mikro wird ueber Zeit leiser" erneut auftritt: gezielter
+    // ueber den Mic-Gain-Regler / Zielpegel loesen statt AGC global aus.)
+    audioCaptureDefaults: { autoGainControl: true },
   });
   room
     .on(RoomEvent.Connected, () => { voiceConnected = true; refreshMicState(); el('connBtn').textContent = 'Trennen'; broadcastRange(); updateVoiceWarn(); setConnQuality(room.localParticipant.connectionQuality); startConnStats(); })
