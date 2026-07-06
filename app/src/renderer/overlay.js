@@ -197,8 +197,22 @@ let heatmapMode = false;
 // (PVP/PVE), gut über die Karte verteilt ausgewählt. Du erkennst die Ecken am Gelände
 // und klickst sie an → solveAffine schiebt nur die DARSTELLUNG zurecht (kein Umrechnen
 // der Teleport-Ziele!).
+// Feste Kalibrier-Anker WEIT AUSSEN (Welt-Koordinaten). Ergänzen die Zonen-Ecken, damit die
+// Auto-Kalibrierung die GANZE Karte aufspannt statt nur den zentralen Zonen-Bereich — weiter
+// auseinanderliegende Punkte = genauere affine Abbildung. Liegt ein Anker über Wasser / ist die
+// Stelle unklar → im Ablauf „Überspringen". Koordinaten bei Bedarf hier anpassen.
+const CALIB_ANCHORS = [
+  { x: -300000, y: -300000 },
+  { x:  300000, y: -300000 },
+  { x: -300000, y:  300000 },
+  { x:  300000, y:  300000 },
+];
 function pickCalibTargets(n) {
-  const pts = ZONES.flatMap((z) => z.points || []).map((p) => ({ x: p.x, y: p.y }));
+  // Anker (weit außen) + alle Zonen-Ecken; Farthest-Point-Sampling wählt die n am weitesten verteilten.
+  const pts = [
+    ...CALIB_ANCHORS.map((a) => ({ x: a.x, y: a.y })),
+    ...ZONES.flatMap((z) => z.points || []).map((p) => ({ x: p.x, y: p.y })),
+  ];
   if (pts.length <= n) return pts;
   // Farthest-Point-Sampling: maximal weit auseinander liegende Punkte wählen
   const cx = pts.reduce((s, p) => s + p.x, 0) / pts.length;
@@ -506,6 +520,7 @@ async function init() {
     };
   }
   el('calibCancelBtn').onclick = () => abortAutoCalib();
+  { const sk = el('calibSkipBtn'); if (sk) sk.onclick = () => { if (autoCalib && autoCalib.resolveClick) { const r = autoCalib.resolveClick; autoCalib.resolveClick = null; r('skip'); } }; }  // aktuellen Kalibrier-Punkt überspringen
   el('calibBtn').onclick = () => toggleCalib();
   el('calibSolve').onclick = () => solveCalibration();
   el('calibReset').onclick = () => { resetCal(); calibPairs = []; saveCalibPairs(); armedRef = null; renderCalibList(); renderBigMap(); };
@@ -1121,11 +1136,12 @@ async function calibTeleport(x, y, z) {
   await new Promise((r) => setTimeout(r, 700)); // kurz warten, bis die Position ankommt
   return { x: d.x, y: d.y };
 }
-function calibPrompt(text, showCancel) {
+function calibPrompt(text, showCancel, showSkip) {
   const p = el('calibPrompt'); if (!p) return;
   p.style.display = 'block';
   el('calibPromptText').textContent = text;
   el('calibCancelBtn').style.display = showCancel ? 'inline-block' : 'none';
+  const sk = el('calibSkipBtn'); if (sk) sk.style.display = showSkip ? 'inline-block' : 'none';
 }
 function endAutoCalib() { autoCalib = null; const p = el('calibPrompt'); if (p) p.style.display = 'none'; }
 function waitForCalibClick() { return new Promise((resolve) => { autoCalib.resolveClick = resolve; }); }
@@ -1136,32 +1152,33 @@ async function startAutoCalibration() {
   autoCalib = { startPos: { x: me.x, y: me.y, z: me.z }, pairs: [], resolveClick: null };
   toggleSettings(false);
   toggleMap(true);
-  const targets = pickCalibTargets(4);
+  const targets = pickCalibTargets(8);
   if (targets.length < 3) {
-    showToast('Keine Zonen-Daten — Kalibrierung nicht möglich', 'error');
+    showToast('Zu wenige Kalibrier-Punkte — Kalibrierung nicht möglich', 'error');
     endAutoCalib();
     return;
   }
   for (let i = 0; i < targets.length; i++) {
     const t = targets[i];
-    calibPrompt(`Punkt ${i + 1}/${targets.length} — du wirst über die Zonen-Ecke teleportiert…`, true);
+    calibPrompt(`Punkt ${i + 1}/${targets.length} — du wirst über den Punkt teleportiert…`, true, false);
     try { await calibTeleport(t.x, t.y, CALIB_HOVER_Z); } // hoch über dem Punkt → kein Aufprall
     catch (e) { showToast(`Punkt ${i + 1} übersprungen (Teleport: ${e.message})`, 'error'); continue; }
     if (!autoCalib) return; // abgebrochen
     // Schweben: regelmäßig wieder hochteleportieren → man fällt nie auf, kein Schaden
     const hover = setInterval(() => { calibTeleport(t.x, t.y, CALIB_HOVER_Z).catch(() => {}); }, 800);
-    calibPrompt(`Punkt ${i + 1}/${targets.length} — du schwebst über der Ecke. Klicke auf der Karte GENAU dort, wo du bist.`, true);
+    calibPrompt(`Punkt ${i + 1}/${targets.length} — du schwebst über dem Punkt. Klicke auf der Karte GENAU dort, wo du bist. (Über Wasser/unklar? → Überspringen)`, true, true);
     const norm = await waitForCalibClick();
     clearInterval(hover);
     if (!autoCalib) return;
-    if (!norm) { await abortAutoCalib(); return; }
+    if (norm === 'skip') continue;                 // diesen Punkt auslassen (z. B. Anker über Wasser)
+    if (!norm) { await abortAutoCalib(); return; } // Abbrechen
     autoCalib.pairs.push({ world: { x: t.x, y: t.y }, norm });
   }
   calibPrompt('Zurück zur Startposition…', false);
   try { await calibTeleport(autoCalib.startPos.x, autoCalib.startPos.y, autoCalib.startPos.z); } catch {}
   const count = autoCalib.pairs.length;
   if (count < 3) {
-    showToast(`Zu wenige Punkte (${count}/6) — bitte erneut versuchen`, 'error');
+    showToast(`Zu wenige Punkte (${count}/${targets.length}) — bitte erneut versuchen`, 'error');
     endAutoCalib();
     return;
   }
