@@ -2242,6 +2242,11 @@ function toggleFeature(id) {
   updateInteractive();
 }
 function closeAllFeatures(skipInteractive) {
+  // Fossil: unbestätigte Live-Vorschau beim Schließen des Skin-Editors zurücksetzen.
+  if (featureOpen === 'skinEditor' && skinPays && skinPreviewed && !skinConfirmed) {
+    revertSkinPreview();
+    showToast('🎨 Vorschau verworfen — Skin zurückgesetzt', '');
+  }
   ['dinoInfo', 'skinEditor', 'garage', 'market', 'group', 'profile', 'lexikon', 'quests', 'lootbox', 'support'].forEach((id) => { el(id).style.display = 'none'; });
   const tc = el('ticketChat'); if (tc) tc.style.display = 'none';   // Ticket-Chat mit schließen
   stopQuestPoll();
@@ -4063,6 +4068,8 @@ const SKIN_GROUPS = [
 ];
 let skinState = null;
 let skinPays = false;       // Free (myAboIdx<1) zahlt + nicht-live; ab Knochen live & gratis
+let skinConfirmed = false;  // Fossil-Vorschau: wurde „Bestätigen" gedrückt? (sonst Reset beim Schließen)
+let skinPreviewed = false;  // Fossil: läuft gerade eine unbestätigte Live-Vorschau?
 let zombieTimer = null;
 let skinTpl = { templates: [], limit: 0, used: 0, free: true, costs: { color: 50, tplSave: 500, tplApply: 250 } };
 function linToHex(rgb) { if (!rgb) return '#888888'; const h = (v) => ('0' + gc(v).toString(16)).slice(-2); return '#' + h(rgb[0]) + h(rgb[1]) + h(rgb[2]); }
@@ -4090,7 +4097,7 @@ function updateApplyCost() {
   const cost = changedColorFields() * (skinTpl.costs?.color ?? 50);
   const dirty = skinDirty();
   btn.disabled = !dirty; btn.style.opacity = dirty ? '1' : '.5';
-  btn.textContent = cost > 0 ? `✅ Anwenden (${cost} Pkt)` : (dirty ? '✅ Anwenden (gratis)' : '✅ Angewendet');
+  btn.textContent = cost > 0 ? `✅ Bestätigen (${cost} Pkt)` : (dirty ? '✅ Bestätigen (gratis)' : '✅ Bestätigt');
 }
 // 🧟 Zombie-Look setzen (Obsidian; Backend erzwingt zusätzlich).
 async function setZombie(value) {
@@ -4114,14 +4121,15 @@ async function renderSkinEditor() {
   skinState = { skinVariation: sk.skinVariation || 0, patternIndex: sk.patternIndex || 0, themeIndex: sk.themeIndex || 0, gender: me.gender === 'Female' ? 'Female' : 'Male', colors: {} };
   for (const [k] of SKIN_GROUPS) skinState.colors[k] = (sk.colors && sk.colors[k]) ? sk.colors[k] : [0.5, 0.5, 0.5];
   setSkinBaseline();
-  skinPays = !mySkinFree;                    // Free zahlt + nicht-live; ab Knochen ODER Beta-Tester live & gratis
+  skinPays = !mySkinFree;                    // Free (Fossil) = gratis Live-Vorschau + „Bestätigen" zahlt; ab Knochen/Beta-Tester live & gratis
+  skinConfirmed = false; skinPreviewed = false;   // neue Editier-Sitzung: nichts bestätigt/vorschau
   const obsidian = myAboIdx() >= 3;
   const canGender = myAboIdx() >= 2;         // Geschlechtswechsel erst ab Bernstein
   const genderTip = canGender ? 'Geschlecht wechseln (Respawn)' : '🔒 Geschlechtswechsel ist ab Rang Bernstein freigeschaltet';
 
   const swatches = SKIN_GROUPS.map(([k, l]) => `<label style="display:flex;justify-content:space-between;align-items:center;gap:8px;padding:6px 8px;background:rgba(255,255,255,0.04);border-radius:8px;font-size:13px;cursor:pointer"><span style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${l}</span><input type="color" data-col="${k}" value="${linToHex(skinState.colors[k])}" style="width:40px;height:26px;border:0;background:none;cursor:pointer;flex:none"></label>`).join('');
   const liveMsg = skinPays
-    ? '✏️ Vorschau — Farben kosten 50 Pkt/Stück. Erst mit „Anwenden" geht der Skin live.'
+    ? '🟢 Live-Vorschau — mit „Bestätigen" wird der Skin übernommen (50 Pkt/Farbe). Schließen ohne Bestätigen setzt zurück.'
     : '🟢 Änderungen werden live im Spiel übernommen';
   panel.innerHTML = `<h2>🎨 Skin Editor — ${me.dino}</h2>
     <div id="skLive" style="font-size:12px;color:${skinPays ? '#f59e0b' : '#22c55e'};margin:2px 0 14px">${liveMsg}</div>
@@ -4135,8 +4143,8 @@ async function renderSkinEditor() {
     <div class="sec-title">Muster & Variation</div>
     <div style="display:flex;gap:6px;margin:8px 0 8px">${[0, 1, 2].map((i) => `<button data-pat="${i}" style="flex:1" class="${skinState.patternIndex === i ? '' : 'secondary'}">Muster ${i + 1}</button>`).join('')}</div>
     <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px"><span style="font-size:13px">Skin-Variation</span><input id="skVar" type="number" min="0" value="${skinState.skinVariation}" style="width:80px;padding:6px;border-radius:6px;border:1px solid var(--border);background:var(--input-bg);color:#eee"></div>
-    ${skinPays ? `<button id="skApply" disabled style="width:100%;margin:10px 0 4px;opacity:.5">✅ Angewendet</button>
-    <div style="font-size:11px;color:var(--muted);margin-bottom:8px">Unbestätigte Änderungen werden NICHT aufs Dino übertragen.</div>` : ''}
+    ${skinPays ? `<button id="skApply" disabled style="width:100%;margin:10px 0 4px;opacity:.5">✅ Bestätigt</button>
+    <div style="font-size:11px;color:var(--muted);margin-bottom:8px">Du siehst die Änderungen live. Erst „Bestätigen" bucht sie ab & behält sie — Schließen ohne Bestätigen setzt den Skin zurück.</div>` : ''}
     <div class="sec-title" style="margin-top:16px">🧟 Zombie-Look ${obsidian ? '' : '<span style="color:var(--muted);font-weight:400;font-size:11px">🔒 Obsidian</span>'}</div>
     <div style="display:flex;align-items:center;gap:8px;margin:8px 0 4px">
       <input type="range" id="skZombie" min="0" max="1" step="0.05" value="0" ${obsidian ? '' : 'disabled'} style="flex:1;accent-color:var(--accent)${obsidian ? '' : ';opacity:.45'}">
@@ -4159,11 +4167,11 @@ async function renderSkinEditor() {
   el('skTplSave').onclick = () => saveSkinTemplate();
   el('skShare').onclick = () => copySkinCode();
   el('skImportBtn').onclick = () => importSkinCode(el('skImport').value);
-  if (skinPays) el('skApply').onclick = () => applySkin(false);
+  if (skinPays) el('skApply').onclick = () => commitSkin();
   loadSkinTemplates();
   updateSkinPreview();
-  // Free: nur Vorschau (updateApplyCost) — geht erst mit „Anwenden" live. Ab Knochen: live nach kurzer Pause.
-  const onEdit = () => { if (skinPays) updateApplyCost(); else scheduleSkinApply(); };
+  // Fossil: Live-Vorschau (gratis) nach kurzer Pause + Kosten-Button aktualisieren. Ab Knochen: live-commit.
+  const onEdit = () => { if (skinPays) { updateApplyCost(); scheduleSkinPreview(); } else scheduleSkinApply(); };
   panel.querySelectorAll('[data-col]').forEach((inp) => inp.oninput = () => { skinState.colors[inp.dataset.col] = hexToLin(inp.value); updateSkinPreview(); onEdit(); });
   panel.querySelectorAll('[data-pat]').forEach((b) => b.onclick = () => { skinState.patternIndex = parseInt(b.dataset.pat); panel.querySelectorAll('[data-pat]').forEach((x) => x.className = x === b ? '' : 'secondary'); onEdit(); });
   el('skVar').oninput = () => { skinState.skinVariation = parseInt(el('skVar').value) || 0; onEdit(); };
@@ -4205,6 +4213,46 @@ function scheduleSkinApply() {
   skinApplyTimer = setTimeout(() => applySkin(true), 650);
 }
 
+// ── Fossil: gratis Live-Vorschau → „Bestätigen" (zahlt) / Schließen-ohne-Bestätigen = Reset ──
+let skinPreviewTimer = null;
+function scheduleSkinPreview() {
+  clearTimeout(skinPreviewTimer);
+  setSkinLive('… Vorschau wird geladen', '#f59e0b');
+  skinPreviewTimer = setTimeout(() => previewSkin(), 550);
+}
+async function previewSkin() {
+  try {
+    const body = { skinVariation: skinState.skinVariation, patternIndex: skinState.patternIndex, themeIndex: skinState.themeIndex, ...skinState.colors, preview: true };
+    const res = await fetch(`${config.tokenBase}/skin`, { method: 'POST', headers: { Authorization: `Bearer ${sessionToken}`, 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+    const d = await res.json(); if (!res.ok) throw new Error(apiErr(d));
+    skinPreviewed = true; skinConfirmed = false;
+    setSkinLive('🟢 Live-Vorschau — noch nicht bestätigt', '#22c55e');
+  } catch (err) { setSkinLive('⚠️ ' + err.message, '#ef4444'); showToast(err.message, 'error'); }
+}
+async function commitSkin() {
+  setSkinLive('… wird übernommen', '#f59e0b');
+  try {
+    const body = { skinVariation: skinState.skinVariation, patternIndex: skinState.patternIndex, themeIndex: skinState.themeIndex, gender: skinState.gender, ...skinState.colors };
+    const send = () => fetch(`${config.tokenBase}/skin`, { method: 'POST', headers: { Authorization: `Bearer ${sessionToken}`, 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+    let res = await send();
+    if (res.status === 502) { await new Promise((r) => setTimeout(r, 1200)); res = await send(); }
+    const d = await res.json(); if (!res.ok) throw new Error(apiErr(d));
+    if (typeof d.points === 'number') setPointsHud(d.points);
+    skinConfirmed = true; skinPreviewed = false;
+    setSkinBaseline(); updateApplyCost();
+    setSkinLive(d.charged ? `🟢 Bestätigt (−${d.charged} Pkt)` : '🟢 Bestätigt', '#22c55e');
+    showToast(d.charged ? `🎨 Skin übernommen — ${d.charged} Punkte abgebucht` : '🎨 Skin übernommen', 'success');
+  } catch (err) { setSkinLive('⚠️ ' + err.message, '#ef4444'); showToast(err.message, 'error'); }
+}
+// Unbestätigte Vorschau beim Schließen zurücksetzen (Server spielt die gemerkte Baseline zurück).
+async function revertSkinPreview() {
+  if (!skinPreviewed || skinConfirmed) return;
+  skinPreviewed = false;
+  try {
+    await fetch(`${config.tokenBase}/skin`, { method: 'POST', headers: { Authorization: `Bearer ${sessionToken}`, 'Content-Type': 'application/json' }, body: JSON.stringify({ revert: true }) });
+  } catch {}
+}
+
 // ── Farben teilen (Code) ─────────────────────────────────────────────────────
 function skinCode() {
   const s = skinState;
@@ -4228,7 +4276,7 @@ function importSkinCode(raw) {
     SKIN_GROUPS.forEach(([k], i) => { if (p.c && Array.isArray(p.c[i]) && p.c[i].length === 3) skinState.colors[k] = p.c[i].map(Number); });
     syncSkinUI();   // ruft updateApplyCost()
     const imp = el('skImport'); if (imp) imp.value = '';
-    if (skinPays) showToast('🎨 Vorschau geladen — mit „Anwenden" bestätigen (50 Pkt pro geänderte Farbe)', 'success');
+    if (skinPays) { scheduleSkinPreview(); showToast('🎨 Vorschau geladen — mit „Bestätigen" übernehmen (50 Pkt/Farbe)', 'success'); }
     else { applySkin(); showToast('🎨 Farben übernommen', 'success'); }
   } catch { showToast('Ungültiger Farb-Code', 'error'); }
 }
