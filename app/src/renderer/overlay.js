@@ -5087,6 +5087,7 @@ function updateInteractive() {
   refreshEditAffordances();
   // Blitz-Rahmen an sichtbare Panels/Minimap anpassen (jetzt + nach Öffnen-Animation nachziehen)
   bfScheduleFrameSync();
+  updateWindowBounds();   // Idle → Fenster schrumpfen, Dock/Panel offen → Vollbild
 }
 let bfFrameSyncT = [];
 function bfScheduleFrameSync() {
@@ -5569,6 +5570,96 @@ const MOVABLE = [
 let editMode = false;
 function loadPositions() { try { return JSON.parse(localStorage.getItem('bf-layout')) || {}; } catch { return {}; } }
 function savePositions(p) { localStorage.setItem('bf-layout', JSON.stringify(p)); }
+
+// ── Einzelne HUD-Elemente aus-/einblenden (im Edit-Mode) ────────────────────
+// Dauer-sichtbare HUD-Cluster, die der Spieler wegblenden kann (Übersicht + Performance:
+// weniger sichtbares HUD = kleinere Fläche fürs Idle-Window-Shrink). Persistiert in
+// localStorage['bf-hidden-els']. Ausgeblendete Elemente bleiben im Edit-Mode gedimmt
+// sichtbar (zum Wieder-Einblenden), erst außerhalb des Edit-Mode sind sie wirklich weg.
+const HIDEABLE = [
+  { id: 'hud',         label: 'Vitalanzeige' },
+  { id: 'hudHeart',    label: 'Lebensanzeige' },
+  { id: 'minimapWrap', label: 'Minimap' },
+  { id: 'hudInfo',     label: 'Voice-Infos' },   // Mikrofon / Reichweite / Zone
+];
+let hiddenEls = new Set();
+try { hiddenEls = new Set(JSON.parse(localStorage.getItem('bf-hidden-els') || '[]')); } catch { hiddenEls = new Set(); }
+function saveHiddenEls() { try { localStorage.setItem('bf-hidden-els', JSON.stringify([...hiddenEls])); } catch {} }
+function applyHidden() {
+  for (const h of HIDEABLE) {
+    const hidden = hiddenEls.has(h.id);
+    // Ausblenden nur außerhalb des Edit-Mode; im Edit-Mode bleibt es (gedimmt) sichtbar
+    document.body.classList.toggle('bf-hide-' + h.id, hidden && !editMode);
+    const e = el(h.id); if (!e) continue;
+    e.classList.toggle('bf-ghost', hidden && editMode);
+    const btn = e.querySelector('.bf-hide-toggle');
+    if (btn) { btn.textContent = hidden ? '🚫' : '👁'; btn.title = hidden ? 'Wieder einblenden' : 'Ausblenden'; }
+  }
+}
+function toggleHidden(id) {
+  if (hiddenEls.has(id)) hiddenEls.delete(id); else hiddenEls.add(id);
+  saveHiddenEls();
+  applyHidden();
+  syncLightningFrames();   // Blitz-Rahmen an geänderte Sichtbarkeit anpassen
+  updateWindowBounds();    // weniger/mehr sichtbares HUD → Shrink-Höhe neu berechnen
+}
+function addHideToggle(elm, id) {
+  if (elm.querySelector('.bf-hide-toggle')) return;
+  const b = document.createElement('div');
+  b.className = 'bf-hide-toggle';
+  const hidden = hiddenEls.has(id);
+  b.textContent = hidden ? '🚫' : '👁';
+  b.title = hidden ? 'Wieder einblenden' : 'Ausblenden';
+  b.addEventListener('mousedown', (e) => { if (!editMode) return; e.preventDefault(); e.stopPropagation(); toggleHidden(id); });
+  elm.appendChild(b);
+}
+function removeHideToggle(elm) { const b = elm.querySelector('.bf-hide-toggle'); if (b) b.remove(); }
+
+// ── Idle-Window-Shrink (Performance-Setting, experimentell) ─────────────────
+// Meldet dem Main-Prozess die gewünschte Overlay-Fenstergröße. Im Idle (Dock/Panel zu)
+// schrumpft das Fenster auf die HÖHE der sichtbaren, oben verankerten HUD-Elemente (volle
+// Breite, Ursprung oben links) → über dem großen unteren Spielbereich liegt kein Overlay-
+// Fenster mehr → Windows kann dem Spiel eher den schnellen Vollbild-Pfad zurückgeben (FPS).
+// Bei offenem Dock/Panel wieder Vollbild. Default AUS (Wirkung ist GPU-/treiberabhängig).
+let windowShrink = localStorage.getItem('bf-window-shrink') === '1';
+let shrinkTimer = null;
+let lastSentH = -1;   // zuletzt gesendete Höhe (0 = Vollbild) — vermeidet redundante Resizes
+const IDLE_HUD_IDS = ['hud', 'hudHeart', 'minimapWrap', 'hudInfo', 'growTimer', 'serverBanner', 'toasts', 'voiceWarn', 'updateHint', 'calibPrompt'];
+function computeIdleHudBottom() {
+  let bottom = 0;
+  for (const id of IDLE_HUD_IDS) {
+    const e = el(id); if (!e) continue;
+    const cs = getComputedStyle(e);
+    if (cs.display === 'none' || cs.visibility === 'hidden' || parseFloat(cs.opacity || '1') === 0) continue;
+    const r = e.getBoundingClientRect();
+    if (r.height <= 0 || r.bottom <= 0) continue;
+    if (r.bottom > bottom) bottom = r.bottom;
+  }
+  return bottom;
+}
+function updateWindowBounds() {
+  if (!window.bf || !window.bf.setOverlayBounds) return;
+  if (shrinkTimer) { clearTimeout(shrinkTimer); shrinkTimer = null; }
+  const interactive = overlayMode || settingsOpen || mapOpen || adminOpen || !!featureOpen || editMode;
+  if (!windowShrink || interactive) {
+    if (lastSentH !== 0) { lastSentH = 0; window.bf.setOverlayBounds({ full: true }); }   // Vollbild (sofort)
+    return;
+  }
+  // Erst nach kurzer Idle-Ruhe schrumpfen → kein Thrashing beim schnellen Dock-Toggeln,
+  // und Panel-Schließen findet noch das Vollbild-Fenster (kein Umbruch-Flackern).
+  shrinkTimer = setTimeout(() => {
+    shrinkTimer = null;
+    const h = Math.max(120, Math.min(window.screen.height, Math.ceil(computeIdleHudBottom()) + 24));
+    if (Math.abs(h - lastSentH) >= 2) { lastSentH = h; window.bf.setOverlayBounds({ height: h }); }
+  }, 300);
+}
+function updateShrinkBtn() { const b = el('shrinkToggleBtn'); if (b) b.textContent = '🪟 Fenster-Shrink: ' + (windowShrink ? 'An' : 'Aus'); }
+function toggleWindowShrink() {
+  windowShrink = !windowShrink;
+  localStorage.setItem('bf-window-shrink', windowShrink ? '1' : '0');
+  updateShrinkBtn();
+  updateWindowBounds();
+}
 function applySavedPositions() {
   const p = loadPositions();
   for (const m of MOVABLE) {
@@ -5592,6 +5683,8 @@ function resetPositions() {
     e.style.removeProperty('--mini-size');
     e.style.removeProperty('--info-scale');
   }
+  hiddenEls.clear(); saveHiddenEls(); applyHidden();   // ausgeblendete HUD-Elemente wieder einblenden
+  refreshEditAffordances();                            // Auge-Buttons/Ghost-Zustand auffrischen
   showToast('Layout zurückgesetzt', 'success');
 }
 function setEditMode(on) {
@@ -5604,7 +5697,9 @@ function setEditMode(on) {
       e.classList.remove('bf-movable');
       removeResizeHandle(e);
     }
+    for (const h of HIDEABLE) { const e = el(h.id); if (e) { removeHideToggle(e); e.classList.remove('bf-ghost'); } }
   }
+  applyHidden();   // Edit an → Ghosts sichtbar; Edit aus → als ausgeblendet markierte Cluster wirklich verstecken
   // Beim Einschalten KEINE Panels zwangsöffnen. Nur das, was gerade sichtbar ist
   // (HUD + Minimap, und später jedes geöffnete Panel), wird bearbeitbar.
   refreshEditAffordances();
@@ -5626,6 +5721,12 @@ function refreshEditAffordances() {
       e.classList.remove('bf-movable');
       removeResizeHandle(e);
     }
+  }
+  // Ausblenden-Umschalter an die dauer-sichtbaren HUD-Cluster (auch die, die nicht verschiebbar sind, z. B. HUD-Pille)
+  for (const h of HIDEABLE) {
+    const e = el(h.id); if (!e) continue;
+    const shown = getComputedStyle(e).display !== 'none' || hiddenEls.has(h.id);
+    if (shown) addHideToggle(e, h.id); else removeHideToggle(e);
   }
 }
 function makeDraggable(elm, id) {
@@ -5654,6 +5755,7 @@ function makeDraggable(elm, id) {
     const p = loadPositions();
     p[id] = { ...(p[id] || {}), left: elm.style.left, top: elm.style.top };
     savePositions(p);
+    updateWindowBounds();   // verschobenes HUD → Shrink-Höhe neu berechnen
   });
 }
 // Resize-Griff unten rechts (nur im Edit-Mode). mode: 'mini' (quadratisch via --mini-size),
@@ -5685,6 +5787,7 @@ function addResizeHandle(elm, id, mode) {
     else if (mode === 'scale') p[id] = { ...(p[id] || {}), scale: elm.style.getPropertyValue('--info-scale') };
     else p[id] = { ...(p[id] || {}), width: elm.style.width, height: elm.style.height };
     savePositions(p);
+    updateWindowBounds();   // skaliertes HUD → Shrink-Höhe neu berechnen
   };
   h.addEventListener('mousedown', (e) => {
     if (!editMode) return;
@@ -5703,6 +5806,7 @@ function setupEditMode() {
     const hudEl = el('hud'); if (hudEl) { hudEl.style.left = ''; hudEl.style.top = ''; hudEl.style.right = ''; hudEl.style.bottom = ''; hudEl.style.transform = ''; hudEl.style.width = ''; } }
   for (const m of MOVABLE) { const e = el(m.id); if (e && !m.noMove) makeDraggable(e, m.id); }
   applySavedPositions();
+  applyHidden();   // gespeicherte Ausblendungen beim Start anwenden
   el('editModeBtn').onclick = () => { setEditMode(true); toggleSettings(false); };
   el('editDoneBtn').onclick = () => { toggleSettings(true); setEditMode(false); };   // „Fertig" → zurück in die Einstellungen (Settings zuerst → kein Dock-Flackern)
   el('editResetBtn').onclick = () => resetPositions();
@@ -5713,6 +5817,11 @@ function setupEditMode() {
   applyBlur();
   const lsBtn = el('lowSpecBtn'); if (lsBtn) lsBtn.onclick = toggleLowSpec;
   updateLowSpecBtn();
+  const shBtn = el('shrinkToggleBtn'); if (shBtn) shBtn.onclick = toggleWindowShrink;
+  updateShrinkBtn();
+  const raBtn = el('mapAttribution'); if (raBtn) raBtn.onclick = () => { try { window.bf.openExternal('https://raidatlas.app/'); } catch {} };  // RaidAtlas-Disclaimer
+  updateWindowBounds();                        // Anfangszustand ans Fenster melden
+  setInterval(updateWindowBounds, 1500);       // transiente HUD-Änderungen (Toasts/Banner) nachziehen
   applyMiniToggle();
   renderThemePicker();
   syncLightningFrames();   // Minimap-Blitzrahmen direkt anzeigen

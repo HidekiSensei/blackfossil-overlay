@@ -491,6 +491,10 @@ ipcMain.handle('reset-hotkeys', () => {
 });
 ipcMain.on('session-ready', (_e, token) => onSessionObtained(token));
 ipcMain.on('open-login', () => shell.openExternal(`${TOKEN_BASE}/auth/login`));
+// Externen Link im Standard-Browser öffnen (z. B. RaidAtlas-Disclaimer). Nur http(s) zulassen.
+ipcMain.on('open-external', (_e, url) => {
+  try { const u = new URL(String(url)); if (u.protocol === 'https:' || u.protocol === 'http:') shell.openExternal(u.href); } catch { /* ungültige URL ignorieren */ }
+});
 ipcMain.on('logout', () => {
   clearSession();
   if (overlayWindow) { overlayWindow.close(); overlayWindow = null; }
@@ -505,6 +509,25 @@ ipcMain.on('update-download', () => { if (app.isPackaged) autoUpdater.downloadUp
 ipcMain.on('update-install', () => { isQuitting = true; try { autoUpdater.quitAndInstall(false, true); } catch (e) { console.error('[update] Install:', e?.message || e); } });
 
 ipcMain.handle('copy-text', (_e, t) => { try { clipboard.writeText(String(t ?? '')); return true; } catch { return false; } });
+
+// ⚡ Idle-Window-Shrink (Performance-Setting): Der Renderer meldet die gewünschte Fenster-
+// größe. Im Idle (Dock zu) schrumpft das Fenster auf die Höhe der sichtbaren HUD-Elemente
+// (volle Breite, Ursprung oben links) → der große untere Spielbereich ist NICHT mehr von
+// einem Overlay-Fenster überlagert → Windows kann dem Spiel eher den schnellen Vollbild-
+// Pfad (Independent Flip / Hardware-Multiplane-Overlay) zurückgeben. Bei offenem Dock/Panel
+// wächst es zurück auf Vollbild. `full:true` = ganzer Bildschirm, sonst `{height}`.
+ipcMain.on('set-overlay-bounds', (_e, b) => {
+  if (!overlayWindow || overlayWindow.isDestroyed()) return;
+  try {
+    const { bounds } = screen.getPrimaryDisplay();
+    if (b && b.full) {
+      overlayWindow.setBounds({ x: bounds.x, y: bounds.y, width: bounds.width, height: bounds.height });
+    } else if (b && typeof b.height === 'number') {
+      const h = Math.max(1, Math.min(bounds.height, Math.round(b.height)));
+      overlayWindow.setBounds({ x: bounds.x, y: bounds.y, width: bounds.width, height: h });
+    }
+  } catch { /* Fenster evtl. gerade zerstört */ }
+});
 
 ipcMain.on('set-interactive', (_e, interactive) => {
   if (!overlayWindow) return;
