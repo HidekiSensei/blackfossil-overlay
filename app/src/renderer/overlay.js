@@ -1993,7 +1993,10 @@ async function loadServerZones() {
 // Zentrale Kalibrierung vom Server laden (alle Clients beim Start)
 async function loadServerCalibration() {
   try {
-    const res = await fetch(`${config.tokenBase}/calibration`);
+    // WICHTIG: GET /calibration braucht Auth (RequireActor). Ohne Header → 401 → globale
+    // Kalibrierung wird nie geladen (alle blieben auf dem Default hängen). Das war der Grund,
+    // warum die global gespeicherte Kalibrierung bei den anderen nie ankam.
+    const res = await fetch(`${config.tokenBase}/calibration`, { headers: { Authorization: `Bearer ${sessionToken}` } });
     if (res.ok) {
       const data = await res.json();
       if (data.affine && typeof data.affine.a === 'number') setCalAffine(data.affine);
