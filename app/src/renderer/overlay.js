@@ -1655,6 +1655,35 @@ function resolveAdminUser(inputId) {
   return adminUserMap.get(v) || null;
 }
 
+// ── Wiederverwendbar: Discord-User-Suchfeld (Name selbst tippen + Vorschläge unten) ──
+// Ersetzt <select>-Dropdowns überall im Admin-Overlay durch ein Text-Input mit Datalist.
+function userSearchHTML(inputId, users, label, placeholder) {
+  const listId = inputId + '_dl';
+  const seen = new Set(); const opts = [];
+  for (const u of (users || [])) {
+    let key = u.name || '';
+    if (seen.has(key)) key = `${u.name} (…${(u.steamId || u.discordId || '').slice(-4)})`;
+    seen.add(key);
+    opts.push(`<option value="${escapeHtml(key)}">`);
+  }
+  return `<label>${escapeHtml(label || 'Spieler')}</label>` +
+    `<input id="${inputId}" list="${listId}" class="tm-input" placeholder="${escapeHtml(placeholder || 'Discord-Name tippen…')}" autocomplete="off">` +
+    `<datalist id="${listId}">${opts.join('')}</datalist>`;
+}
+// Löst den getippten Namen zurück zum User-Objekt (mit gleichem Dedup-Suffix wie oben).
+function resolveUserInput(inputId, users) {
+  const v = (el(inputId)?.value || '').trim().toLowerCase();
+  if (!v) return null;
+  const seen = new Set();
+  for (const u of (users || [])) {
+    let key = u.name || '';
+    if (seen.has(key)) key = `${u.name} (…${(u.steamId || u.discordId || '').slice(-4)})`;
+    seen.add(key);
+    if (key.toLowerCase() === v) return u;
+  }
+  return (users || []).find((u) => (u.name || '').toLowerCase() === v) || null;
+}
+
 async function admLoadUserInfo() {
   const u = resolveAdminUser('admUserSearch');
   if (!u) { showToast('Bitte einen User aus der Liste wählen', 'error'); return; }
@@ -3011,14 +3040,15 @@ function supForward() {
     <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px"><b>↗️ Ticket weiterleiten</b><button id="supPkClose" class="secondary" style="width:auto;flex:none;padding:4px 11px">✕</button></div>
     <label style="font-size:11px;color:var(--muted)">An Rolle</label>
     <select id="supFwRole" class="tm-input"><option value="">— Rolle wählen —</option>${roles.map((r) => `<option value="${escapeHtml(r.id)}">${escapeHtml(r.name)}</option>`).join('')}</select>
-    <label style="font-size:11px;color:var(--muted);margin-top:8px">oder an Person</label>
-    <select id="supFwUser" class="tm-input"><option value="">— Person wählen —</option>${users.map((u) => `<option value="${escapeHtml(u.discordId)}">${escapeHtml(u.name)}</option>`).join('')}</select>
+    <div style="margin-top:8px">${userSearchHTML('supFwUser', users, 'oder an Person', 'Discord-Name tippen…')}</div>
     <button id="supFwGo" style="margin-top:14px">Weiterleiten</button>`;
   el('supPkClose').onclick = supCloseModal;
   el('supFwRole').onchange = () => { if (el('supFwRole').value) el('supFwUser').value = ''; };
-  el('supFwUser').onchange = () => { if (el('supFwUser').value) el('supFwRole').value = ''; };
+  el('supFwUser').oninput = () => { if (el('supFwUser').value) el('supFwRole').value = ''; };
   el('supFwGo').onclick = async () => {
-    const roleId = el('supFwRole').value, userId = el('supFwUser').value;
+    const roleId = el('supFwRole').value;
+    const uSel = resolveUserInput('supFwUser', users);
+    const userId = uSel ? uSel.discordId : '';
     if (!roleId && !userId) { showToast('Bitte Rolle oder Person wählen', 'error'); return; }
     const ok = await supAction('/me/ticket-forward', userId ? { channelId: supSel, targetType: 'user', targetId: userId } : { channelId: supSel, targetType: 'role', targetId: roleId }, '↗️ Weitergeleitet');
     if (ok) supCloseModal();
@@ -4757,6 +4787,7 @@ let dtTab = 'give';                 // 'give' | 'edit' | 'delete'
 let dtCfg = null;                   // {species, dietBySpecies, primeLabels, mutations}
 let dtUsers = [], dtRoles = [];
 let dtSel = { species: null, gender: 'Male', grow: 25, elder: 0, primes: [], mut: { base: [], parent: [], elder: [] }, targetKind: 'user' };
+let dtMutSearchVal = '';            // Mutations-Suchfilter (bleibt über Re-Renders erhalten)
 
 async function ensureDtLoaded() {
   if (!isStaff) return;
@@ -4789,26 +4820,46 @@ function renderDtPrime() {
 function renderDtMut() {
   const box = el('dtMut'); if (!box) return;
   const c = dtSel, diet = dtDiet(), gender = c.gender;
-  const list = (dtCfg.mutations || []).filter((m) => (m.diet === 'both' || m.diet === diet) && (!m.femaleOnly || gender === 'female' || gender === 'Female'));
+  const isFemale = gender === 'female' || gender === 'Female';
+  // Vollständiger Mutations-Katalog (MUT_CATALOG), gefiltert nach Diät + Geschlecht, alphabetisch.
+  const list = MUT_CATALOG
+    .filter((m) => (m.d === 'both' || m.d === diet) && (!m.f || isFemale))
+    .map((m) => ({ value: m.v, label: m.l, desc: m.x || '', hidden: !!m.h }))
+    .sort((a, b) => a.label.localeCompare(b.label));
   const primeCount = c.primes.length, baseMax = primeCount >= 5 ? 4 : 3, elderUnlocked = primeCount >= 1;
+  const caps = { base: baseMax, parent: 4, elder: 8 };
   const valid = new Set(list.map((m) => m.value));
   c.mut.base = c.mut.base.filter((v) => valid.has(v)).slice(0, baseMax);
   c.mut.parent = c.mut.parent.filter((v) => valid.has(v)).slice(0, 4);
   c.mut.elder = elderUnlocked ? c.mut.elder.filter((v) => valid.has(v)).slice(0, 8) : [];
-  const group = (key, title, max, enabled) => {
-    if (!enabled) return `<div class="dt-sec">${title} — gesperrt (≥1 Prime nötig)</div>`;
-    const others = new Set([...(key !== 'base' ? c.mut.base : []), ...(key !== 'parent' ? c.mut.parent : []), ...(key !== 'elder' ? c.mut.elder : [])]);
-    const sel = new Set(c.mut[key]);
-    const chips = list.map((m) => { const on = sel.has(m.value); const dim = others.has(m.value) && !on; return `<span class="dt-chip${on ? ' on' : ''}${dim ? ' dim' : ''}" data-mut="${key}" data-val="${escapeHtml(m.value)}" title="${escapeHtml(m.description || '')}">${escapeHtml(m.label)}</span>`; }).join('');
-    return `<div class="dt-sec">${title} (${sel.size}/${max})</div><div class="dt-chips">${chips}</div>`;
-  };
-  box.innerHTML = group('base', '🧬 Base', baseMax, true) + group('parent', '🧬 Parent', 4, true) + group('elder', '🧬 Elder', 8, elderUnlocked);
-  box.querySelectorAll('[data-mut]').forEach((ch) => { ch.onclick = () => {
-    const key = ch.dataset.mut, val = ch.dataset.val, arr = c.mut[key], i = arr.indexOf(val);
-    const max = key === 'base' ? baseMax : key === 'parent' ? 4 : 8;
-    if (i >= 0) arr.splice(i, 1); else { if (arr.length >= max) { showToast(`Max. ${max} in ${key}`, 'error'); return; } arr.push(val); }
+  const genLbl = { base: 'B', parent: 'P', elder: 'E' };
+  const genTitle = { base: 'Base', parent: 'Parent', elder: 'Elder' };
+  const counts = `Base ${c.mut.base.length}/${baseMax} · Parent ${c.mut.parent.length}/4 · Elder ${elderUnlocked ? c.mut.elder.length + '/8' : '🔒 ≥1 Prime'}`;
+  const rows = list.map((m) => {
+    const inGen = ['base', 'parent', 'elder'].find((g) => c.mut[g].includes(m.value));
+    const btn = (gen) => {
+      const on = inGen === gen;
+      const disabled = (gen === 'elder' && !elderUnlocked) || (inGen && inGen !== gen);
+      return `<button class="dt-mgen${on ? ' on' : ''}" data-mut="${escapeHtml(m.value)}" data-gen="${gen}" title="${genTitle[gen]}"${disabled ? ' disabled' : ''}>${genLbl[gen]}</button>`;
+    };
+    return `<div class="dt-mrow" data-search="${escapeHtml((m.label + ' ' + m.desc).toLowerCase())}">` +
+      `<div class="dt-mtxt"><span class="dt-mname">${escapeHtml(m.label)}${m.hidden ? ' <span title="Selten / versteckt">★</span>' : ''}</span><span class="dt-mdesc">${escapeHtml(m.desc)}</span></div>` +
+      `<div class="dt-mbtns">${btn('base')}${btn('parent')}${btn('elder')}</div></div>`;
+  }).join('');
+  box.innerHTML = `
+    <div class="dt-sec">🧬 Mutationen <span style="font-weight:400;color:var(--muted)">— ${counts}</span></div>
+    <input id="dtMutSearch" class="tm-input" placeholder="🔎 Mutation suchen…" autocomplete="off" style="margin-bottom:6px">
+    <div class="dt-mlist">${rows || '<div class="dt-muted" style="padding:8px">Keine Mutationen für diese Auswahl.</div>'}</div>
+    <div class="dt-muted" style="font-size:10.5px;margin-top:4px">B = Base · P = Parent · E = Elder · ★ = selten. Jede Mutation zählt in nur eine Generation.</div>`;
+  box.querySelectorAll('.dt-mgen').forEach((b) => { b.onclick = () => {
+    const val = b.dataset.mut, gen = b.dataset.gen, arr = c.mut[gen], i = arr.indexOf(val);
+    if (i >= 0) arr.splice(i, 1);
+    else { if (arr.length >= caps[gen]) { showToast(`Max. ${caps[gen]} in ${genTitle[gen]}`, 'error'); return; } arr.push(val); }
     renderDtMut();
   }; });
+  const s = el('dtMutSearch');
+  const applyFilter = () => { const q = (dtMutSearchVal || '').trim().toLowerCase(); box.querySelectorAll('.dt-mrow').forEach((r) => { r.style.display = !q || r.dataset.search.includes(q) ? '' : 'none'; }); };
+  if (s) { s.value = dtMutSearchVal; s.oninput = () => { dtMutSearchVal = s.value; applyFilter(); }; applyFilter(); }
 }
 function renderDtGive() {
   const c = dtSel;
@@ -4838,7 +4889,7 @@ function renderDtGive() {
   const renderTarget = () => {
     c.targetKind = el('dtKind').value;
     el('dtTargetBox').innerHTML = c.targetKind === 'user'
-      ? `<label>Spieler</label><select id="dtUser" class="bf-select">${userOpts}</select>`
+      ? userSearchHTML('dtUser', dtUsers, 'Spieler', 'Discord-Name tippen…')
       : c.targetKind === 'role'
         ? `<label>Rolle</label><select id="dtRole" class="bf-select">${roleOpts}</select>`
         : '<div class="dt-muted" style="margin-top:6px">→ an alle aktuell online Spieler.</div>';
@@ -4852,24 +4903,23 @@ function renderDtGive() {
   renderDtPrime(); renderDtMut();
   el('dtGiveSubmit').onclick = () => {
     const body = { targetKind: c.targetKind, dino: c.species, gender: el('dtGender').value, grow: (parseInt(el('dtGrow').value) || 25) / 100, elderStacks: c.elder, primes: c.primes, mutations: c.mut };
-    if (c.targetKind === 'user') { const u = el('dtUser'); if (!u || !u.value) { showToast('Spieler wählen', 'error'); return; } body.targetSteamId = u.value; }
+    if (c.targetKind === 'user') { const u = resolveUserInput('dtUser', dtUsers); if (!u) { showToast('Bitte einen Spieler aus den Vorschlägen wählen', 'error'); return; } body.targetSteamId = u.steamId; }
     else if (c.targetKind === 'role') { const r = el('dtRole'); if (!r || !r.value) { showToast('Rolle wählen', 'error'); return; } body.roleId = r.value; }
     apiAction('/admin/dino-token/create', body, '🎁 Dino-Token vergeben', () => { c.primes = []; c.mut = { base: [], parent: [], elder: [] }; renderDtPrime(); renderDtMut(); const l = el('dtPrimeLbl'); if (l) l.textContent = 'Prime-Bedingungen (0/10)'; });
   };
 }
 function renderDtEditDelete() {
-  const userOpts = dtUsers.map((u) => `<option value="${u.steamId}">${escapeHtml(u.name)}</option>`).join('');
   el('dtBody').innerHTML = `
     <div class="dt-form">
-      <label>Spieler (${dtTab === 'delete' ? 'Token löschen' : 'Token bearbeiten'})</label>
-      <select id="dtEdUser" class="bf-select">${userOpts}</select>
+      ${userSearchHTML('dtEdUser', dtUsers, `Spieler (${dtTab === 'delete' ? 'Token löschen' : 'Token bearbeiten'})`, 'Discord-Name tippen…')}
       <button id="dtEdLoad" style="width:100%;margin-top:8px">📋 Garage laden</button>
     </div>
     <div id="dtEdList" style="margin-top:12px"></div>`;
   el('dtEdLoad').onclick = dtLoadGarage;
 }
 async function dtLoadGarage() {
-  const sid = el('dtEdUser').value; if (!sid) { showToast('Spieler wählen', 'error'); return; }
+  const u = resolveUserInput('dtEdUser', dtUsers); if (!u) { showToast('Bitte einen Spieler aus den Vorschlägen wählen', 'error'); return; }
+  const sid = u.steamId;
   const box = el('dtEdList'); box.innerHTML = '<div class="dt-muted">Lade…</div>';
   try {
     const d = await fetch(`${config.tokenBase}/admin/dino-token/garage?steamId=${encodeURIComponent(sid)}`, { headers: { Authorization: `Bearer ${sessionToken}` } }).then((r) => r.json());
@@ -4947,28 +4997,28 @@ function renderPvpPrime() {
     </div>
     <div class="dt-sec" style="margin-top:18px">⭐ Prime auf aktiven Dino (live)</div>
     <div class="dt-form">
-      <label>Spieler (muss ingame sein)</label><select id="ppPrUser" class="bf-select">${userOpts}</select>
+      ${userSearchHTML('ppPrUser', ppUsers, 'Spieler (muss ingame sein)', 'Discord-Name tippen…')}
       <label id="ppPrLbl">Prime-Bedingungen (${ppPrimes.length}/10)</label>
       <div class="dt-chips" id="ppPrChips"></div>
       <button id="ppPrApply" style="width:100%;margin-top:10px">⭐ Prime setzen</button>
     </div>`;
   const renderTarget = () => {
     ppGrantKind = el('ppKind').value;
-    el('ppTargetBox').innerHTML = ppGrantKind === 'user' ? `<label>Spieler</label><select id="ppUser" class="bf-select">${userOpts}</select>`
+    el('ppTargetBox').innerHTML = ppGrantKind === 'user' ? userSearchHTML('ppUser', ppUsers, 'Spieler', 'Discord-Name tippen…')
       : ppGrantKind === 'role' ? `<label>Rolle</label><select id="ppRole" class="bf-select">${roleOpts}</select>`
         : '<div class="dt-muted" style="margin-top:6px">→ an alle aktuell online Spieler.</div>';
   };
   renderTarget(); el('ppKind').onchange = renderTarget;
   const grantBody = () => {
     const b = { targetKind: ppGrantKind };
-    if (ppGrantKind === 'user') { const u = el('ppUser'); if (!u || !u.value) { showToast('Spieler wählen', 'error'); return null; } b.targetSteamId = u.value; }
+    if (ppGrantKind === 'user') { const u = resolveUserInput('ppUser', ppUsers); if (!u) { showToast('Bitte einen Spieler aus den Vorschlägen wählen', 'error'); return null; } b.targetSteamId = u.steamId; }
     else if (ppGrantKind === 'role') { const r = el('ppRole'); if (!r || !r.value) { showToast('Rolle wählen', 'error'); return null; } b.roleId = r.value; }
     return b;
   };
   el('ppGrant').onclick = () => { const b = grantBody(); if (!b) return; b.buildKey = el('ppBuild').value; apiAction('/admin/pvp/grant', b, '🏆 PvP-Build vergeben', null); };
   el('ppRemove').onclick = () => { const b = grantBody(); if (!b) return; apiAction('/admin/pvp/remove', b, '🧹 PvP-Builds eingesammelt', null); };
   renderPpPrimeChips();
-  el('ppPrApply').onclick = () => { const u = el('ppPrUser'); if (!u || !u.value) { showToast('Spieler wählen', 'error'); return; } apiAction('/admin/prime', { targetSteamId: u.value, primes: ppPrimes }, '⭐ Prime gesetzt', null); };
+  el('ppPrApply').onclick = () => { const u = resolveUserInput('ppPrUser', ppUsers); if (!u) { showToast('Bitte einen Spieler aus den Vorschlägen wählen', 'error'); return; } apiAction('/admin/prime', { targetSteamId: u.steamId, primes: ppPrimes }, '⭐ Prime gesetzt', null); };
 }
 
 // ── Account-Verwaltung (nur Admin): Discord↔Steam Link / Find / Dupes ───────
