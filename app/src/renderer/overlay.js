@@ -635,6 +635,7 @@ async function init() {
   el('adminCloseBtn').onclick = () => closeAdminPanel();
   el('admUserLoad').onclick = () => admLoadUserInfo();
   el('admLightningBtn').onclick = () => admLightning();
+  { const b = el('dutyToggleBtn'); if (b) b.onclick = () => toggleDuty(); }
   document.querySelectorAll('#adminTabs [data-atab]').forEach((b) => { b.onclick = () => showAdminTab(b.dataset.atab); });
   { const b = el('dtTabGive'); if (b) b.onclick = () => { dtTab = 'give'; renderDtTab(); }; }
   { const b = el('dtTabEdit'); if (b) b.onclick = () => { dtTab = 'edit'; renderDtTab(); }; }
@@ -1303,6 +1304,7 @@ function openAdminPanel() {
   updateInteractive();
   ensureGiftTypeOptions();
   loadAdminUsers();
+  loadDutyState();
   if (isIngame) loadAdminRoles();         // Gift-Rollen-Dropdown — nur Moderator+ (Beschenken)
   if (isAdmin) loadDinoLimits();
   if (isIngame) { loadTeleports(); renderAdminTpList(); }
@@ -1709,6 +1711,32 @@ async function admLoadUserInfo() {
       `<div>🦖 Live-Dino: ${dino}</div>`;
     el('admUserActions').style.display = 'block';
   } catch (e) { el('admUserInfo').innerHTML = `<span style="color:var(--off)">${escapeHtml(e.message)}</span>`; }
+}
+
+// ── Dienst-Modus (Staff): Vitals einfrieren + Admin-Skin ──────────────────────
+function updateDutyBtn(on) {
+  const b = el('dutyToggleBtn'); if (!b) return;
+  b.textContent = on ? '🩷 Dienst-Modus AUSschalten (Skin zurück)' : '🩷 Dienst-Modus einschalten';
+  b.style.background = on ? '#db2777' : '';
+}
+async function loadDutyState() {
+  const blk = el('dutyBlock');
+  if (!sessionToken || !isStaff) { if (blk) blk.style.display = 'none'; return; }
+  if (blk) blk.style.display = '';
+  try {
+    const d = await fetch(`${config.tokenBase}/me/duty`, { headers: { Authorization: `Bearer ${sessionToken}` } }).then((r) => r.json());
+    updateDutyBtn(!!d.on);
+  } catch {}
+}
+async function toggleDuty() {
+  const b = el('dutyToggleBtn'); if (b) b.disabled = true;
+  try {
+    const res = await fetch(`${config.tokenBase}/me/duty`, { method: 'POST', headers: { Authorization: `Bearer ${sessionToken}` } });
+    const d = await res.json(); if (!res.ok) throw new Error(apiErr(d));
+    updateDutyBtn(!!d.on);
+    showToast(d.on ? '🩷 Dienst-Modus AN — Vitals eingefroren, Admin-Skin aktiv' : '✅ Dienst-Modus aus — Skin zurückgesetzt', 'success');
+  } catch (e) { showToast(e.message || 'Fehler', 'error'); }
+  finally { if (b) b.disabled = false; }
 }
 
 async function admLightning() {
