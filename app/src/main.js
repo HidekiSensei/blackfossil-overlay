@@ -20,11 +20,26 @@ function setupAutoUpdate() {
   autoUpdater.autoDownload = false;
   autoUpdater.autoInstallOnAppQuit = true; // Fallback: spätestens beim Beenden
   const send = (ch, v) => { try { overlayWindow?.webContents.send(ch, v); } catch {} };
-  autoUpdater.on('update-available', (i) => send('update-available', i?.version));
+  let updateRetries = 0;
+  autoUpdater.on('update-available', (i) => { updateRetries = 0; send('update-available', i?.version); });
   autoUpdater.on('update-not-available', () => send('update-none'));
   autoUpdater.on('download-progress', (p) => send('update-progress', Math.round(p?.percent || 0)));
-  autoUpdater.on('update-downloaded', (i) => send('update-ready', i?.version));
-  autoUpdater.on('error', (err) => send('update-error', String(err?.message || err)));
+  autoUpdater.on('update-downloaded', (i) => { updateRetries = 0; send('update-ready', i?.version); });
+  autoUpdater.on('error', (err) => {
+    const msg = String(err?.message || err);
+    // EPERM/EBUSY/rename beim Finalisieren kommt fast immer daher, dass Antivirus/Defender die
+    // frisch geladene .exe scannt und kurz sperrt, während electron-updater sie umbenennt.
+    // Darum bis zu 2× automatisch neu versuchen (AV hat dann meist losgelassen); erst danach den
+    // Fehler an den Renderer melden (der bietet dann den manuellen Download an).
+    if (/EPERM|EBUSY|EACCES|rename/i.test(msg) && updateRetries < 2) {
+      updateRetries++;
+      send('update-progress', 0);
+      setTimeout(() => { autoUpdater.downloadUpdate().catch(() => {}); }, 6000);
+      return;
+    }
+    updateRetries = 0;
+    send('update-error', msg);
+  });
   setInterval(() => { if (app.isPackaged) autoUpdater.checkForUpdates().catch(() => {}); }, 60 * 60 * 1000);
 }
 function checkForUpdates() {

@@ -276,8 +276,13 @@ function renderUpdateUI() {
     hint.style.display = 'block'; hint.textContent = `✅ Update ${v} bereit — neustarten`;
     if (info) info.textContent = `Version ${v} ist bereit. Overlay neustarten zum Installieren.`;
     btn.textContent = 'Neustarten & installieren'; btn.disabled = false;
+  } else if (updateState === 'error') {
+    hint.style.display = 'block'; hint.textContent = `⚠️ Update fehlgeschlagen — manuell möglich`;
+    if (info) info.textContent = 'Auto-Update wurde blockiert (meist vom Antivirus). Starte das Overlay einmal komplett neu und versuche es erneut — oder lade den Installer manuell herunter und führe ihn aus (deine Daten bleiben erhalten).';
+    btn.textContent = '📥 Installer herunterladen'; btn.disabled = false;
   }
 }
+const RELEASES_URL = 'https://github.com/HidekiSensei/blackfossil-overlay/releases/latest';
 
 // Proximity: Sprechreichweiten in Metern (1 m = 100 Welt-Einheiten/cm).
 // Maßgeblich ist die Reichweite des SPRECHERS — andere hören dich so weit.
@@ -558,6 +563,7 @@ async function init() {
   el('updateBtn').onclick = () => {
     if (updateState === 'available') { updateState = 'downloading'; window.bf.updateDownload?.(); renderUpdateUI(); }
     else if (updateState === 'ready') { window.bf.updateInstall?.(); }
+    else if (updateState === 'error') { window.bf.openExternal?.(RELEASES_URL); }   // manueller Download-Fallback
   };
   window.bf.onUpdateAvailable?.((version) => {
     updateVersion = version || ''; updateState = 'available'; renderUpdateUI();
@@ -571,8 +577,8 @@ async function init() {
     showToast('✅ Update bereit — Overlay neustarten zum Installieren', 'success');
   });
   window.bf.onUpdateError?.((msg) => {
-    if (updateState === 'downloading') { updateState = 'available'; renderUpdateUI(); }
-    showToast(`Update-Fehler: ${msg}`, 'error');
+    updateState = 'error'; renderUpdateUI();
+    showToast(`Update-Fehler: ${msg} — Overlay neu starten oder Installer manuell laden (Einstellungen → Update).`, 'error');
   });
   // Raustabben → offene Overlay-Fenster schließen (Main blendet das Fenster ohnehin aus)
   window.bf.onGameFocus?.((focused) => {
