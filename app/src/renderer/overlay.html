@@ -450,6 +450,17 @@
       font-size: 12px; line-height: 1; background: var(--accent); color: #fff; border-radius: 50%;
       cursor: pointer; z-index: 10002; box-shadow: 0 0 8px rgba(0,0,0,.5); user-select: none; }
     .bf-hide-toggle:hover { filter: brightness(1.15); }
+    /* ── Bug melden (unten links, nur wenn das Dock offen ist) ──────────────── */
+    #bugReportBtn { position: absolute; left: 16px; bottom: 16px; z-index: 56; display: none; align-items: center; gap: 7px;
+      background: var(--panel); border: 1px solid var(--border); color: #eee; border-radius: 10px; padding: 8px 14px;
+      font-size: 13px; font-weight: 600; cursor: pointer; box-shadow: var(--glow); }
+    body.dock-on #bugReportBtn { display: inline-flex; }
+    #bugReportBtn:hover { background: rgba(var(--accent-rgb),0.18); }
+    #bugModal { display: none; position: absolute; top: 50%; left: 50%; transform: translate(-50%,-50%); z-index: 120;
+      width: 420px; max-width: 92vw; background: rgba(15,10,30,0.98); border: 1px solid var(--border); border-radius: 14px;
+      padding: 18px; box-shadow: var(--glow); }
+    #bugModal.open { display: block; }
+    #bugShot { max-width: 100%; max-height: 160px; border-radius: 8px; border: 1px solid var(--border); margin-top: 8px; display: none; }
     /* ── Map-Attribution / RaidAtlas-Disclaimer (unten rechts auf der großen Karte) ── */
     #mapAttribution { position: absolute; right: 18px; bottom: 18px; z-index: 6;
       display: flex; align-items: center; padding: 13px 24px; border-radius: 20px;
@@ -1328,6 +1339,23 @@
   <div id="garage" class="feature-panel"><h2>🚗 Garage</h2><p>Ein- und Ausparken deiner Dinos — kommt in Phase 4.</p><button class="closeFeature secondary">Schließen</button></div>
   <div id="market" class="feature-panel"><h2>🦖 Dino-Markt</h2><p>Dinos kaufen & verkaufen — kommt in Phase 4.</p><button class="closeFeature secondary">Schließen</button></div>
 
+  <button id="bugReportBtn" title="Bug melden">🐛 Bug melden</button>
+  <div id="bugModal">
+    <div style="font-weight:700;font-size:15px;margin-bottom:4px">🐛 Bug melden</div>
+    <div style="font-size:12px;color:var(--muted);margin-bottom:12px">Beschreibe kurz, was schiefläuft. Ein Screenshot hilft uns enorm.</div>
+    <input id="bugTitle" maxlength="120" placeholder="Titel (kurz) *" style="width:100%;box-sizing:border-box;padding:9px;border-radius:8px;border:1px solid var(--border);background:var(--input-bg,#1a1230);color:#eee;margin-bottom:8px">
+    <textarea id="bugBody" maxlength="3000" placeholder="Was ist passiert? Wo/wann?" style="width:100%;box-sizing:border-box;height:88px;padding:9px;border-radius:8px;border:1px solid var(--border);background:var(--input-bg,#1a1230);color:#eee;resize:vertical;margin-bottom:8px"></textarea>
+    <div style="display:flex;gap:8px">
+      <button id="bugShotBtn" class="secondary" style="flex:1">📷 Screenshot</button>
+      <button id="bugFileBtn" class="secondary" style="flex:1">🖼️ Bild wählen</button>
+      <input id="bugFile" type="file" accept="image/*" style="display:none">
+    </div>
+    <img id="bugShot" alt="Vorschau">
+    <div style="display:flex;gap:8px;margin-top:14px">
+      <button id="bugCancel" class="secondary" style="flex:1">Abbrechen</button>
+      <button id="bugSubmit" style="flex:1;background:var(--accent);border:0;color:#fff">Senden</button>
+    </div>
+  </div>
   <script src="dist/overlay.js"></script>
 </body>
 </html>

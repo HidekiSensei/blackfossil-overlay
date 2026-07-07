@@ -5732,6 +5732,57 @@ function updateWindowBounds() {
   }, 300);
 }
 function updateShrinkBtn() { const b = el('shrinkToggleBtn'); if (b) b.textContent = '🪟 Fenster-Shrink: ' + (windowShrink ? 'An' : 'Aus'); }
+
+// ── Bug melden (Overlay → Backend → Dev-Board) ──────────────────────────────
+// Button unten links (nur bei offenem Dock). Titel + Beschreibung + optionaler Screenshot
+// (Bild, keine Clips). Fail-Safe bleibt der Discord-Melde-Button im Dev-Board.
+let bugImageBlob = null;
+function openBugModal() { const m = el('bugModal'); if (m) m.classList.add('open'); }
+function closeBugModal() {
+  const m = el('bugModal'); if (m) m.classList.remove('open');
+  bugImageBlob = null;
+  const s = el('bugShot'); if (s) { s.style.display = 'none'; if (s.src.startsWith('blob:')) URL.revokeObjectURL(s.src); s.src = ''; }
+  if (el('bugTitle')) el('bugTitle').value = '';
+  if (el('bugBody')) el('bugBody').value = '';
+}
+function setBugShot(blob) {
+  bugImageBlob = blob;
+  const s = el('bugShot'); if (!s) return;
+  if (s.src.startsWith('blob:')) URL.revokeObjectURL(s.src);
+  s.src = URL.createObjectURL(blob); s.style.display = 'block';
+}
+async function bugTakeScreenshot() {
+  try {
+    const dataUrl = await window.bf.captureScreen();
+    if (!dataUrl) { showToast('Screenshot fehlgeschlagen', 'error'); return; }
+    setBugShot(await (await fetch(dataUrl)).blob());
+  } catch { showToast('Screenshot fehlgeschlagen', 'error'); }
+}
+async function submitBugReport() {
+  const title = (el('bugTitle')?.value || '').trim();
+  const body = (el('bugBody')?.value || '').trim();
+  if (!title) { showToast('Bitte einen kurzen Titel angeben', 'error'); return; }
+  const fd = new FormData();
+  fd.append('title', title); fd.append('body', body);
+  if (bugImageBlob) fd.append('image', bugImageBlob, 'screenshot.png');
+  const btn = el('bugSubmit'); if (btn) btn.disabled = true;
+  try {
+    const res = await fetch(`${config.tokenBase}/me/bugreport`, { method: 'POST', headers: { Authorization: `Bearer ${sessionToken}` }, body: fd });
+    if (!res.ok) throw new Error('Fehler ' + res.status);
+    showToast('🐛 Bug gemeldet — danke!', 'success');
+    closeBugModal();
+  } catch (e) { showToast('Melden fehlgeschlagen: ' + e.message, 'error'); }
+  finally { if (btn) btn.disabled = false; }
+}
+function setupBugReport() {
+  const on = (id, fn, ev = 'onclick') => { const e = el(id); if (e) e[ev] = fn; };
+  on('bugReportBtn', openBugModal);
+  on('bugCancel', closeBugModal);
+  on('bugSubmit', submitBugReport);
+  on('bugShotBtn', bugTakeScreenshot);
+  on('bugFileBtn', () => el('bugFile')?.click());
+  on('bugFile', (e) => { const f = e.target.files && e.target.files[0]; if (f) setBugShot(f); }, 'onchange');
+}
 function toggleWindowShrink() {
   windowShrink = !windowShrink;
   localStorage.setItem('bf-window-shrink', windowShrink ? '1' : '0');
@@ -5898,6 +5949,7 @@ function setupEditMode() {
   const shBtn = el('shrinkToggleBtn'); if (shBtn) shBtn.onclick = toggleWindowShrink;
   updateShrinkBtn();
   const raBtn = el('mapAttribution'); if (raBtn) raBtn.onclick = () => { try { window.bf.openExternal('https://raidatlas.app/'); } catch {} };  // RaidAtlas-Disclaimer
+  setupBugReport();
   updateWindowBounds();                        // Anfangszustand ans Fenster melden
   setInterval(updateWindowBounds, 1500);       // transiente HUD-Änderungen (Toasts/Banner) nachziehen
   applyMiniToggle();

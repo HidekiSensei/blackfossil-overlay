@@ -1,4 +1,4 @@
-const { app, BrowserWindow, ipcMain, shell, session, globalShortcut, screen, Tray, Menu, nativeImage, clipboard } = require('electron');
+const { app, BrowserWindow, ipcMain, shell, session, globalShortcut, screen, Tray, Menu, nativeImage, clipboard, desktopCapturer } = require('electron');
 const path = require('node:path');
 const fs = require('node:fs');
 const http = require('node:http');
@@ -524,6 +524,21 @@ ipcMain.on('update-download', () => { if (app.isPackaged) autoUpdater.downloadUp
 ipcMain.on('update-install', () => { isQuitting = true; try { autoUpdater.quitAndInstall(false, true); } catch (e) { console.error('[update] Install:', e?.message || e); } });
 
 ipcMain.handle('copy-text', (_e, t) => { try { clipboard.writeText(String(t ?? '')); return true; } catch { return false; } });
+
+// Screenshot fürs Bug-Melden: greift den Bildschirm von AUSSEN ab (wie OBS/Game Bar) — keine
+// Injektion ins Spiel, daher EAC-unproblematisch. Liefert einen PNG-Data-URL an den Renderer.
+ipcMain.handle('capture-screen', async () => {
+  try {
+    const disp = screen.getPrimaryDisplay();
+    const sf = disp.scaleFactor || 1;
+    const width = Math.round(disp.size.width * sf);
+    const height = Math.round(disp.size.height * sf);
+    const sources = await desktopCapturer.getSources({ types: ['screen'], thumbnailSize: { width, height } });
+    const src = sources.find((s) => !s.thumbnail.isEmpty()) || sources[0];
+    if (!src) return null;
+    return src.thumbnail.toDataURL();
+  } catch (e) { console.error('[capture-screen]', e?.message || e); return null; }
+});
 
 // ⚡ Idle-Window-Shrink (Performance-Setting): Der Renderer meldet die gewünschte Fenster-
 // größe. Im Idle (Dock zu) schrumpft das Fenster auf die Höhe der sichtbaren HUD-Elemente

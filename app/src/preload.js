@@ -9,6 +9,7 @@ contextBridge.exposeInMainWorld('bf', {
   logout: () => ipcRenderer.send('logout'),
   setInteractive: (v) => ipcRenderer.send('set-interactive', v),
   setOverlayBounds: (b) => ipcRenderer.send('set-overlay-bounds', b),
+  captureScreen: () => ipcRenderer.invoke('capture-screen'),
   copyText: (t) => ipcRenderer.invoke('copy-text', t),
   onHotkey: (cb) => ipcRenderer.on('hotkey', (_e, action) => cb(action)),
   getHotkeys: () => ipcRenderer.invoke('get-hotkeys'),
