@@ -1,4 +1,4 @@
-import { Room, RoomEvent, Track, ParticipantEvent } from 'livekit-client';
+import { Room, RoomEvent, Track, ParticipantEvent, AudioPresets } from 'livekit-client';
 import { loadMapImage, drawFullMap, drawMinimap, drawHeatmap, normToWorld, worldToNorm, zoneAt, resetCal, solveAffine, getCal, setCalAffine, setZones, newZone, ZONES, ZONE_TYPES, ZONE_META, loadZoneLayer, setZoneLayer, isZoneLayerVisible, groupColorFor, setMarkerStyle } from './map.js';
 
 const el = (id) => document.getElementById(id);
@@ -5451,6 +5451,12 @@ async function connect({ token, url }) {
   //   pausierte Subscriptions → Cutouts).
   room = new Room({
     adaptiveStream: false, dynacast: false, webAudioMix: true,
+    // 🎧 Bandbreite senken (Voice-Server-Fanout war ~5 Mbit/s/User → Jitter/„roboterhaft"):
+    //  • red:false  — keine redundanten Audio-Kopien (halbiert die Audio-Bitrate; Paketverlust ist
+    //                 ohnehin minimal, RED bringt hier kaum was).
+    //  • dtx:true   — bei Stille wird nicht gesendet (spart nochmal viel).
+    //  • speech-Preset (~20 kbps) statt Default → klare Sprache bei ~⅓–¼ der bisherigen Bandbreite.
+    publishDefaults: { red: false, dtx: true, audioPreset: AudioPresets.speech },
     // AGC WIEDER AN (Hotfix v1.6.1): B-6 hatte Auto-Gain-Control ausgeschaltet → seit v1.6.0 waren
     // ALLE unfassbar leise (leise Mikros wurden nicht mehr angehoben) UND die „Sprecher in der Nähe"-
     // Anzeige blieb leer (LiveKit erkennt aktive Sprecher über den Audio-Pegel → zu leise = keine
