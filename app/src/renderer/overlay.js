@@ -1334,11 +1334,14 @@ function renderWarnPane() {
   const inp = 'width:100%;box-sizing:border-box;padding:8px;border-radius:8px;border:1px solid var(--border);background:var(--input-bg);color:#eee;margin-top:4px';
   box.innerHTML = `
     <div style="font-weight:600;font-size:14px;margin-bottom:4px">⚠️ User verwarnen</div>
-    <div style="font-size:11px;color:var(--muted);margin-bottom:8px">Discord- ODER Steam-ID reicht — die andere wird automatisch verknüpft. Die laufende Nummer (1./2./3. …) zählt das System.</div>
+    <div style="font-size:11px;color:var(--muted);margin-bottom:8px">Discord-ID, Steam-ID ODER Ingame-Name reicht — die anderen werden automatisch verknüpft. Die laufende Nummer (1./2./3. …) zählt das System.</div>
     <div style="display:flex;gap:8px">
       <div style="flex:1"><label style="font-size:11px;color:var(--muted)">Discord-ID</label><input id="wnDiscord" placeholder="z. B. 4785…" style="${inp}"></div>
       <div style="flex:1"><label style="font-size:11px;color:var(--muted)">Steam-ID</label><input id="wnSteam" placeholder="7656…" style="${inp}"></div>
     </div>
+    <label style="font-size:11px;color:var(--muted);margin-top:8px;display:block">oder Ingame-Name <span style="opacity:.7">(wird automatisch zu Steam aufgelöst)</span></label>
+    <input id="wnIngame" list="wnIngameList" autocomplete="off" placeholder="z. B. Complex-Slayer" style="${inp}">
+    <datalist id="wnIngameList"></datalist>
     <label style="font-size:11px;color:var(--muted);margin-top:8px;display:block">Regel-Paragraph *</label>
     <input id="wnPara" placeholder="z. B. §3.2 Combat-Logging" maxlength="120" style="${inp}">
     <label style="font-size:11px;color:var(--muted);margin-top:8px;display:block">Grund *</label>
@@ -1352,15 +1355,42 @@ function renderWarnPane() {
     </div>
     <div id="wnResults" style="margin-top:10px"></div>`;
 
+  // Ingame-Name → Live-Vorschläge aus der Spielersuche (debounced).
+  let wnIngTimer = null;
+  el('wnIngame').oninput = () => {
+    const q = el('wnIngame').value.trim();
+    clearTimeout(wnIngTimer);
+    if (q.length < 2) return;
+    wnIngTimer = setTimeout(async () => {
+      try {
+        const d = await fetch(`${config.tokenBase}/admin/players/search?q=${encodeURIComponent(q)}`, { headers: { Authorization: `Bearer ${sessionToken}` } }).then((r) => r.json());
+        const dl = el('wnIngameList'); if (!dl) return;
+        dl.innerHTML = (d.items || []).slice(0, 15).map((p) => `<option value="${escapeHtml(p.playerName)}">`).join('');
+      } catch {}
+    }, 300);
+  };
+
   el('wnSubmit').onclick = async () => {
     const discordId = el('wnDiscord').value.trim();
-    const steamId = el('wnSteam').value.trim();
+    let steamId = el('wnSteam').value.trim();
+    const ingame = el('wnIngame').value.trim();
     const ruleParagraph = el('wnPara').value.trim();
     const reason = el('wnReason').value.trim();
-    if (!discordId && !steamId) { showToast('Discord- oder Steam-ID nötig', 'error'); return; }
     if (!ruleParagraph || !reason) { showToast('Paragraph und Grund sind Pflicht', 'error'); return; }
+    // Ingame-Name → Steam auflösen (nur wenn keine ID direkt angegeben).
+    if (!discordId && !steamId && ingame) {
+      try {
+        const d = await fetch(`${config.tokenBase}/admin/players/search?q=${encodeURIComponent(ingame)}`, { headers: { Authorization: `Bearer ${sessionToken}` } }).then((r) => r.json());
+        const items = d.items || [];
+        const exact = items.filter((p) => (p.playerName || '').toLowerCase() === ingame.toLowerCase());
+        const pick = exact.length === 1 ? exact[0] : (items.length === 1 ? items[0] : null);
+        if (!pick) { showToast(items.length ? 'Mehrere Treffer — bitte genauer tippen oder SteamID nutzen' : 'Ingame-Name nicht gefunden (war der Spieler online?)', 'error'); return; }
+        steamId = pick.steamId;
+      } catch { showToast('Ingame-Name konnte nicht aufgelöst werden', 'error'); return; }
+    }
+    if (!discordId && !steamId) { showToast('Discord-/Steam-ID oder Ingame-Name nötig', 'error'); return; }
     await apiAction('/admin/warnings', { discordId, steamId, reason, ruleParagraph }, '⚠️ Verwarnung erfasst', () => {
-      el('wnDiscord').value = ''; el('wnSteam').value = ''; el('wnPara').value = ''; el('wnReason').value = '';
+      el('wnDiscord').value = ''; el('wnSteam').value = ''; el('wnIngame').value = ''; el('wnPara').value = ''; el('wnReason').value = '';
       warnSearch('');
     });
   };
@@ -4854,20 +4884,26 @@ function renderDtMut() {
     .filter((m) => (m.d === 'both' || m.d === diet) && (!m.f || isFemale))
     .map((m) => ({ value: m.v, label: m.l, desc: m.x || '', hidden: !!m.h }))
     .sort((a, b) => a.label.localeCompare(b.label));
-  const primeCount = c.primes.length, baseMax = primeCount >= 5 ? 4 : 3, elderUnlocked = primeCount >= 1;
-  const caps = { base: baseMax, parent: 4, elder: 8 };
+  // Slot-Regeln: BASE hängt an Prime (4 wenn Prime erreicht = ≥5 Bedingungen, sonst 3).
+  // PARENT/ELDER hängen an den Elder-Stacks (Entomben): 1× → Parent (4), 2× → Elder (4), 3× → Elder (8).
+  const primeCount = c.primes.length, stacks = c.elder || 0;
+  const baseMax = primeCount >= 5 ? 4 : 3;
+  const parentMax = stacks >= 1 ? 4 : 0;
+  const elderMax = stacks >= 3 ? 8 : stacks >= 2 ? 4 : 0;
+  const caps = { base: baseMax, parent: parentMax, elder: elderMax };
   const valid = new Set(list.map((m) => m.value));
   c.mut.base = c.mut.base.filter((v) => valid.has(v)).slice(0, baseMax);
-  c.mut.parent = c.mut.parent.filter((v) => valid.has(v)).slice(0, 4);
-  c.mut.elder = elderUnlocked ? c.mut.elder.filter((v) => valid.has(v)).slice(0, 8) : [];
+  c.mut.parent = parentMax ? c.mut.parent.filter((v) => valid.has(v)).slice(0, parentMax) : [];
+  c.mut.elder = elderMax ? c.mut.elder.filter((v) => valid.has(v)).slice(0, elderMax) : [];
   const genLbl = { base: 'B', parent: 'P', elder: 'E' };
   const genTitle = { base: 'Base', parent: 'Parent', elder: 'Elder' };
-  const counts = `Base ${c.mut.base.length}/${baseMax} · Parent ${c.mut.parent.length}/4 · Elder ${elderUnlocked ? c.mut.elder.length + '/8' : '🔒 ≥1 Prime'}`;
+  const capTxt = (gen) => caps[gen] === 0 ? '🔒' : `${c.mut[gen].length}/${caps[gen]}`;
+  const counts = `Base ${capTxt('base')} · Parent ${capTxt('parent')} · Elder ${capTxt('elder')}`;
   const rows = list.map((m) => {
     const inGen = ['base', 'parent', 'elder'].find((g) => c.mut[g].includes(m.value));
     const btn = (gen) => {
       const on = inGen === gen;
-      const disabled = (gen === 'elder' && !elderUnlocked) || (inGen && inGen !== gen);
+      const disabled = caps[gen] === 0 || (inGen && inGen !== gen);
       return `<button class="dt-mgen${on ? ' on' : ''}" data-mut="${escapeHtml(m.value)}" data-gen="${gen}" title="${genTitle[gen]}"${disabled ? ' disabled' : ''}>${genLbl[gen]}</button>`;
     };
     return `<div class="dt-mrow" data-search="${escapeHtml((m.label + ' ' + m.desc).toLowerCase())}">` +
@@ -4878,7 +4914,7 @@ function renderDtMut() {
     <div class="dt-sec">🧬 Mutationen <span style="font-weight:400;color:var(--muted)">— ${counts}</span></div>
     <input id="dtMutSearch" class="tm-input" placeholder="🔎 Mutation suchen…" autocomplete="off" style="margin-bottom:6px">
     <div class="dt-mlist">${rows || '<div class="dt-muted" style="padding:8px">Keine Mutationen für diese Auswahl.</div>'}</div>
-    <div class="dt-muted" style="font-size:10.5px;margin-top:4px">B = Base · P = Parent · E = Elder · ★ = selten. Jede Mutation zählt in nur eine Generation.</div>`;
+    <div class="dt-muted" style="font-size:10.5px;margin-top:4px">B = Base (4 bei Prime ≥5, sonst 3) · P = Parent (ab 1× Elder-Stack) · E = Elder (ab 2×, 8 bei 3×) · ★ = selten. Jede Mutation zählt in nur eine Generation.</div>`;
   box.querySelectorAll('.dt-mgen').forEach((b) => { b.onclick = () => {
     const val = b.dataset.mut, gen = b.dataset.gen, arr = c.mut[gen], i = arr.indexOf(val);
     if (i >= 0) arr.splice(i, 1);
@@ -4905,9 +4941,9 @@ function renderDtGive() {
       <div id="dtTargetBox"></div>
       <label>Spezies</label><select id="dtSpecies" class="bf-select">${spOpts}</select>
       <div class="dt-row">
-        <div style="flex:1"><label>Geschlecht</label><select id="dtGender" class="bf-select"><option value="Male"${c.gender === 'Male' ? ' selected' : ''}>♂ Male</option><option value="Female"${c.gender === 'Female' ? ' selected' : ''}>♀ Female</option></select></div>
-        <div style="flex:1"><label>Wachstum %</label><input id="dtGrow" type="number" min="1" max="100" value="${c.grow}" class="tm-input"></div>
-        <div style="flex:1"><label>Elder-Stacks</label><select id="dtElder" class="bf-select">${[0, 1, 2, 3].map((n) => `<option value="${n}"${c.elder === n ? ' selected' : ''}>${n}×</option>`).join('')}</select></div>
+        <div style="flex:1;min-width:0"><label>Geschlecht</label><select id="dtGender" class="bf-select"><option value="Male"${c.gender === 'Male' ? ' selected' : ''}>♂ Male</option><option value="Female"${c.gender === 'Female' ? ' selected' : ''}>♀ Female</option></select></div>
+        <div style="flex:1;min-width:0"><label>Wachstum %</label><input id="dtGrow" type="number" min="1" max="100" value="${c.grow}" class="bf-select" style="box-sizing:border-box"></div>
+        <div style="flex:1;min-width:0"><label>Elder-Stacks</label><select id="dtElder" class="bf-select">${[0, 1, 2, 3].map((n) => `<option value="${n}"${c.elder === n ? ' selected' : ''}>${n}×</option>`).join('')}</select></div>
       </div>
       <label id="dtPrimeLbl">Prime-Bedingungen (${c.primes.length}/10)</label>
       <div class="dt-chips" id="dtPrime"></div>
@@ -4927,7 +4963,7 @@ function renderDtGive() {
   el('dtSpecies').onchange = (e) => { c.species = e.target.value; renderDtMut(); };
   el('dtGender').onchange = (e) => { c.gender = e.target.value; renderDtMut(); };
   el('dtGrow').oninput = (e) => { c.grow = e.target.value; };
-  el('dtElder').onchange = (e) => { c.elder = parseInt(e.target.value); };
+  el('dtElder').onchange = (e) => { c.elder = parseInt(e.target.value); renderDtMut(); };
   renderDtPrime(); renderDtMut();
   el('dtGiveSubmit').onclick = () => {
     const body = { targetKind: c.targetKind, dino: c.species, gender: el('dtGender').value, grow: (parseInt(el('dtGrow').value) || 25) / 100, elderStacks: c.elder, primes: c.primes, mutations: c.mut };
@@ -4969,9 +5005,9 @@ function dtOpenEdit(steamId, slot) {
     <div class="dt-form">
       <div class="dt-sec">✏️ ${escapeHtml(slot.dino)} bearbeiten</div>
       <div class="dt-row">
-        <div style="flex:1"><label>Geschlecht</label><select id="dtGender" class="bf-select"><option value="Male"${c.gender === 'Male' ? ' selected' : ''}>♂ Male</option><option value="Female"${c.gender === 'Female' ? ' selected' : ''}>♀ Female</option></select></div>
-        <div style="flex:1"><label>Wachstum %</label><input id="dtGrow" type="number" min="1" max="100" value="${c.grow}" class="tm-input"></div>
-        <div style="flex:1"><label>Elder-Stacks</label><select id="dtElder" class="bf-select">${[0, 1, 2, 3].map((n) => `<option value="${n}"${c.elder === n ? ' selected' : ''}>${n}×</option>`).join('')}</select></div>
+        <div style="flex:1;min-width:0"><label>Geschlecht</label><select id="dtGender" class="bf-select"><option value="Male"${c.gender === 'Male' ? ' selected' : ''}>♂ Male</option><option value="Female"${c.gender === 'Female' ? ' selected' : ''}>♀ Female</option></select></div>
+        <div style="flex:1;min-width:0"><label>Wachstum %</label><input id="dtGrow" type="number" min="1" max="100" value="${c.grow}" class="bf-select" style="box-sizing:border-box"></div>
+        <div style="flex:1;min-width:0"><label>Elder-Stacks</label><select id="dtElder" class="bf-select">${[0, 1, 2, 3].map((n) => `<option value="${n}"${c.elder === n ? ' selected' : ''}>${n}×</option>`).join('')}</select></div>
       </div>
       <label id="dtPrimeLbl">Prime-Bedingungen (${c.primes.length}/10)</label>
       <div class="dt-chips" id="dtPrime"></div>
@@ -4980,7 +5016,7 @@ function dtOpenEdit(steamId, slot) {
     </div>`;
   el('dtGender').onchange = (e) => { c.gender = e.target.value; renderDtMut(); };
   el('dtGrow').oninput = (e) => { c.grow = e.target.value; };
-  el('dtElder').onchange = (e) => { c.elder = parseInt(e.target.value); };
+  el('dtElder').onchange = (e) => { c.elder = parseInt(e.target.value); renderDtMut(); };
   renderDtPrime(); renderDtMut();
   el('dtBack').onclick = () => { dtTab = 'edit'; renderDtTab(); };
   el('dtSave').onclick = () => apiAction('/admin/dino-token/edit', { targetSteamId: steamId, slotId: slot.id, gender: el('dtGender').value, grow: (parseInt(el('dtGrow').value) || 1) / 100, elderStacks: c.elder, primes: c.primes, mutations: c.mut }, '💾 Token aktualisiert', () => { dtTab = 'edit'; renderDtTab(); });
