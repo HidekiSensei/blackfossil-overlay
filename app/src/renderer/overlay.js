@@ -3464,6 +3464,7 @@ function renderDinoInfo() {
     </div>`).join('');
   el('dinoInfo').classList.add('di-wide');
   el('dinoInfo').innerHTML = `
+    <div class="di-scroll">
     <div class="di-topbar">
       <div class="di-imgwrap"><img id="di-img" alt="" onerror="this.style.visibility='hidden'"></div>
       <div style="flex:1;min-width:0">
@@ -3490,6 +3491,7 @@ function renderDinoInfo() {
         <div class="sec-title" style="margin-top:16px">🧬 Mutationen</div>
         <div id="di-mut" class="mut-tbl-wrap" style="margin:6px 0"></div>
       </div>
+    </div>
     </div>
     <div id="diGrowDock" class="di-grow-dock">
       <div id="diGrowTab" class="di-grow-tab">📈 Grow-Boosts <span class="gd-caret" id="diGrowCaret">▶</span></div>

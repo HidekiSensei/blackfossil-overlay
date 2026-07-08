@@ -86,6 +86,10 @@
       background: linear-gradient(90deg, var(--accent), var(--accent-2)); transition: width .5s linear; }
     /* Grow-Seitenmenü (ausklappbar) rechts am Dino-Tab */
     #dinoInfo.di-wide { overflow: visible; }
+    /* Dino-Info-Inhalt scrollt bei Overflow (passt sonst nicht aufs Panel und steht unten über).
+       Das Panel selbst bleibt overflow:visible, damit das Grow-Seitenmenü (left:100%) nicht abgeschnitten
+       wird — deshalb scrollt eine INNERE Hülle statt des Panels. */
+    #dinoInfo .di-scroll { max-height: 78vh; overflow-y: auto; padding-right: 4px; }
     .di-grow-dock { position: absolute; top: 20px; left: 100%; display: flex; align-items: flex-start; z-index: 4; }
     .di-grow-tab { cursor: pointer; writing-mode: vertical-rl; text-orientation: mixed; letter-spacing: 1px;
       background: var(--panel); color: var(--text); border: 1px solid var(--border); border-left: none;
