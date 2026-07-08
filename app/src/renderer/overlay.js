@@ -4637,8 +4637,16 @@ function renderMarketOffers() {
 }
 function showSellDialog(card) {
   const box = el('dinoDetail').querySelector('.box');
+  // Server-Ankaufspreis ist spezies-abhängig (kommt pro Slot vom Backend als serverPrice) — NICHT
+  // fest 500. Grow-Gate wie in der Garage-Ansicht: Verkauf erst ab sellMinGrow (Standard 75 %).
+  const price = card.serverPrice ?? 0;
+  const minG = card.sellMinGrow ?? 0.75, growPct = Math.round((card.grow || 0) * 100), minPct = Math.round(minG * 100);
+  const canSell = (card.grow || 0) >= minG;
+  const serverBtn = canSell
+    ? `<button id="sdServer" style="width:100%;margin-bottom:8px">💰 An Server verkaufen (+${price.toLocaleString('de-DE')})</button>`
+    : `<button id="sdServer" style="width:100%;margin-bottom:8px;opacity:.55;cursor:not-allowed" disabled title="Verkauf erst ab ${minPct}% Wachstum — aktuell ${growPct}%.">💰 An Server verkaufen (ab ${minPct}%)</button>`;
   box.innerHTML = `<div style="display:flex;gap:14px;align-items:center;margin-bottom:14px">${dinoPreview(card, 'dd')}<div><div style="font-size:18px;font-weight:700">${card.dino}${card.isElder ? ' 👑' : ''}</div><div style="font-size:12px;color:var(--muted)">${card.gender || ''} · ${Math.round((card.grow || 0) * 100)}%</div></div></div>
-    <button id="sdServer" style="width:100%;margin-bottom:8px">💰 An Server verkaufen (+500)</button>
+    ${serverBtn}
     <div style="display:flex;gap:6px;margin-bottom:8px">
       <input id="sdPrice" type="number" min="1" placeholder="Preis in Punkten" style="flex:1;padding:9px;border-radius:8px;border:1px solid var(--border);background:var(--input-bg);color:#eee;font-size:13px">
       <button id="sdPlayer" style="flex:none;padding:9px 14px">An Spieler listen</button>
@@ -4646,7 +4654,8 @@ function showSellDialog(card) {
     <button class="secondary" id="sdClose" style="width:100%">Abbrechen</button>`;
   el('dinoDetail').style.display = 'flex';
   box.querySelector('#sdClose').onclick = closeDinoDetail;
-  box.querySelector('#sdServer').onclick = () => { closeDinoDetail(); apiAction('/market/sell-server', { slotId: card.id }, '💰 An Server verkauft (+500)', loadMarket); };
+  const ss = box.querySelector('#sdServer');
+  if (ss && !ss.disabled) ss.onclick = () => { closeDinoDetail(); apiAction('/market/sell-server', { slotId: card.id }, `💰 An Server verkauft (+${price})`, loadMarket); };
   box.querySelector('#sdPlayer').onclick = () => { const p = parseInt(box.querySelector('#sdPrice').value); if (!p || p <= 0) { showToast('Bitte gültigen Preis eingeben', 'error'); return; } closeDinoDetail(); apiAction('/market/sell-player', { slotId: card.id, price: p }, '🏷️ Angebot erstellt', loadMarket); };
 }
 
