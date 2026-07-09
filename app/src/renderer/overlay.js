@@ -174,6 +174,7 @@ document.addEventListener('DOMContentLoaded', setupMarkerSettings);
 // ── Karten-/Positions-State ─────────────────────────────────────────────────
 let players = [];
 let me = null;
+let parkAt = 0; // PvE-Groß-Dino: Deadline (ms) fürs Auto-Einparken, kommt aus /positions; 0 = keine Warnung
 let waypoints = [];
 // Pfeil-Richtung aus der tatsächlichen Bewegung auf der Karte (konventions-frei,
 // unabhängig von Heading/Kalibrierung). prevPos = letzte Welt-Position je Spieler.
@@ -788,6 +789,7 @@ function startPositionPolling() {
         computeMoveAngles();   // Pfeil-Richtung aus tatsächlicher Karten-Bewegung
         minimapDirty = true;   // neue Positionen → Minimap neu zeichnen
         if (Array.isArray(data.toasts)) for (const t of data.toasts) showToast(t, 'success');
+        parkAt = Number(data.parkAt) || 0; updateParkWarn();
         applyServerState();
         updateZoneBox();
         checkZoneChange();
@@ -802,6 +804,26 @@ function startPositionPolling() {
   };
   poll();
   setInterval(poll, 1500);
+  setInterval(updateParkWarn, 1000); // Countdown flüssig runterzählen (unabhängig vom 1,5s-Poll)
+}
+
+// PvE-Groß-Dino: bleibender Einpark-Countdown oben. parkAt (Deadline in ms) kommt aus /positions;
+// solange gesetzt und in der Zukunft, zeigt es „Einparken in M:SS" + Balken. 0/abgelaufen → ausblenden.
+const PARK_WARN_TOTAL_MS = 5 * 60 * 1000;
+function updateParkWarn() {
+  const box = document.getElementById('parkWarn');
+  if (!box) return;
+  const remain = parkAt - Date.now();
+  if (!parkAt || remain <= 0) { if (box.style.display !== 'none') box.style.display = 'none'; return; }
+  const secs = Math.ceil(remain / 1000);
+  const mm = Math.floor(secs / 60), ss = String(secs % 60).padStart(2, '0');
+  const pct = Math.max(0, Math.min(100, (remain / PARK_WARN_TOTAL_MS) * 100));
+  if (box.style.display !== 'block') {
+    box.innerHTML = '🅿️ Dein Dino wird in <span class="pw-time"></span> in der PvE-Zone eingeparkt — verlasse die Zone!<div class="pw-bar"><div class="pw-fill"></div></div>';
+    box.style.display = 'block';
+  }
+  box.querySelector('.pw-time').textContent = `${mm}:${ss}`;
+  box.querySelector('.pw-fill').style.width = pct + '%';
 }
 
 // ── Proximity: Lautstärke pro Spieler nach Distanz ──────────────────────────
