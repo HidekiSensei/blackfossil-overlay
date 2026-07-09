@@ -794,7 +794,7 @@ function startPositionPolling() {
         minimapDirty = true;   // neue Positionen → Minimap neu zeichnen
         if (Array.isArray(data.toasts)) for (const t of data.toasts) showToast(t, 'success');
         parkAt = Number(data.parkAt) || 0; updateParkWarn();
-        golden = data.golden ? { ...data.golden, syncAt: Date.now() } : null;
+        golden = mergeGolden(golden, data.golden);
         // Zone nur während der AKTIV-Phase golden hervorheben (im Cooldown gibt es keine aktive Zone).
         setGoldenZone(golden && golden.phase === 'active' && golden.zoneId);
         updateGoldenHud();
@@ -842,10 +842,23 @@ function fmtMMSS(ms) {
   const secs = Math.max(0, Math.ceil(ms / 1000));
   return `${Math.floor(secs / 60)}:${String(secs % 60).padStart(2, '0')}`;
 }
+// Übernimmt den neuen Golden-State, behält aber die Interpolations-Basis (syncAt), solange die
+// server-autoritativen Werte gleich bleiben (der Server tickt nur alle 10s). Sonst würde der Timer
+// bei jedem 1,5s-Poll auf den unveränderten Serverwert zurückspringen → „läuft nicht rund".
+function mergeGolden(prev, next) {
+  if (!next) return null;
+  const same = prev && prev.phase === next.phase && prev.paused === next.paused
+    && prev.remainingMs === next.remainingMs && prev.progressMs === next.progressMs
+    && prev.zoneId === next.zoneId && prev.engaged === next.engaged;
+  return { ...next, syncAt: same ? prev.syncAt : Date.now() };
+}
 function updateGoldenHud() {
   const box = document.getElementById('goldenHud');
   if (!box) return;
   if (!golden) { if (box.style.display !== 'none') box.style.display = 'none'; return; }
+  // In der AKTIV-Phase erst zeigen, wenn schon jemand (Gruppe/selbst) in der Zone war — sonst wäre
+  // die „alle müssen rein"-Anzeige nur störend. Cooldown zeigt immer (folgt stets auf eine Auszahlung).
+  if (golden.phase === 'active' && !golden.engaged) { if (box.style.display !== 'none') box.style.display = 'none'; return; }
 
   const total = Number(golden.totalMs) || (15 * 60 * 1000);
   const elapsed = Date.now() - (golden.syncAt || Date.now());

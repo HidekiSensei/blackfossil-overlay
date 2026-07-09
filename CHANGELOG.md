@@ -1,5 +1,12 @@
 # Changelog
 
+## v1.7.1 — Goldene Patrol-Zone: Feinschliff 🔧
+
+### 🔧 Fixes
+- **HUD erscheint erst bei Bedarf**: Der Goldene-Zone-Timer (inkl. „alle müssen rein"-Hinweis) wird jetzt erst angezeigt, wenn **mind. einer aus der Gruppe (oder du selbst) schon einmal in der goldenen Zone war**. Vorher war die Anzeige dauerhaft sichtbar und dadurch störend. (Wo die Zone liegt, zeigt weiterhin die goldene Markierung auf der Karte.)
+- **Timer läuft jetzt rund**: Der Countdown springt nicht mehr bei jedem Server-Poll zurück, sondern zählt flüssig herunter.
+- **Kein „Zonen-Springen" mehr**: Die goldene Zone wechselt nicht mehr fälschlich, während man drinsteht (kurzzeitige Server-Aussetzer werden abgefangen).
+
 ## v1.7.0 — Zonen-Rework & Goldene Patrol-Zone ⭐
 
 ### ✨ Neu
