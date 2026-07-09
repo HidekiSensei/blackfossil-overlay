@@ -636,6 +636,7 @@ async function init() {
   el('adminCloseBtn').onclick = () => closeAdminPanel();
   el('admUserLoad').onclick = () => admLoadUserInfo();
   el('admLightningBtn').onclick = () => admLightning();
+  { const b = el('msgSendBtn'); if (b) b.onclick = () => admSendToast(); }
   { const b = el('dutyToggleBtn'); if (b) b.onclick = () => toggleDuty(); }
   document.querySelectorAll('#adminTabs [data-atab]').forEach((b) => { b.onclick = () => showAdminTab(b.dataset.atab); });
   { const b = el('dtTabGive'); if (b) b.onclick = () => { dtTab = 'give'; renderDtTab(); }; }
@@ -1803,6 +1804,23 @@ async function admLightning() {
     });
     const d = await res.json(); if (!res.ok) throw new Error(apiErr(d));
     showToast(d.slayed ? '⚡ Spieler geslayed' : '⚡ Blitz gesendet (kein aktiver Dino?)', d.slayed ? 'success' : '');
+  } catch (e) { showToast(e.message, 'error'); }
+}
+
+// Staff-Toast: Nachricht an einen Spieler (wird ihm im Overlay als Toast angezeigt).
+async function admSendToast() {
+  const u = resolveAdminUser('msgUserSearch');
+  if (!u) { showToast('Bitte einen Spieler aus den Vorschlägen wählen', 'error'); return; }
+  const text = (el('msgText').value || '').trim();
+  if (!text) { showToast('Nachricht fehlt', 'error'); return; }
+  try {
+    const res = await fetch(`${config.tokenBase}/admin/toast`, {
+      method: 'POST', headers: { Authorization: `Bearer ${sessionToken}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ targetSteamId: u.steamId, text }),
+    });
+    const d = await res.json(); if (!res.ok) throw new Error(apiErr(d));
+    showToast(`💬 Nachricht an ${escapeHtml(u.name || 'Spieler')} gesendet`, 'success');
+    el('msgText').value = ''; el('msgUserSearch').value = '';
   } catch (e) { showToast(e.message, 'error'); }
 }
 

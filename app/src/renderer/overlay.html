@@ -1174,6 +1174,13 @@
         <div id="admUserActions" class="set-block" style="display:none">
           <button id="admLightningBtn" style="width:100%;background:#dc2626">⚡ Lightning Strike (Slay)</button>
         </div>
+        <div class="set-block">
+          <div class="set-label">💬 Nachricht an Spieler (Toast)</div>
+          <div style="font-size:11px;color:var(--muted);margin-bottom:6px">Wird dem Spieler im Overlay als Toast angezeigt (beim nächsten Update, wenn er online ist).</div>
+          <input id="msgUserSearch" list="admUserList" placeholder="Name tippen…" class="bf-select" style="cursor:text" autocomplete="off">
+          <textarea id="msgText" placeholder="Nachricht…" maxlength="300" rows="3" class="bf-select" style="cursor:text;margin-top:6px;resize:vertical;box-sizing:border-box"></textarea>
+          <button id="msgSendBtn" style="width:100%;margin-top:8px">💬 Als Toast senden</button>
+        </div>
       </div>
 
       <!-- Spalte 2: Beschenken (ab Moderator) -->
