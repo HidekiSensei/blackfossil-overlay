@@ -1,5 +1,17 @@
 # Changelog
 
+## v1.7.0 — Zonen-Rework & Goldene Patrol-Zone ⭐
+
+### ✨ Neu
+- **⭐ Goldene Patrol-Zone**: Pro Gruppe (oder allein) ist zufällig **eine Patrol-Zone golden**. Steht **die ganze Gruppe 15 Minuten** darin, gibt es **+100 Punkte pro Person**. Danach 15 Min Pause, dann rotiert eine neue goldene Zone rein. Ein **HUD-Timer oben** zeigt den Fortschritt.
+  - Verlässt **jemand** die Zone, **pausiert** der Timer (kein Reset) — mit klarem Hinweis: „ALLE müssen in die Patrol-Zone, damit der Timer weiterläuft".
+  - Die goldene Zone ist auf der Karte **golden hervorgehoben** (auch wenn der Patrol-Layer ausgeblendet ist).
+- **👑 Prime über unsere Zonen**: Besuchte **Patrol-/Migrations-/Sanctuary-Zonen** zählen jetzt für die Elder-/Prime-Bedingungen (4 Patrol-Zonen, 2 Migrations-Zonen, Sanctuary als Juvenile) — pro Dino-Leben getrackt.
+
+### 🗺️ Karte
+- **Sanctuary / Patrol / Migration** werden jetzt als **sauberer Umriss** aus den vom Team gezeichneten Zonen gezeichnet (kein festes Bild, **kein Name-Label** mehr) — pro Typ **ein-/ausblendbar**.
+- Die Zonen-Anzeige zeigt jetzt **alle** Zonen, in denen du gerade stehst (z. B. „Patrol · Migration") — Zonen überlappen sich, mehrere gelten gleichzeitig.
+
 ## v1.5.0 — Lootbox & Grow-Boosts direkt im Overlay 🎁
 
 ### ✨ Neu

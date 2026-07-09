@@ -253,6 +253,19 @@
     #parkWarn .pw-bar { margin-top: 6px; height: 5px; border-radius: 3px; background: rgba(255,255,255,.22); overflow: hidden; }
     #parkWarn .pw-fill { height: 100%; width: 100%; background: linear-gradient(90deg, #f59e0b, #ef4444); border-radius: 3px; transition: width 1s linear; }
 
+    /* ⭐ Goldene Patrol-Zone: HUD-Timer oben (aktiv / pausiert / Cooldown) */
+    #goldenHud { position: absolute; top: 16px; left: 50%; transform: translateX(-50%); display: none;
+      padding: 10px 18px; border-radius: 10px; font-size: 13px; font-weight: 600; max-width: 70vw;
+      text-align: center; z-index: 51; box-shadow: 0 4px 18px rgba(0,0,0,.45); color: #fff; }
+    #goldenHud.gh-active   { background: rgba(120,85,10,0.95); border: 1px solid #fbbf24; }
+    #goldenHud.gh-paused   { background: rgba(150,60,10,0.96); border: 1px solid #f59e0b; }
+    #goldenHud.gh-cooldown { background: rgba(58,48,28,0.92);  border: 1px solid #a88b3a; color: #f5e9c8; }
+    #goldenHud .gh-time { font-variant-numeric: tabular-nums; font-weight: 800; color: #ffe08a; }
+    #goldenHud .gh-sub { margin-top: 4px; font-size: 11px; opacity: .92; }
+    #goldenHud .gh-frozen { color: #ffe08a; opacity: .85; }
+    #goldenHud .gh-bar { margin-top: 6px; height: 5px; border-radius: 3px; background: rgba(255,255,255,.22); overflow: hidden; }
+    #goldenHud .gh-fill { height: 100%; background: linear-gradient(90deg, #fbbf24, #f59e0b); border-radius: 3px; transition: width 1s linear; }
+
     /* Dock (Overlay-/Nav-Modus, „^") */
     /* #dock = transparenter Anker; #dockInner = sichtbares Panel, das beim Öffnen vom Blitz auseinandergeschoben wird */
     #dock { position: absolute; bottom: 16px; left: 50%; transform: translateX(-50%); display: none; z-index: 55; }
@@ -1013,9 +1026,9 @@
           <div style="font-weight:700;margin-bottom:8px">🗺️ Ansichten</div>
           <button id="heatBtn" class="map-viewbtn">🔥 Heatmap</button>
           <div id="zoneLayers" style="display:flex;flex-direction:column;gap:6px;margin-top:6px">
-            <button id="zlSanctuary" data-layer="sanctuary" class="map-viewbtn">🛡️ Sanctuary</button>
-            <button id="zlPatrol" data-layer="patrol" class="map-viewbtn">🐾 Patrol</button>
-            <button id="zlMigration" data-layer="migration" class="map-viewbtn">🧭 Migration</button>
+            <button id="zlSanctuary" class="map-viewbtn">🛡️ Sanctuary</button>
+            <button id="zlPatrol" class="map-viewbtn">🐾 Patrol</button>
+            <button id="zlMigration" class="map-viewbtn">🧭 Migration</button>
           </div>
           <div style="height:1px;background:var(--border);margin:10px 0"></div>
           <div style="font-weight:700;margin-bottom:8px">🎯 Steuerung</div>
@@ -1318,6 +1331,7 @@
   <!-- Server-Banner (oben mittig) -->
   <div id="serverBanner">⚠️ Nicht auf dem BlackFossil-Server — verbinde dich im Spiel, um Karte & Proximity zu nutzen.</div>
   <div id="parkWarn"></div>
+  <div id="goldenHud"></div>
 
   <!-- Update-Hinweis (oben, während des Betriebs) -->
   <div id="updateHint" style="display:none;position:fixed;top:10px;left:50%;transform:translateX(-50%);z-index:9999;background:rgba(var(--accent-rgb),0.92);color:#fff;padding:8px 16px;border-radius:10px;font-size:13px;font-weight:600;box-shadow:var(--glow);cursor:pointer">⬆️ Update verfügbar</div>

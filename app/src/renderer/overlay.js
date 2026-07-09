@@ -1,5 +1,5 @@
 import { Room, RoomEvent, Track, ParticipantEvent, AudioPresets } from 'livekit-client';
-import { loadMapImage, drawFullMap, drawMinimap, drawHeatmap, normToWorld, worldToNorm, zoneAt, resetCal, solveAffine, getCal, setCalAffine, setZones, newZone, ZONES, ZONE_TYPES, ZONE_META, loadZoneLayer, setZoneLayer, isZoneLayerVisible, groupColorFor, setMarkerStyle } from './map.js';
+import { loadMapImage, drawFullMap, drawMinimap, drawHeatmap, normToWorld, worldToNorm, zoneAt, zonesAt, resetCal, solveAffine, getCal, setCalAffine, setZones, newZone, ZONES, ZONE_TYPES, ZONE_META, loadZoneLayer, setZoneLayer, isZoneLayerVisible, setGoldenZone, groupColorFor, setMarkerStyle } from './map.js';
 
 const el = (id) => document.getElementById(id);
 
@@ -175,6 +175,7 @@ document.addEventListener('DOMContentLoaded', setupMarkerSettings);
 let players = [];
 let me = null;
 let parkAt = 0; // PvE-Groß-Dino: Deadline (ms) fürs Auto-Einparken, kommt aus /positions; 0 = keine Warnung
+let golden = null; // ⭐ Goldene Patrol-Zone: { phase, zoneId, remainingMs, progressMs, totalMs, paused, syncAt } aus /positions
 let waypoints = [];
 // Pfeil-Richtung aus der tatsächlichen Bewegung auf der Karte (konventions-frei,
 // unabhängig von Heading/Kalibrierung). prevPos = letzte Welt-Position je Spieler.
@@ -514,10 +515,11 @@ async function init() {
     renderBigMap();
   };
 
-  // Zonen-Layer-Toggles (Sanctuary/Patrol/Migration) — transparente Overlay-Bilder
+  // Zonen-Layer-Toggles (Sanctuary/Patrol/Migration) — blenden die gezeichneten Umriss-Zonen ein/aus
   for (const key of ['sanctuary', 'patrol', 'migration']) {
     const btn = el('zl' + key[0].toUpperCase() + key.slice(1));
     if (!btn) continue;
+    btn.style.background = isZoneLayerVisible(key) ? 'var(--accent)' : 'var(--panel)'; // Default sichtbar
     btn.onclick = () => {
       const on = !isZoneLayerVisible(key);
       setZoneLayer(key, on);
@@ -792,6 +794,10 @@ function startPositionPolling() {
         minimapDirty = true;   // neue Positionen → Minimap neu zeichnen
         if (Array.isArray(data.toasts)) for (const t of data.toasts) showToast(t, 'success');
         parkAt = Number(data.parkAt) || 0; updateParkWarn();
+        golden = data.golden ? { ...data.golden, syncAt: Date.now() } : null;
+        // Zone nur während der AKTIV-Phase golden hervorheben (im Cooldown gibt es keine aktive Zone).
+        setGoldenZone(golden && golden.phase === 'active' && golden.zoneId);
+        updateGoldenHud();
         applyServerState();
         updateZoneBox();
         checkZoneChange();
@@ -807,6 +813,7 @@ function startPositionPolling() {
   poll();
   setInterval(poll, 1500);
   setInterval(updateParkWarn, 1000); // Countdown flüssig runterzählen (unabhängig vom 1,5s-Poll)
+  setInterval(updateGoldenHud, 1000); // Golden-Timer flüssig zwischen den Polls interpolieren
 }
 
 // PvE-Groß-Dino: bleibender Einpark-Countdown oben. parkAt (Deadline in ms) kommt aus /positions;
@@ -826,6 +833,45 @@ function updateParkWarn() {
   }
   box.querySelector('.pw-time').textContent = `${mm}:${ss}`;
   box.querySelector('.pw-fill').style.width = pct + '%';
+}
+
+// ⭐ Goldene Patrol-Zone: HUD-Timer oben. Daten aus /positions (data.golden), lokal zwischen den
+// Polls interpoliert. AKTIV+alle drin → Countdown „noch M:SS drin". AKTIV+pausiert → deutlicher
+// „alle müssen rein"-Hinweis (Timer eingefroren). COOLDOWN → „Nächste goldene Zone in M:SS".
+function fmtMMSS(ms) {
+  const secs = Math.max(0, Math.ceil(ms / 1000));
+  return `${Math.floor(secs / 60)}:${String(secs % 60).padStart(2, '0')}`;
+}
+function updateGoldenHud() {
+  const box = document.getElementById('goldenHud');
+  if (!box) return;
+  if (!golden) { if (box.style.display !== 'none') box.style.display = 'none'; return; }
+
+  const total = Number(golden.totalMs) || (15 * 60 * 1000);
+  const elapsed = Date.now() - (golden.syncAt || Date.now());
+  let cls, html;
+  if (golden.phase === 'cooldown') {
+    const remain = Math.max(0, (Number(golden.remainingMs) || 0) - elapsed);
+    cls = 'gh-cooldown';
+    html = `⏳ Nächste goldene Zone in <span class="gh-time">${fmtMMSS(remain)}</span>`;
+  } else if (golden.paused) {
+    // Pausiert: Timer eingefroren anzeigen (nicht lokal weiterzählen).
+    const remain = Math.max(0, Number(golden.remainingMs) || 0);
+    cls = 'gh-paused';
+    html = `⏸️ Goldene Zone <b>pausiert</b> — ALLE müssen in die Patrol-Zone, damit der Timer weiterläuft`
+      + `<div class="gh-sub">Noch <span class="gh-time">${fmtMMSS(remain)}</span> drin · <span class="gh-frozen">eingefroren</span></div>`
+      + `<div class="gh-bar"><div class="gh-fill" style="width:${Math.min(100, ((Number(golden.progressMs)||0)/total)*100)}%"></div></div>`;
+  } else {
+    // Aktiv + alle drin: lokal weiter runterzählen / Balken füllen.
+    const remain = Math.max(0, (Number(golden.remainingMs) || 0) - elapsed);
+    const progress = Math.min(total, (Number(golden.progressMs) || 0) + elapsed);
+    cls = 'gh-active';
+    html = `⭐ Goldene Zone — noch <span class="gh-time">${fmtMMSS(remain)}</span> drin`
+      + `<div class="gh-bar"><div class="gh-fill" style="width:${(progress/total)*100}%"></div></div>`;
+  }
+  box.className = cls;
+  box.innerHTML = html;
+  box.style.display = 'block';
 }
 
 // ── Proximity: Lautstärke pro Spieler nach Distanz ──────────────────────────
@@ -960,18 +1006,24 @@ function broadcastRange() {
 }
 
 function updateZoneBox() {
-  if (!me) { el('zoneBox').textContent = 'Zone: —'; el('zoneBox').style.color = '#b3a9cc'; return; }
-  const z = zoneAt(me.x, me.y) || 'Realismus';
+  const box = el('zoneBox');
+  if (!me) { box.textContent = 'Zone: —'; box.style.color = '#b3a9cc'; return; }
+  // Zonen sind NICHT exklusiv → alle aktuellen als Liste zeigen (z. B. „Patrol · Migration").
+  const zs = zonesAt(me.x, me.y);
+  const text = zs.length ? zs.map((z) => z.label).join(' · ') : 'Realismus';
   const coords = `X ${(me.x / 1000) | 0}k  Y ${(me.y / 1000) | 0}k`;
-  el('zoneBox').innerHTML = `Zone: ${z}<br><span style="font-size:11px;opacity:0.7">${coords}</span>`;
-  el('zoneBox').style.color = z === 'PVP' ? '#ef4444' : z === 'PVE' ? '#22c55e' : '#b3a9cc';
+  box.innerHTML = `Zone: ${text}<br><span style="font-size:11px;opacity:0.7">${coords}</span>`;
+  const hasPvp = zs.some((z) => z.type === 'pvp');
+  const hasPve = zs.some((z) => z.type === 'pve');
+  box.style.color = hasPvp ? '#ef4444' : hasPve ? '#22c55e' : '#b3a9cc';
 }
 
-// Toast beim Betreten einer anderen Zone (PVP/PVE/Realismus)
+// Toast beim Betreten der PvP-/PvE-Zone (Umriss-Zonen lösen bewusst keinen Toast aus → kein Spam)
 let currentZone;
 function checkZoneChange() {
   if (!me) return;
-  const z = zoneAt(me.x, me.y) || 'Realismus';
+  const zs = zonesAt(me.x, me.y);
+  const z = zs.some((x) => x.type === 'pvp') ? 'PVP' : zs.some((x) => x.type === 'pve') ? 'PVE' : 'Realismus';
   if (currentZone !== undefined && z !== currentZone) {
     const type = z === 'PVP' ? 'error' : z === 'PVE' ? 'success' : 'elder';
     const icon = z === 'PVP' ? '⚔️' : z === 'PVE' ? '🛡️' : '🌿';
@@ -5900,7 +5952,7 @@ function removeHideToggle(elm) { const b = elm.querySelector('.bf-hide-toggle');
 let windowShrink = localStorage.getItem('bf-window-shrink') === '1';
 let shrinkTimer = null;
 let lastSentH = -1;   // zuletzt gesendete Höhe (0 = Vollbild) — vermeidet redundante Resizes
-const IDLE_HUD_IDS = ['hud', 'hudHeart', 'minimapWrap', 'hudInfo', 'growTimer', 'serverBanner', 'toasts', 'voiceWarn', 'updateHint', 'calibPrompt'];
+const IDLE_HUD_IDS = ['hud', 'hudHeart', 'minimapWrap', 'hudInfo', 'growTimer', 'serverBanner', 'toasts', 'voiceWarn', 'updateHint', 'calibPrompt', 'parkWarn', 'goldenHud'];
 function computeIdleHudBottom() {
   let bottom = 0;
   for (const id of IDLE_HUD_IDS) {

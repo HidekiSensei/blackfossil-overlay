@@ -138,34 +138,28 @@ export function loadMapImage(src) {
   });
 }
 
-// ── Zonen-Layer (transparente PNGs in Kartengröße, deckungsgleich überlagert) ──
-// Geometrie steckt im Bild selbst → kein Polygon nötig. Default unsichtbar.
+// ── Zonen-Layer (Sichtbarkeit pro Typ) ───────────────────────────────────────
+// Zonen-Rework 2026-07: Sanctuary/Patrol/Migration werden NICHT mehr als PNG-Bilder überlagert,
+// sondern aus den vom Team GEZEICHNETEN Zonen als reiner UMRISS gerendert (siehe drawZones).
+// ZONE_LAYERS hält nur noch den Ein/Aus-Status pro Typ (Default sichtbar). loadZoneLayer bleibt
+// als No-Op erhalten, damit bestehende Aufrufer nicht brechen.
 export const ZONE_LAYERS = {
-  sanctuary: { img: null, ready: false, visible: false, src: 'assets/zone-sanctuary.png', label: '🛡️ Sanctuary' },
-  patrol:    { img: null, ready: false, visible: false, src: 'assets/zone-patrol.png',    label: '🐾 Patrol' },
-  migration: { img: null, ready: false, visible: false, src: 'assets/zone-migration.png', label: '🧭 Migration' },
+  sanctuary: { visible: true, label: '🛡️ Sanctuary' },
+  patrol:    { visible: true, label: '🐾 Patrol' },
+  migration: { visible: true, label: '🧭 Migration' },
 };
 
-export function loadZoneLayer(key) {
-  const L = ZONE_LAYERS[key];
-  if (!L) return Promise.resolve(false);
-  return new Promise((resolve) => {
-    const img = new Image();
-    img.onload = () => { L.img = img; L.ready = true; resolve(true); };
-    img.onerror = () => { L.ready = false; resolve(false); };
-    img.src = L.src;
-  });
-}
-
+export function loadZoneLayer() { return Promise.resolve(true); } // No-Op (keine Bilder mehr)
 export function setZoneLayer(key, on) { if (ZONE_LAYERS[key]) ZONE_LAYERS[key].visible = !!on; }
 export function isZoneLayerVisible(key) { return !!(ZONE_LAYERS[key] && ZONE_LAYERS[key].visible); }
 
-// Sichtbare Layer-Bilder deckungsgleich über die Karte zeichnen (volle Map-Ausdehnung).
-function drawZoneLayers(ctx, w, h) {
-  for (const L of Object.values(ZONE_LAYERS)) {
-    if (L.visible && L.ready) ctx.drawImage(L.img, 0, 0, w, h);
-  }
-}
+// Typen, die nur als Umriss (ohne Name-Label, ohne Füllung) gezeichnet werden.
+const OUTLINE_TYPES = new Set(['sanctuary', 'patrol', 'migration']);
+
+// Goldene Patrol-Zone (pro Betrachter, aus /positions). Wird immer hervorgehoben gezeichnet,
+// auch wenn der Patrol-Layer ausgeblendet ist.
+let goldenZoneId = null;
+export function setGoldenZone(id) { goldenZoneId = id || null; }
 
 // Polygon-Punkte um ihren Schwerpunkt sortieren (für sauberes Füllen)
 function orderPolygon(points) {
@@ -181,7 +175,6 @@ export function drawFullMap(view, players, waypoints = [], teleports = [], hover
   if (mapReady) ctx.drawImage(mapImg, 0, 0, w, h);
   else { ctx.fillStyle = '#15102a'; ctx.fillRect(0, 0, w, h); ctx.fillStyle = '#6b5b8c'; ctx.font = '16px system-ui'; ctx.textAlign = 'center'; ctx.fillText('Kartenbild fehlt (assets/map.jpg)', w/2, h/2); }
 
-  drawZoneLayers(ctx, w, h);
   drawZones(ctx, (nx, ny) => ({ px: nx * w, py: ny * h }));
   for (const wp of waypoints) {
     const { nx, ny } = worldToNorm(wp.x, wp.y);
@@ -343,6 +336,12 @@ function drawZones(ctx, project) {
   for (const z of ZONES) {
     if (!z.points || !z.points.length) continue;
     const meta = ZONE_META[z.type] || ZONE_META.pvp;
+    const outline = OUTLINE_TYPES.has(z.type);
+    const isGolden = !!(z.id && z.id === goldenZoneId);
+    // Umriss-Zonen (Sanctuary/Patrol/Migration) nur zeichnen, wenn ihr Layer sichtbar ist.
+    // Die goldene Zone wird IMMER hervorgehoben — auch bei ausgeblendetem Patrol-Layer.
+    if (outline && !isGolden && !isZoneLayerVisible(z.type)) continue;
+
     const color = meta.color;
     // Punkte in Aufnahme-Reihenfolge (unterstützt komplexe/konkave Formen)
     const pts = z.points.map((p) => {
@@ -350,23 +349,39 @@ function drawZones(ctx, project) {
       return project(nx, ny);
     });
     if (pts.length < 2) {
-      // Einzelpunkt: kleiner Marker, kein Polygon
       const pt = pts[0];
       ctx.beginPath(); ctx.arc(pt.px, pt.py, 4, 0, Math.PI * 2);
-      ctx.fillStyle = color; ctx.fill();
+      ctx.fillStyle = isGolden ? '#fbbf24' : color; ctx.fill();
+      continue;
+    }
+    ctx.beginPath();
+    pts.forEach((pt, i) => i ? ctx.lineTo(pt.px, pt.py) : ctx.moveTo(pt.px, pt.py));
+    ctx.closePath();
+
+    if (isGolden) {
+      // ⭐ Goldene Patrol-Zone: leuchtender Gold-Umriss + zarte Füllung + Stern-Marke.
+      ctx.save();
+      ctx.fillStyle = 'rgba(251,191,36,0.14)'; ctx.fill();
+      ctx.shadowColor = '#fbbf24'; ctx.shadowBlur = 12;
+      ctx.strokeStyle = '#fbbf24'; ctx.lineWidth = 3; ctx.stroke();
+      ctx.restore();
+      const cx = pts.reduce((s, p) => s + p.px, 0) / pts.length;
+      const cy = pts.reduce((s, p) => s + p.py, 0) / pts.length;
+      ctx.font = 'bold 16px system-ui'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+      ctx.fillText('⭐', cx, cy);
+    } else if (outline) {
+      // Sanctuary/Patrol/Migration: NUR Umriss — keine Füllung, KEIN Name-Label.
+      ctx.strokeStyle = color; ctx.lineWidth = 2; ctx.stroke();
     } else {
-      ctx.beginPath();
-      pts.forEach((pt, i) => i ? ctx.lineTo(pt.px, pt.py) : ctx.moveTo(pt.px, pt.py));
-      ctx.closePath();
+      // PvP/PvE: Füllung + Umriss + Label (wie gehabt).
       ctx.fillStyle = color + '22';
       ctx.strokeStyle = color; ctx.lineWidth = 2;
       ctx.fill(); ctx.stroke();
+      const cx = pts.reduce((s, p) => s + p.px, 0) / pts.length;
+      const cy = pts.reduce((s, p) => s + p.py, 0) / pts.length;
+      ctx.fillStyle = color; ctx.font = 'bold 13px system-ui'; ctx.textAlign = 'center';
+      ctx.fillText(z.name || meta.label, cx, cy);
     }
-    // Label im Schwerpunkt
-    const cx = pts.reduce((s, p) => s + p.px, 0) / pts.length;
-    const cy = pts.reduce((s, p) => s + p.py, 0) / pts.length;
-    ctx.fillStyle = color; ctx.font = 'bold 13px system-ui'; ctx.textAlign = 'center';
-    ctx.fillText(z.name || meta.label, cx, cy);
   }
 }
 
@@ -461,7 +476,7 @@ function drawTeleport(ctx, px, py, number, highlight, scale = 1) {
   ctx.fillText(String(number), px, py);
 }
 
-// ── Welche Zone? (Point-in-Polygon) ─────────────────────────────────────────
+// ── Welche Zone(n)? (Point-in-Polygon) ──────────────────────────────────────
 export function zoneAt(wx, wy) {
   for (const z of ZONES) {
     if (z.points && z.points.length >= 3 && pointInPolygon(wx, wy, z.points)) {
@@ -469,6 +484,18 @@ export function zoneAt(wx, wy) {
     }
   }
   return null;
+}
+// ALLE Zonen an einem Punkt (Zonen sind NICHT exklusiv → Mehrfach-Zugehörigkeit).
+// Liefert [{ type, name, label }] in Zonen-Reihenfolge.
+export function zonesAt(wx, wy) {
+  const out = [];
+  for (const z of ZONES) {
+    if (z.points && z.points.length >= 3 && pointInPolygon(wx, wy, z.points)) {
+      const meta = ZONE_META[z.type] || ZONE_META.pvp;
+      out.push({ type: z.type, name: z.name, label: z.name || meta.label });
+    }
+  }
+  return out;
 }
 function pointInPolygon(x, y, poly) {
   let inside = false;
