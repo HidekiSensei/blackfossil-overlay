@@ -5023,7 +5023,7 @@ async function dtLoadGarage() {
     if (d.error) throw new Error(d.error);
     const slots = d.slots || [];
     if (!slots.length) { box.innerHTML = '<div class="dt-muted">Garage leer.</div>'; return; }
-    box.innerHTML = slots.map((s) => `<div class="dt-slot"><span>${escapeHtml(s.dino)} · ${Math.round((s.grow || 0) * 100)}% · ${escapeHtml(s.gender || '')}${s.isElder ? ' 👑' : ''}${s.isPrime ? ' ⭐' : ''}</span>${dtTab === 'delete' ? `<button class="secondary" data-del="${s.id}" style="flex:none;width:auto;padding:5px 10px;color:#fca5a5">🗑️</button>` : `<button data-edit="${s.id}" style="flex:none;width:auto;padding:5px 10px">✏️</button>`}</div>`).join('');
+    box.innerHTML = slots.map((s) => `<div class="dt-slot"><span>${escapeHtml(s.dinoClass || s.label || '?')} · ${Math.round((s.grow || 0) * 100)}% · ${escapeHtml(s.gender || '')}${(s.elderStacks || 0) > 0 ? ' 👑' : ''}${(s.primes || []).length >= 5 ? ' ⭐' : ''}</span>${dtTab === 'delete' ? `<button class="secondary" data-del="${s.id}" style="flex:none;width:auto;padding:5px 10px;color:#fca5a5">🗑️</button>` : `<button data-edit="${s.id}" style="flex:none;width:auto;padding:5px 10px">✏️</button>`}</div>`).join('');
     box.querySelectorAll('[data-del]').forEach((b) => { b.onclick = () => { if (b.dataset.armed) { apiAction('/admin/dino-token/delete', { targetSteamId: sid, slotId: b.dataset.del }, '🗑️ Token gelöscht', dtLoadGarage); } else { b.dataset.armed = '1'; b.textContent = 'Sicher?'; setTimeout(() => { b.textContent = '🗑️'; delete b.dataset.armed; }, 2500); } }; });
     box.querySelectorAll('[data-edit]').forEach((b) => { b.onclick = () => dtOpenEdit(sid, slots.find((s) => s.id === b.dataset.edit)); });
   } catch (e) { box.innerHTML = `<div style="color:#ef4444;font-size:13px">${escapeHtml(e.message || '')}</div>`; }
@@ -5031,12 +5031,12 @@ async function dtLoadGarage() {
 function dtOpenEdit(steamId, slot) {
   if (!slot) return;
   const c = dtSel;
-  c.species = slot.dino; c.gender = slot.gender || 'Male'; c.grow = Math.round((slot.grow || 0) * 100);
+  c.species = slot.dinoClass; c.gender = slot.gender || 'Male'; c.grow = Math.round((slot.grow || 0) * 100);
   c.elder = slot.elderStacks || 0; c.primes = (slot.primes || []).slice();
   c.mut = { base: (slot.mutations?.base || []).filter(Boolean), parent: (slot.mutations?.parent || []).filter(Boolean), elder: (slot.mutations?.elder || []).filter(Boolean) };
   el('dtBody').innerHTML = `
     <div class="dt-form">
-      <div class="dt-sec">✏️ ${escapeHtml(slot.dino)} bearbeiten</div>
+      <div class="dt-sec">✏️ ${escapeHtml(slot.dinoClass || slot.label || 'Dino')} bearbeiten</div>
       <div class="dt-row">
         <div style="flex:1;min-width:0"><label>Geschlecht</label><select id="dtGender" class="bf-select"><option value="Male"${c.gender === 'Male' ? ' selected' : ''}>♂ Male</option><option value="Female"${c.gender === 'Female' ? ' selected' : ''}>♀ Female</option></select></div>
         <div style="flex:1;min-width:0"><label>Wachstum %</label><input id="dtGrow" type="number" min="1" max="100" value="${c.grow}" class="bf-select" style="box-sizing:border-box"></div>
