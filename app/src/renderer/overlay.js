@@ -1259,11 +1259,13 @@ function renderTpList() {
   for (const t of [...teleports].sort((a, b) => a.number - b.number)) {
     const hot = t.id === hoveredTp;
     const cd = t.cooldownRemaining || 0;
+    const water = !!t.water;
     const row = document.createElement('div');
-    row.style.cssText = `padding:6px 8px;margin-bottom:4px;border-radius:8px;cursor:pointer;border:1px solid ${hot ? 'var(--accent)' : 'transparent'};background:${hot ? 'rgba(var(--accent-rgb),0.20)' : 'rgba(255,255,255,0.04)'}`;
+    row.style.cssText = `padding:6px 8px;margin-bottom:4px;border-radius:8px;cursor:pointer;border:1px solid ${hot ? 'var(--accent)' : (water ? 'rgba(56,189,248,0.55)' : 'transparent')};background:${hot ? 'rgba(var(--accent-rgb),0.20)' : (water ? 'rgba(56,189,248,0.13)' : 'rgba(255,255,255,0.04)')}`;
     row.innerHTML =
-      `<div style="display:flex;justify-content:space-between;gap:6px"><b>#${t.number} ${escapeHtml(t.name)}</b>` +
+      `<div style="display:flex;justify-content:space-between;gap:6px"><b>${water ? '💧 ' : ''}#${t.number} ${escapeHtml(t.name)}</b>` +
       `<span style="color:var(--muted)">${t.price > 0 ? t.price + ' Pkt' : 'gratis'}</span></div>` +
+      (water ? '<div style="color:#38bdf8;font-size:11px">🌊 Wasser-Teleport</div>' : '') +
       (cd > 0 ? `<div style="color:#f59e0b;font-size:11px">⏳ ${fmtCd(cd)}</div>` : '');
     row.onmouseenter = () => setHoveredTp(t.id);
     row.onmouseleave = () => setHoveredTp(null);
@@ -1840,7 +1842,7 @@ function renderAdminTpList() {
   for (const t of [...teleports].sort((a, b) => a.number - b.number)) {
     const row = document.createElement('div');
     row.style.cssText = 'display:flex;justify-content:space-between;align-items:center;gap:6px;padding:4px 0';
-    row.innerHTML = `<span>#${t.number} ${escapeHtml(t.name)} <span style="color:var(--muted)">${t.price}P</span></span>`;
+    row.innerHTML = `<span>${t.water ? '💧 ' : ''}#${t.number} ${escapeHtml(t.name)} <span style="color:var(--muted)">${t.price}P</span></span>`;
     const del = document.createElement('button');
     del.textContent = '🗑'; del.style.cssText = 'width:auto;padding:3px 8px';
     del.onclick = () => deleteTp(t);
@@ -1853,15 +1855,17 @@ async function createTp() {
   const name = el('tpName').value.trim();
   const price = parseInt(el('tpPrice').value) || 0;
   const cooldownMin = parseInt(el('tpCooldown').value) || 0;
+  const water = !!(el('tpWater') && el('tpWater').checked);
   if (!name) { showToast('Name fehlt', 'error'); return; }
   try {
     const res = await fetch(`${config.tokenBase}/teleports`, {
       method: 'POST', headers: { Authorization: `Bearer ${sessionToken}`, 'Content-Type': 'application/json' },
-      body: JSON.stringify({ name, price, cooldownMin }),
+      body: JSON.stringify({ name, price, cooldownMin, water }),
     });
     const d = await res.json(); if (!res.ok) throw new Error(apiErr(d));
-    showToast(`📍 TP-Punkt "${name}" erstellt`, 'success');
+    showToast(`📍 TP-Punkt "${name}"${water ? ' 💧' : ''} erstellt`, 'success');
     el('tpName').value = ''; el('tpPrice').value = ''; el('tpCooldown').value = '';
+    if (el('tpWater')) el('tpWater').checked = false;
     await loadTeleports();
   } catch (e) { showToast(e.message, 'error'); }
 }
