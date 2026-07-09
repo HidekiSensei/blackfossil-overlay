@@ -539,6 +539,7 @@ async function init() {
   el('zoneClearBtn').onclick = () => { const z = getActiveZone(); if (z) { z.points = []; zonesDirty = true; updateZoneInfo(); renderZoneList(); renderBigMap(); } };
   el('zoneName').oninput = () => { const z = getActiveZone(); if (z) { z.name = el('zoneName').value; zonesDirty = true; renderZoneList(); if (mapOpen) renderBigMap(); } };
   el('zoneSaveBtn').onclick = () => saveZones();
+  { const b = el('zonePullBtn'); if (b) b.onclick = () => pullZones(); }
 
   window.bf.onHotkey(handleHotkey);
 
@@ -2115,6 +2116,28 @@ async function saveZones() {
   } catch {
     el('zoneInfo').innerHTML = '<span style="color:#ef4444">❌ Server nicht erreichbar</span>';
   }
+}
+
+// Manueller Pull: aktuelle Server-Zonen NACHLADEN (mergen) — fügt Zonen dazu, die andere gespeichert
+// haben (per ID), OHNE deine eigenen ungespeicherten Zeichnungen zu überschreiben. Fürs gemeinsame
+// Zonen-Ziehen: vor dem Speichern einmal pullen, damit du auf dem aktuellen Stand aufbaust.
+async function pullZones() {
+  try {
+    const res = await fetch(`${config.tokenBase}/zones`, { headers: { Authorization: `Bearer ${sessionToken}` } });
+    if (!res.ok) throw new Error('Laden fehlgeschlagen');
+    const d = await res.json();
+    const server = Array.isArray(d.zones) ? d.zones : [];
+    const have = new Set(ZONES.map((z) => z.id));
+    let added = 0;
+    for (const z of server) {
+      if (z.id && !have.has(z.id)) {
+        ZONES.push({ id: z.id, type: ZONE_TYPES.includes(z.type) ? z.type : 'pvp', name: z.name || '', points: Array.isArray(z.points) ? z.points : [] });
+        added++;
+      }
+    }
+    renderZoneList(); updateZoneInfo(); if (mapOpen) renderBigMap();
+    showToast(added ? `🔄 ${added} Zone(n) vom Server nachgeladen` : '🔄 Du bist aktuell — keine neuen Zonen', 'success');
+  } catch (e) { showToast('Zonen-Pull fehlgeschlagen — später erneut versuchen', 'error'); }
 }
 
 async function loadServerZones() {
