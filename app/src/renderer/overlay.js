@@ -203,11 +203,16 @@ let heatmapMode = false;
 // Auto-Kalibrierung die GANZE Karte aufspannt statt nur den zentralen Zonen-Bereich — weiter
 // auseinanderliegende Punkte = genauere affine Abbildung. Liegt ein Anker über Wasser / ist die
 // Stelle unklar → im Ablauf „Überspringen". Koordinaten bei Bedarf hier anpassen.
+// Diese Anker liegen auf gut erkennbaren LAND-Features der Gateway-Karte (RaidAtlas-Render, gleiche
+// Map durch die Partnerschaft) — rückgerechnet aus der globalen Kalibrierung. Die frühere Variante
+// (±300000 in allen 4 Ecken) landete im Ozean und war nicht präzise anklickbar.
 const CALIB_ANCHORS = [
-  { x: -300000, y: -300000 },
-  { x:  300000, y: -300000 },
-  { x: -300000, y:  300000 },
-  { x:  300000, y:  300000 },
+  { x:  -40831, y:   63909 }, // Gateway-Struktur (Zentrum, unverwechselbar)
+  { x:  405737, y: -303536 }, // Anlage Nordost (Marina, rechte Küste)
+  { x: -353179, y:  275538 }, // Anlage Südwest (Gebäude unten links)
+  { x:  139553, y: -403261 }, // Nord-Landmasse (Inneres)
+  { x:  248984, y:  -92103 }, // Ost-Zentrum (grün)
+  { x:   13397, y:  308430 }, // Süd (Feuchtgebiet/Halbinsel)
 ];
 function pickCalibTargets(n) {
   // Anker (weit außen) + alle Zonen-Ecken; Farthest-Point-Sampling wählt die n am weitesten verteilten.
