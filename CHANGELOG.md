@@ -1,9 +1,9 @@
 # Changelog
 
-## v1.7.3 — Kalibrierung: bessere Referenzpunkte 🎯
+## v1.7.4 — Kalibrierung: Referenzpunkte jetzt wirklich an Land 🎯
 
 ### 🔧 Fixes
-- **Karten-Kalibrierung genauer**: Die Auto-Kalibrierung teleportiert jetzt zu **erkennbaren Land-Punkten** (Gateway-Struktur, die beiden Anlagen, markante Insel-Punkte) statt zu Zielen mitten im Ozean. Dadurch lassen sich die Punkte präzise auf der Karte anklicken. (Wer bereits kalibriert hat, muss nichts tun.)
+- **Auto-Kalibrierung teleportiert jetzt zu Punkten, die sicher an Land liegen** (pixel-genau aus der Karte gewählt und verifiziert) — die vorherigen Ziele lagen teils noch im Ozean und ließen sich nicht anklicken. (Wer bereits kalibriert hat, muss nichts tun.)
 
 ## v1.7.2 — Neue Karte & verschiebbare Timer 🗺️
 

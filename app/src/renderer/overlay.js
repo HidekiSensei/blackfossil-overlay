@@ -206,13 +206,16 @@ let heatmapMode = false;
 // Diese Anker liegen auf gut erkennbaren LAND-Features der Gateway-Karte (RaidAtlas-Render, gleiche
 // Map durch die Partnerschaft) — rückgerechnet aus der globalen Kalibrierung. Die frühere Variante
 // (±300000 in allen 4 Ecken) landete im Ozean und war nicht präzise anklickbar.
+// Per Pixel-Sampling der Karte gewählt (nur Terrain-Farben, robust landeinwärts, max. verteilt) und
+// round-trip verifiziert (Welt→Karte→Pixel = Land). Die frühere ±300000-Variante (und ein erster
+// Augenmaß-Versuch) landete teils im Ozean → nicht anklickbar.
 const CALIB_ANCHORS = [
-  { x:  -40831, y:   63909 }, // Gateway-Struktur (Zentrum, unverwechselbar)
-  { x:  405737, y: -303536 }, // Anlage Nordost (Marina, rechte Küste)
-  { x: -353179, y:  275538 }, // Anlage Südwest (Gebäude unten links)
-  { x:  139553, y: -403261 }, // Nord-Landmasse (Inneres)
-  { x:  248984, y:  -92103 }, // Ost-Zentrum (grün)
-  { x:   13397, y:  308430 }, // Süd (Feuchtgebiet/Halbinsel)
+  { x:  438354, y: -448498 }, // Nordost (Land)
+  { x: -282295, y:  340635 }, // Südwest (Land)
+  { x: -254486, y: -375970 }, // Nordwest (Land)
+  { x:  268198, y:  101086 }, // Südost (Land)
+  { x: -113187, y:  -17863 }, // West-Zentrum (Land)
+  { x:  103283, y: -304763 }, // Nord-Zentrum (Land)
 ];
 function pickCalibTargets(n) {
   // Anker (weit außen) + alle Zonen-Ecken; Farthest-Point-Sampling wählt die n am weitesten verteilten.
