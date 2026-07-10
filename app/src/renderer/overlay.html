@@ -602,6 +602,14 @@
     .theme-custom.locked { opacity: .55; cursor: default; }
     .theme-custom.on { border-color: #fff; box-shadow: 0 0 0 1px var(--accent); }
     .theme-custom input[type=color] { width: 24px; height: 20px; border: 0; background: none; padding: 0; cursor: pointer; }
+    .bf-audio-adv summary::-webkit-details-marker { display: none; }
+    .bf-audio-adv summary::before { content: '▸'; display: inline-block; margin-right: 6px; transition: transform .12s; color: var(--muted); }
+    .bf-audio-adv[open] summary::before { transform: rotate(90deg); }
+    .comp-row { margin-bottom: 11px; }
+    .comp-head { display: flex; justify-content: space-between; align-items: baseline; font-size: 12px; margin-bottom: 2px; }
+    .comp-val { font-variant-numeric: tabular-nums; color: var(--accent-2); font-weight: 600; }
+    .comp-desc { font-size: 10.5px; color: var(--muted); margin-top: 1px; line-height: 1.3; }
+    #micCompCtrls.off { opacity: .4; pointer-events: none; filter: grayscale(.5); }
 
     /* ════════════════════════════════════════════════════════════════
        ⚡ BlackFossil FX — elektrische Energie passend zum Lightning-Logo.
@@ -1077,6 +1085,46 @@
           <input id="micGain" type="range" min="0" max="200" step="5" value="100" style="width:100%;accent-color:var(--accent)">
           <div style="font-size:11px;color:var(--muted)">Macht dein eigenes Mikro für alle anderen lauter oder leiser (100&nbsp;%&nbsp;=&nbsp;normal).</div>
         </div>
+        <details class="set-block bf-audio-adv">
+          <summary class="set-label" style="cursor:pointer;list-style:none">🎚️ Erweiterte Audio-Einstellungen</summary>
+          <div style="font-size:11px;color:var(--muted);margin:2px 0 10px">Kompressor auf deinem gesendeten Mikro — gleicht laute/leise Passagen aus. Wirkt für alle anderen.</div>
+          <label class="bf-comp-toggle" style="display:flex;align-items:center;gap:8px;margin-bottom:10px;cursor:pointer;font-size:12px">
+            <input id="micCompOn" type="checkbox"> Kompressor aktiv
+          </label>
+          <div id="micCompCtrls">
+            <div class="comp-row">
+              <div class="comp-head"><span>Vorverstärkung</span><span id="micPreGainV" class="comp-val"></span></div>
+              <input id="micPreGain" type="range" min="-24" max="24" step="1" style="width:100%;accent-color:var(--accent)">
+              <div class="comp-desc">Signal anheben, bevor der Kompressor greift. Negative Werte senken.</div>
+            </div>
+            <div class="comp-row">
+              <div class="comp-head"><span>Schwelle (Threshold)</span><span id="micThresholdV" class="comp-val"></span></div>
+              <input id="micThreshold" type="range" min="-60" max="0" step="1" style="width:100%;accent-color:var(--accent)">
+              <div class="comp-desc">Ab welchem Pegel er eingreift. Je niedriger, desto mehr Kompression.</div>
+            </div>
+            <div class="comp-row">
+              <div class="comp-head"><span>Ratio</span><span id="micRatioV" class="comp-val"></span></div>
+              <input id="micRatio" type="range" min="1" max="20" step="1" style="width:100%;accent-color:var(--accent)">
+              <div class="comp-desc">Kompressionsverhältnis. Höher = stärkere Begrenzung. 1:1 = aus.</div>
+            </div>
+            <div class="comp-row">
+              <div class="comp-head"><span>Attack</span><span id="micAttackV" class="comp-val"></span></div>
+              <input id="micAttack" type="range" min="0" max="200" step="1" style="width:100%;accent-color:var(--accent)">
+              <div class="comp-desc">Wie schnell er zuschlägt. Niedrig = schneller.</div>
+            </div>
+            <div class="comp-row">
+              <div class="comp-head"><span>Release</span><span id="micReleaseV" class="comp-val"></span></div>
+              <input id="micRelease" type="range" min="0" max="1000" step="10" style="width:100%;accent-color:var(--accent)">
+              <div class="comp-desc">Wie schnell er loslässt. Höher = weicher.</div>
+            </div>
+            <div class="comp-row">
+              <div class="comp-head"><span>Knee</span><span id="micKneeV" class="comp-val"></span></div>
+              <input id="micKnee" type="range" min="0" max="40" step="1" style="width:100%;accent-color:var(--accent)">
+              <div class="comp-desc">Sanfter Übergang am Threshold. Höher = weicherer Einsatz.</div>
+            </div>
+            <button id="micCompReset" class="secondary" style="width:100%;margin-top:6px;font-size:12px">↺ Standardwerte</button>
+          </div>
+        </details>
         <div class="set-block">
           <div class="set-label">🎨 Layout</div>
           <button id="editModeBtn" style="width:100%">🎨 Edit-Mode (Panels verschieben)</button>

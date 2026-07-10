@@ -26,7 +26,9 @@ function setAboTier(tier) {
   myAboTier = ABO_ORDER.includes(tier) ? tier : 'Fossil';
   // Gespeicherte Theme-Wahl jetzt mit korrektem Rang anwenden (beim Laden war der Rang noch unbekannt).
   applyTheme(localStorage.getItem('bf-theme') || 'violett');
-  if (featureOpen === 'settings') renderThemePicker();
+  // Picker IMMER neu rendern, sobald der Rang da ist — sonst zeigen Schlösser + fehlender
+  // Color-Input den veralteten Fossil-Stand (Settings ist ein eigenes Panel, nie featureOpen).
+  renderThemePicker();
 }
 // Custom-Theme (Obsidian): vollständiges Theme aus EINER Akzent-Farbe ableiten.
 function hexToRgb(hex) { const n = parseInt(String(hex).slice(1), 16); return [(n >> 16) & 255, (n >> 8) & 255, n & 255]; }
@@ -298,6 +300,14 @@ let masterGain = (parseFloat(localStorage.getItem('bf-master-gain')) || 1);
 // Eigene Mikrofon-Verstärkung (0..2) — wird per Web-Audio-GainNode auf den
 // gesendeten Mikro-Track gelegt (siehe createMicGainProcessor).
 let micGain = (parseFloat(localStorage.getItem('bf-mic-gain')) || 1);
+// Erweiterte Audio-Einstellungen: PreGain + DynamicsCompressor VOR dem micGain-Node.
+// Werte in „menschlichen" Einheiten (dB / :1 / ms); WebAudio bekommt ms→s umgerechnet.
+const MIC_COMP_DEFAULTS = { on: false, preGain: 0, threshold: -24, ratio: 12, attack: 3, release: 250, knee: 30 };
+let micComp = (() => {
+  try { return { ...MIC_COMP_DEFAULTS, ...JSON.parse(localStorage.getItem('bf-mic-comp') || '{}') }; }
+  catch { return { ...MIC_COMP_DEFAULTS }; }
+})();
+function saveMicComp() { try { localStorage.setItem('bf-mic-comp', JSON.stringify(micComp)); } catch {} }
 // Welt-Einheiten pro angezeigtem Meter. The Isle skaliert kürzer als erwartet,
 // daher 200 statt 100 — so klingt "25 m" auch wirklich nach 25 m.
 const UNITS_PER_M = 200;
@@ -690,6 +700,7 @@ async function init() {
   // Eigene Mikrofon-Lautstärke (Gain auf den gesendeten Track)
   const mg = el('micGain');
   if (mg) { mg.value = String(Math.round(micGain * 100)); mg.oninput = (e) => setMicGain(parseInt(e.target.value)); }
+  initMicCompUI();   // Erweiterte Audio-Einstellungen (Kompressor)
   // Master-Lautstärke für alle Spieler
   const mv = el('masterGain');
   if (mv) { mv.value = String(Math.round(masterGain * 100)); mv.oninput = (e) => setMasterGain(parseInt(e.target.value)); }
@@ -5561,7 +5572,7 @@ function navTo(target) {
 function toggleSettings(force) {
   settingsOpen = force !== undefined ? force : !settingsOpen;
   el('settings').style.display = settingsOpen ? 'block' : 'none';
-  if (settingsOpen) renderVoiceUsers();
+  if (settingsOpen) { renderVoiceUsers(); renderThemePicker(); }   // frisch rendern → korrekte Schlösser + Color-Input
   updateInteractive();
 }
 
@@ -5607,7 +5618,7 @@ async function applyMic() {
 // damit micGain (0..2) das eigene Mikro für alle anderen lauter/leiser macht.
 let micProc = null;
 function createMicGainProcessor() {
-  let src = null, gain = null, dest = null;
+  let src = null, pre = null, comp = null, gain = null, dest = null;
   const proc = {
     name: 'bf-mic-gain',
     async init(opts) {
@@ -5619,20 +5630,38 @@ function createMicGainProcessor() {
       wake();
       ctx.addEventListener('statechange', wake);
       src = ctx.createMediaStreamSource(new MediaStream([opts.track]));
-      gain = ctx.createGain();
+      pre = ctx.createGain();                    // Vorverstärkung VOR dem Kompressor
+      comp = ctx.createDynamicsCompressor();     // Erweiterte Audio-Einstellungen
+      gain = ctx.createGain();                   // bestehende Mikrofon-Lautstärke
       gain.gain.value = micGain;
       dest = ctx.createMediaStreamDestination();
-      src.connect(gain); gain.connect(dest);
+      // Kette: Source → PreGain → Compressor → micGain → Track
+      src.connect(pre); pre.connect(comp); comp.connect(gain); gain.connect(dest);
       proc.processedTrack = dest.stream.getAudioTracks()[0];
       proc._ctx = ctx;
+      proc.applyComp();
     },
     async restart(opts) { await proc.destroy(); await proc.init(opts); },
     async destroy() {
       try { src && src.disconnect(); } catch {}
+      try { pre && pre.disconnect(); } catch {}
+      try { comp && comp.disconnect(); } catch {}
       try { gain && gain.disconnect(); } catch {}
       try { dest && dest.disconnect(); } catch {}
     },
     setGain(v) { if (gain && proc._ctx) gain.gain.setTargetAtTime(v, proc._ctx.currentTime, 0.05); },
+    // PreGain + Kompressor-Parameter live setzen. Aus = neutrale Kette (PreGain 0 dB, Ratio 1:1).
+    applyComp() {
+      if (!comp || !pre || !proc._ctx) return;
+      const t = proc._ctx.currentTime, on = !!micComp.on;
+      const preLin = on ? Math.pow(10, micComp.preGain / 20) : 1;   // dB → linear
+      pre.gain.setTargetAtTime(preLin, t, 0.03);
+      comp.threshold.setValueAtTime(on ? micComp.threshold : 0, t);
+      comp.ratio.setValueAtTime(on ? micComp.ratio : 1, t);
+      comp.attack.setValueAtTime(on ? micComp.attack / 1000 : 0.003, t);   // ms → s
+      comp.release.setValueAtTime(on ? micComp.release / 1000 : 0.25, t);
+      comp.knee.setValueAtTime(on ? micComp.knee : 0, t);
+    },
   };
   return proc;
 }
@@ -5649,6 +5678,41 @@ function setMicGain(pct) {
   micGain = Math.max(0, Math.min(2, pct / 100));
   try { localStorage.setItem('bf-mic-gain', String(Math.round(micGain * 100) / 100)); } catch {}
   if (micProc) micProc.setGain(micGain);
+}
+function applyMicComp() { if (micProc && micProc.applyComp) micProc.applyComp(); }
+// Slider-Wertanzeigen + Grau-Zustand aktualisieren (ohne die Inputs neu zu setzen).
+function refreshMicCompLabels() {
+  const set = (id, txt) => { const e = el(id); if (e) e.textContent = txt; };
+  set('micPreGainV', `${micComp.preGain > 0 ? '+' : ''}${micComp.preGain} dB`);
+  set('micThresholdV', `${micComp.threshold} dB`);
+  set('micRatioV', `${micComp.ratio}:1`);
+  set('micAttackV', `${micComp.attack} ms`);
+  set('micReleaseV', `${micComp.release} ms`);
+  set('micKneeV', `${micComp.knee} dB`);
+  const ctrls = el('micCompCtrls'); if (ctrls) ctrls.classList.toggle('off', !micComp.on);
+}
+// Einmalig beim Init: Inputs auf gespeicherte Werte setzen + Handler binden.
+function initMicCompUI() {
+  const on = el('micCompOn');
+  if (on) { on.checked = !!micComp.on; on.onchange = () => { micComp.on = on.checked; saveMicComp(); applyMicComp(); refreshMicCompLabels(); }; }
+  const bind = (id, key) => {
+    const inp = el(id); if (!inp) return;
+    inp.value = String(micComp[key]);
+    inp.oninput = () => { micComp[key] = parseInt(inp.value, 10); saveMicComp(); applyMicComp(); refreshMicCompLabels(); };
+  };
+  bind('micPreGain', 'preGain'); bind('micThreshold', 'threshold'); bind('micRatio', 'ratio');
+  bind('micAttack', 'attack'); bind('micRelease', 'release'); bind('micKnee', 'knee');
+  const reset = el('micCompReset');
+  if (reset) reset.onclick = () => {
+    const keep = micComp.on;
+    micComp = { ...MIC_COMP_DEFAULTS, on: keep };
+    saveMicComp();
+    ['preGain', 'threshold', 'ratio', 'attack', 'release', 'knee'].forEach((k) => {
+      const inp = el('mic' + k.charAt(0).toUpperCase() + k.slice(1)); if (inp) inp.value = String(micComp[k]);
+    });
+    applyMicComp(); refreshMicCompLabels();
+  };
+  refreshMicCompLabels();
 }
 
 function refreshMicState() {
