@@ -609,7 +609,9 @@
     .comp-head { display: flex; justify-content: space-between; align-items: baseline; font-size: 12px; margin-bottom: 2px; }
     .comp-val { font-variant-numeric: tabular-nums; color: var(--accent-2); font-weight: 600; }
     .comp-desc { font-size: 10.5px; color: var(--muted); margin-top: 1px; line-height: 1.3; }
-    #micCompCtrls.off { opacity: .4; pointer-events: none; filter: grayscale(.5); }
+    .bf-comp-toggle { display: flex; align-items: center; gap: 8px; margin-bottom: 8px; cursor: pointer; font-size: 12.5px; font-weight: 600; }
+    .comp-sec { margin: 0 0 12px 4px; padding-left: 8px; border-left: 2px solid rgba(var(--accent-rgb),0.25); }
+    .comp-sec.off { opacity: .4; pointer-events: none; filter: grayscale(.5); }
     .notif-list { max-height: 46vh; overflow-y: auto; display: flex; flex-direction: column; gap: 6px; }
     .notif-item { display: flex; align-items: baseline; justify-content: space-between; gap: 10px; padding: 8px 10px; border-radius: 8px; background: rgba(255,255,255,0.04); border-left: 3px solid transparent; }
     .notif-item.unread { background: rgba(var(--accent-rgb),0.12); border-left-color: var(--accent); }
@@ -1095,11 +1097,50 @@
         </div>
         <details class="set-block bf-audio-adv">
           <summary class="set-label" style="cursor:pointer;list-style:none">🎚️ Erweiterte Audio-Einstellungen</summary>
-          <div style="font-size:11px;color:var(--muted);margin:2px 0 10px">Kompressor auf deinem gesendeten Mikro — gleicht laute/leise Passagen aus. Wirkt für alle anderen.</div>
-          <label class="bf-comp-toggle" style="display:flex;align-items:center;gap:8px;margin-bottom:10px;cursor:pointer;font-size:12px">
-            <input id="micCompOn" type="checkbox"> Kompressor aktiv
-          </label>
-          <div id="micCompCtrls">
+          <div style="font-size:11px;color:var(--muted);margin:2px 0 12px">Bearbeitet dein gesendetes Mikro (Reihenfolge: Rauschunterdrückung → Low-Cut → Gate → Kompressor → Limiter). Wirkt für alle anderen.</div>
+
+          <!-- Rauschunterdrückung -->
+          <label class="bf-comp-toggle"><input id="micNsOn" type="checkbox"> 🔇 Rauschunterdrückung</label>
+          <div class="comp-desc" style="margin:-2px 0 12px">Browser-Rauschminderung (Lüfter, Tastatur, Grundrauschen) direkt am Mikro.</div>
+
+          <!-- Low-Cut / High-Pass -->
+          <label class="bf-comp-toggle"><input id="micHpOn" type="checkbox"> 🩹 Low-Cut (High-Pass)</label>
+          <div id="micHpCtrls" class="comp-sec">
+            <div class="comp-row">
+              <div class="comp-head"><span>Grenzfrequenz</span><span id="micHpFreqV" class="comp-val"></span></div>
+              <input id="micHpFreq" type="range" min="40" max="300" step="5" style="width:100%;accent-color:var(--accent)">
+              <div class="comp-desc">Schneidet tiefes Brummen/Rumpeln unterhalb dieser Frequenz weg (macht die Stimme klarer).</div>
+            </div>
+          </div>
+
+          <!-- Noise Gate -->
+          <label class="bf-comp-toggle"><input id="micGateOn" type="checkbox"> 🚪 Noise Gate</label>
+          <div id="micGateCtrls" class="comp-sec">
+            <div class="comp-row">
+              <div class="comp-head"><span>Schwelle (Threshold)</span><span id="micGateThresholdV" class="comp-val"></span></div>
+              <input id="micGateThreshold" type="range" min="-80" max="-20" step="1" style="width:100%;accent-color:var(--accent)">
+              <div class="comp-desc">Ab welchem Pegel das Mikro öffnet. Höher = strenger (schneidet mehr weg).</div>
+            </div>
+            <div class="comp-row">
+              <div class="comp-head"><span>Attack</span><span id="micGateAttackV" class="comp-val"></span></div>
+              <input id="micGateAttack" type="range" min="0" max="50" step="1" style="width:100%;accent-color:var(--accent)">
+              <div class="comp-desc">Wie schnell das Gate öffnet, wenn du sprichst.</div>
+            </div>
+            <div class="comp-row">
+              <div class="comp-head"><span>Release</span><span id="micGateReleaseV" class="comp-val"></span></div>
+              <input id="micGateRelease" type="range" min="20" max="1000" step="10" style="width:100%;accent-color:var(--accent)">
+              <div class="comp-desc">Wie schnell es wieder schließt, wenn du still bist.</div>
+            </div>
+            <div class="comp-row">
+              <div class="comp-head"><span>Hold</span><span id="micGateHoldV" class="comp-val"></span></div>
+              <input id="micGateHold" type="range" min="0" max="1000" step="10" style="width:100%;accent-color:var(--accent)">
+              <div class="comp-desc">Hält das Gate nach dem letzten Ton offen (verhindert Zerhacken in Sprechpausen).</div>
+            </div>
+          </div>
+
+          <!-- Kompressor -->
+          <label class="bf-comp-toggle"><input id="micCompOn" type="checkbox"> 🎚️ Kompressor</label>
+          <div id="micCompCtrls" class="comp-sec">
             <div class="comp-row">
               <div class="comp-head"><span>Vorverstärkung</span><span id="micPreGainV" class="comp-val"></span></div>
               <input id="micPreGain" type="range" min="-24" max="24" step="1" style="width:100%;accent-color:var(--accent)">
@@ -1130,8 +1171,19 @@
               <input id="micKnee" type="range" min="0" max="40" step="1" style="width:100%;accent-color:var(--accent)">
               <div class="comp-desc">Sanfter Übergang am Threshold. Höher = weicherer Einsatz.</div>
             </div>
-            <button id="micCompReset" class="secondary" style="width:100%;margin-top:6px;font-size:12px">↺ Standardwerte</button>
           </div>
+
+          <!-- Limiter -->
+          <label class="bf-comp-toggle"><input id="micLimitOn" type="checkbox"> 🧱 Limiter</label>
+          <div id="micLimitCtrls" class="comp-sec">
+            <div class="comp-row">
+              <div class="comp-head"><span>Obergrenze (Ceiling)</span><span id="micLimitCeilV" class="comp-val"></span></div>
+              <input id="micLimitCeil" type="range" min="-12" max="0" step="1" style="width:100%;accent-color:var(--accent)">
+              <div class="comp-desc">Harte Decke gegen Übersteuern/Clipping bei lauten Spitzen (Schreien).</div>
+            </div>
+          </div>
+
+          <button id="micCompReset" class="secondary" style="width:100%;margin-top:6px;font-size:12px">↺ Standardwerte (Regler)</button>
         </details>
         <div class="set-block">
           <div class="set-label">🎨 Layout</div>

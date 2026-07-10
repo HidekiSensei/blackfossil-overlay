@@ -302,7 +302,18 @@ let masterGain = (parseFloat(localStorage.getItem('bf-master-gain')) || 1);
 let micGain = (parseFloat(localStorage.getItem('bf-mic-gain')) || 1);
 // Erweiterte Audio-Einstellungen: PreGain + DynamicsCompressor VOR dem micGain-Node.
 // Werte in „menschlichen" Einheiten (dB / :1 / ms); WebAudio bekommt ms→s umgerechnet.
-const MIC_COMP_DEFAULTS = { on: false, preGain: 0, threshold: -24, ratio: 12, attack: 3, release: 250, knee: 30 };
+const MIC_COMP_DEFAULTS = {
+  // Kompressor
+  on: false, preGain: 0, threshold: -24, ratio: 12, attack: 3, release: 250, knee: 30,
+  // Noise Gate
+  gateOn: false, gateThreshold: -50, gateAttack: 5, gateRelease: 150, gateHold: 200,
+  // Low-Cut / High-Pass
+  hpOn: false, hpFreq: 80,
+  // Limiter
+  limitOn: false, limitCeil: -3,
+  // Rauschunterdrückung (browser-native)
+  nsOn: false,
+};
 let micComp = (() => {
   try { return { ...MIC_COMP_DEFAULTS, ...JSON.parse(localStorage.getItem('bf-mic-comp') || '{}') }; }
   catch { return { ...MIC_COMP_DEFAULTS }; }
@@ -5696,7 +5707,8 @@ async function applyMic() {
 // damit micGain (0..2) das eigene Mikro für alle anderen lauter/leiser macht.
 let micProc = null;
 function createMicGainProcessor() {
-  let src = null, pre = null, comp = null, gain = null, dest = null;
+  let src = null, pre = null, hp = null, gateNode = null, comp = null, limiter = null, gain = null, dest = null;
+  let analyser = null, gateBuf = null, gateTimer = null, gateLastOpen = 0, srcTrack = null;
   const proc = {
     name: 'bf-mic-gain',
     async init(opts) {
@@ -5707,38 +5719,67 @@ function createMicGainProcessor() {
       const wake = () => { if (ctx.state === 'suspended') ctx.resume().catch(() => {}); };
       wake();
       ctx.addEventListener('statechange', wake);
+      srcTrack = opts.track;
       src = ctx.createMediaStreamSource(new MediaStream([opts.track]));
-      pre = ctx.createGain();                    // Vorverstärkung VOR dem Kompressor
-      comp = ctx.createDynamicsCompressor();     // Erweiterte Audio-Einstellungen
+      pre = ctx.createGain();                    // Vorverstärkung
+      hp = ctx.createBiquadFilter(); hp.type = 'highpass'; hp.frequency.value = 20; hp.Q.value = 0.707; // Low-Cut
+      gateNode = ctx.createGain();               // Noise Gate (per Pegel-Erkennung gesteuert)
+      comp = ctx.createDynamicsCompressor();     // Kompressor
+      limiter = ctx.createDynamicsCompressor();  // Limiter (Brickwall)
       gain = ctx.createGain();                   // bestehende Mikrofon-Lautstärke
       gain.gain.value = micGain;
       dest = ctx.createMediaStreamDestination();
-      // Kette: Source → PreGain → Compressor → micGain → Track
-      src.connect(pre); pre.connect(comp); comp.connect(gain); gain.connect(dest);
+      analyser = ctx.createAnalyser(); analyser.fftSize = 1024; gateBuf = new Float32Array(analyser.fftSize);
+      // Kette: Source → PreGain → High-Pass → Gate → Kompressor → Limiter → micGain → Track
+      src.connect(pre); pre.connect(hp); hp.connect(gateNode); gateNode.connect(comp);
+      comp.connect(limiter); limiter.connect(gain); gain.connect(dest);
+      hp.connect(analyser);   // Pegel-Tap fürs Gate (nach dem Filter, vor dem Gate)
       proc.processedTrack = dest.stream.getAudioTracks()[0];
       proc._ctx = ctx;
-      proc.applyComp();
+      proc.applyAudio();
+      proc.applyNS();
+      // Gate-Detektionsschleife (setInterval läuft auch bei nicht-fokussiertem Overlay, anders als rAF).
+      gateTimer = setInterval(() => {
+        if (!gateNode || !proc._ctx) return;
+        const t = proc._ctx.currentTime;
+        if (!micComp.gateOn) { gateNode.gain.setTargetAtTime(1, t, 0.01); return; }
+        analyser.getFloatTimeDomainData(gateBuf);
+        let sum = 0; for (let i = 0; i < gateBuf.length; i++) sum += gateBuf[i] * gateBuf[i];
+        const db = 20 * Math.log10(Math.sqrt(sum / gateBuf.length) || 1e-8);
+        const now = Date.now();
+        if (db > micComp.gateThreshold) gateLastOpen = now;
+        const open = (now - gateLastOpen) < micComp.gateHold;   // Hold hält kurz offen → kein Zerhacken
+        const tc = open ? Math.max(0.001, micComp.gateAttack / 1000) : Math.max(0.005, micComp.gateRelease / 1000);
+        gateNode.gain.setTargetAtTime(open ? 1 : 0, t, tc);
+      }, 30);
     },
     async restart(opts) { await proc.destroy(); await proc.init(opts); },
     async destroy() {
-      try { src && src.disconnect(); } catch {}
-      try { pre && pre.disconnect(); } catch {}
-      try { comp && comp.disconnect(); } catch {}
-      try { gain && gain.disconnect(); } catch {}
-      try { dest && dest.disconnect(); } catch {}
+      if (gateTimer) { clearInterval(gateTimer); gateTimer = null; }
+      [src, pre, hp, gateNode, comp, limiter, gain, dest, analyser].forEach((n) => { try { n && n.disconnect(); } catch {} });
     },
     setGain(v) { if (gain && proc._ctx) gain.gain.setTargetAtTime(v, proc._ctx.currentTime, 0.05); },
-    // PreGain + Kompressor-Parameter live setzen. Aus = neutrale Kette (PreGain 0 dB, Ratio 1:1).
-    applyComp() {
-      if (!comp || !pre || !proc._ctx) return;
+    // Alle Filter-/Dynamik-Parameter live setzen. Jede Sektion „aus" = neutral (durchlässig).
+    applyAudio() {
+      if (!proc._ctx || !pre) return;
       const t = proc._ctx.currentTime, on = !!micComp.on;
-      const preLin = on ? Math.pow(10, micComp.preGain / 20) : 1;   // dB → linear
-      pre.gain.setTargetAtTime(preLin, t, 0.03);
+      pre.gain.setTargetAtTime(on ? Math.pow(10, micComp.preGain / 20) : 1, t, 0.03);
+      hp.frequency.setTargetAtTime(micComp.hpOn ? Math.max(20, micComp.hpFreq) : 20, t, 0.03);  // aus = 20 Hz ≈ kein Cut
       comp.threshold.setValueAtTime(on ? micComp.threshold : 0, t);
       comp.ratio.setValueAtTime(on ? micComp.ratio : 1, t);
-      comp.attack.setValueAtTime(on ? micComp.attack / 1000 : 0.003, t);   // ms → s
+      comp.attack.setValueAtTime(on ? micComp.attack / 1000 : 0.003, t);
       comp.release.setValueAtTime(on ? micComp.release / 1000 : 0.25, t);
       comp.knee.setValueAtTime(on ? micComp.knee : 0, t);
+      limiter.threshold.setValueAtTime(micComp.limitOn ? micComp.limitCeil : 0, t);
+      limiter.ratio.setValueAtTime(micComp.limitOn ? 20 : 1, t);           // 20:1 + schneller Attack = Brickwall
+      limiter.attack.setValueAtTime(micComp.limitOn ? 0.002 : 0.003, t);
+      limiter.release.setValueAtTime(micComp.limitOn ? 0.05 : 0.25, t);
+      limiter.knee.setValueAtTime(0, t);
+    },
+    // Browser-native Rauschunterdrückung auf dem Quell-Track an/aus.
+    applyNS() {
+      if (!srcTrack || !srcTrack.applyConstraints) return;
+      try { srcTrack.applyConstraints({ noiseSuppression: !!micComp.nsOn }); } catch {}
     },
   };
   return proc;
@@ -5757,37 +5798,53 @@ function setMicGain(pct) {
   try { localStorage.setItem('bf-mic-gain', String(Math.round(micGain * 100) / 100)); } catch {}
   if (micProc) micProc.setGain(micGain);
 }
-function applyMicComp() { if (micProc && micProc.applyComp) micProc.applyComp(); }
-// Slider-Wertanzeigen + Grau-Zustand aktualisieren (ohne die Inputs neu zu setzen).
+function applyMicComp() { if (micProc) { if (micProc.applyAudio) micProc.applyAudio(); if (micProc.applyNS) micProc.applyNS(); } }
+
+// Slider (id ↔ micComp-Key ↔ Wert-Formatierung) und Toggles (id ↔ Key ↔ optionale Sektion zum Ausgrauen).
+const MIC_SLIDERS = [
+  { id: 'micPreGain',       key: 'preGain',       fmt: (v) => `${v > 0 ? '+' : ''}${v} dB` },
+  { id: 'micThreshold',     key: 'threshold',     fmt: (v) => `${v} dB` },
+  { id: 'micRatio',         key: 'ratio',         fmt: (v) => `${v}:1` },
+  { id: 'micAttack',        key: 'attack',        fmt: (v) => `${v} ms` },
+  { id: 'micRelease',       key: 'release',       fmt: (v) => `${v} ms` },
+  { id: 'micKnee',          key: 'knee',          fmt: (v) => `${v} dB` },
+  { id: 'micGateThreshold', key: 'gateThreshold', fmt: (v) => `${v} dB` },
+  { id: 'micGateAttack',    key: 'gateAttack',    fmt: (v) => `${v} ms` },
+  { id: 'micGateRelease',   key: 'gateRelease',   fmt: (v) => `${v} ms` },
+  { id: 'micGateHold',      key: 'gateHold',      fmt: (v) => `${v} ms` },
+  { id: 'micHpFreq',        key: 'hpFreq',        fmt: (v) => `${v} Hz` },
+  { id: 'micLimitCeil',     key: 'limitCeil',     fmt: (v) => `${v} dB` },
+];
+const MIC_TOGGLES = [
+  { id: 'micNsOn',    key: 'nsOn' },
+  { id: 'micHpOn',    key: 'hpOn',    ctrls: 'micHpCtrls' },
+  { id: 'micGateOn',  key: 'gateOn',  ctrls: 'micGateCtrls' },
+  { id: 'micCompOn',  key: 'on',      ctrls: 'micCompCtrls' },
+  { id: 'micLimitOn', key: 'limitOn', ctrls: 'micLimitCtrls' },
+];
 function refreshMicCompLabels() {
-  const set = (id, txt) => { const e = el(id); if (e) e.textContent = txt; };
-  set('micPreGainV', `${micComp.preGain > 0 ? '+' : ''}${micComp.preGain} dB`);
-  set('micThresholdV', `${micComp.threshold} dB`);
-  set('micRatioV', `${micComp.ratio}:1`);
-  set('micAttackV', `${micComp.attack} ms`);
-  set('micReleaseV', `${micComp.release} ms`);
-  set('micKneeV', `${micComp.knee} dB`);
-  const ctrls = el('micCompCtrls'); if (ctrls) ctrls.classList.toggle('off', !micComp.on);
+  for (const s of MIC_SLIDERS) { const e = el(s.id + 'V'); if (e) e.textContent = s.fmt(micComp[s.key]); }
+  for (const t of MIC_TOGGLES) { if (t.ctrls) { const c = el(t.ctrls); if (c) c.classList.toggle('off', !micComp[t.key]); } }
 }
 // Einmalig beim Init: Inputs auf gespeicherte Werte setzen + Handler binden.
 function initMicCompUI() {
-  const on = el('micCompOn');
-  if (on) { on.checked = !!micComp.on; on.onchange = () => { micComp.on = on.checked; saveMicComp(); applyMicComp(); refreshMicCompLabels(); }; }
-  const bind = (id, key) => {
-    const inp = el(id); if (!inp) return;
-    inp.value = String(micComp[key]);
-    inp.oninput = () => { micComp[key] = parseInt(inp.value, 10); saveMicComp(); applyMicComp(); refreshMicCompLabels(); };
-  };
-  bind('micPreGain', 'preGain'); bind('micThreshold', 'threshold'); bind('micRatio', 'ratio');
-  bind('micAttack', 'attack'); bind('micRelease', 'release'); bind('micKnee', 'knee');
+  for (const t of MIC_TOGGLES) {
+    const chk = el(t.id); if (!chk) continue;
+    chk.checked = !!micComp[t.key];
+    chk.onchange = () => { micComp[t.key] = chk.checked; saveMicComp(); applyMicComp(); refreshMicCompLabels(); };
+  }
+  for (const s of MIC_SLIDERS) {
+    const inp = el(s.id); if (!inp) continue;
+    inp.value = String(micComp[s.key]);
+    inp.oninput = () => { micComp[s.key] = parseInt(inp.value, 10); saveMicComp(); applyMicComp(); refreshMicCompLabels(); };
+  }
   const reset = el('micCompReset');
   if (reset) reset.onclick = () => {
-    const keep = micComp.on;
-    micComp = { ...MIC_COMP_DEFAULTS, on: keep };
+    // Nur die Regler-Werte zurücksetzen; die An/Aus-Schalter behalten.
+    const keep = {}; for (const t of MIC_TOGGLES) keep[t.key] = micComp[t.key];
+    micComp = { ...MIC_COMP_DEFAULTS, ...keep };
     saveMicComp();
-    ['preGain', 'threshold', 'ratio', 'attack', 'release', 'knee'].forEach((k) => {
-      const inp = el('mic' + k.charAt(0).toUpperCase() + k.slice(1)); if (inp) inp.value = String(micComp[k]);
-    });
+    for (const s of MIC_SLIDERS) { const inp = el(s.id); if (inp) inp.value = String(micComp[s.key]); }
     applyMicComp(); refreshMicCompLabels();
   };
   refreshMicCompLabels();
