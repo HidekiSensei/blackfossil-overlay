@@ -379,11 +379,84 @@ async function pollConnStats() {
 
 // ── Toast-System ─────────────────────────────────────────────────────────────
 function showToast(msg, type = '') {
+  addNotif(msg, type);   // ins Postfach protokollieren (auch wer den Toast verpasst, sieht ihn dort)
   const t = document.createElement('div');
   t.className = 'toast' + (type ? ' ' + type : '');
   t.textContent = msg;
   document.getElementById('toasts').appendChild(t);
   setTimeout(() => { t.classList.add('fade'); setTimeout(() => t.remove(), 300); }, 3600);
+}
+
+// ── Benachrichtigungs-Postfach (Verlauf + sequenzielle Anzeige) ──────────────
+// Jeder Toast landet im Verlauf (localStorage). Server-Toasts (Belohnungen etc.) stapeln sich
+// bei geschlossenem Overlay im Backend und werden beim nächsten /positions-Poll geliefert —
+// hier zeigen wir sie NACHEINANDER (nicht alle auf einmal) und man kann Verpasstes nachlesen.
+let notifHistory = [];
+try { notifHistory = JSON.parse(localStorage.getItem('bf-notif-history') || '[]'); } catch { notifHistory = []; }
+let notifReadTs = Number(localStorage.getItem('bf-notif-read') || 0);
+function addNotif(text, type) {
+  notifHistory.push({ text: String(text), type: type || '', ts: Date.now() });
+  if (notifHistory.length > 60) notifHistory = notifHistory.slice(-60);
+  try { localStorage.setItem('bf-notif-history', JSON.stringify(notifHistory)); } catch {}
+  updateNotifBadge();
+  if (featureOpen === 'notifications') renderNotifications();
+}
+function notifUnread() { return notifHistory.reduce((n, x) => n + (x.ts > notifReadTs ? 1 : 0), 0); }
+function updateNotifBadge() {
+  const btn = document.querySelector('.dock-btn[data-act="notifications"]'); if (!btn) return;
+  let b = btn.querySelector('.chat-badge');
+  const n = notifUnread();
+  if (n > 0) {
+    if (!b) { b = document.createElement('span'); b.className = 'chat-badge'; btn.appendChild(b); }
+    b.textContent = n > 99 ? '99+' : String(n);
+  } else if (b) { b.remove(); }
+}
+function notifRelTime(ts) {
+  const s = Math.max(0, Math.floor((Date.now() - ts) / 1000));
+  if (s < 60) return 'gerade eben';
+  const m = Math.floor(s / 60); if (m < 60) return `vor ${m} Min`;
+  const h = Math.floor(m / 60); if (h < 24) return `vor ${h} Std`;
+  return `vor ${Math.floor(h / 24)} T`;
+}
+function renderNotifications() {
+  const box = el('notifList'); if (!box) return;
+  box.innerHTML = '';
+  if (!notifHistory.length) {
+    const p = document.createElement('p'); p.style.color = 'var(--muted)'; p.textContent = 'Noch keine Benachrichtigungen.';
+    box.appendChild(p);
+  } else {
+    for (const n of notifHistory.slice().reverse()) {
+      const item = document.createElement('div');
+      item.className = 'notif-item' + (n.ts > notifReadTs ? ' unread' : '') + (n.type ? ' ' + n.type : '');
+      const txt = document.createElement('div'); txt.className = 'notif-text'; txt.textContent = n.text;
+      const tm = document.createElement('div'); tm.className = 'notif-time'; tm.textContent = notifRelTime(n.ts);
+      item.appendChild(txt); item.appendChild(tm); box.appendChild(item);
+    }
+  }
+  notifReadTs = Date.now();
+  try { localStorage.setItem('bf-notif-read', String(notifReadTs)); } catch {}
+  updateNotifBadge();
+}
+function clearNotifs() {
+  notifHistory = [];
+  try { localStorage.setItem('bf-notif-history', '[]'); } catch {}
+  renderNotifications();
+}
+
+// Server-Toasts sequenziell durchreichen (nicht alle auf einmal), damit man bei einem Schwung
+// gestauter Belohnungen jede einzeln lesen kann.
+let _toastQueue = [];
+let _toastPumping = false;
+function enqueueServerToasts(list) {
+  for (const t of list) _toastQueue.push(t);
+  if (_toastPumping) return;
+  _toastPumping = true;
+  const step = () => {
+    if (!_toastQueue.length) { _toastPumping = false; return; }
+    showToast(_toastQueue.shift(), 'success');
+    setTimeout(step, 1200);
+  };
+  step();
 }
 
 // ── Top-HUD (Name / Tier / Punkte) ───────────────────────────────────────────
@@ -641,6 +714,9 @@ async function init() {
   });
   // Einheitlicher Schließen-Button im Dock → alles zu + zurück ins Spiel
   { const c = el('dockClose'); if (c) { c.insertAdjacentHTML('afterbegin', DOCK_ICONS.close); c.onclick = () => closeOverlayAll(); } }
+  // Postfach: „Leeren"-Button + Ungelesen-Badge beim Start.
+  { const nc = el('notifClearBtn'); if (nc) nc.onclick = () => clearNotifs(); }
+  updateNotifBadge();
 
   // Admin-Panel (eigenständiges Modal, nur Admins) — Einstieg läuft übers Dock (Admin-Button)
   { const oab = el('openAdminBtn'); if (oab) oab.onclick = () => openAdminPanel(); }
@@ -801,7 +877,7 @@ function startPositionPolling() {
         // Health läuft separat über pollVitals() (0,5s, Combat-Stat) — nicht über Positionen
         computeMoveAngles();   // Pfeil-Richtung aus tatsächlicher Karten-Bewegung
         minimapDirty = true;   // neue Positionen → Minimap neu zeichnen
-        if (Array.isArray(data.toasts)) for (const t of data.toasts) showToast(t, 'success');
+        if (Array.isArray(data.toasts) && data.toasts.length) enqueueServerToasts(data.toasts);
         parkAt = Number(data.parkAt) || 0; updateParkWarn();
         golden = mergeGolden(golden, data.golden);
         // Zone nur während der AKTIV-Phase golden hervorheben (im Cooldown gibt es keine aktive Zone).
@@ -2479,6 +2555,7 @@ function toggleFeature(id) {
   else if (id === 'quests') { loadQuest(); startQuestPoll(); }
   else if (id === 'lootbox') renderLootbox();
   else if (id === 'support') { renderSupport(); startSupportPoll(); }
+  else if (id === 'notifications') renderNotifications();
   el(id).style.display = 'block';
   updateInteractive();
 }
@@ -2488,7 +2565,7 @@ function closeAllFeatures(skipInteractive) {
     revertSkinPreview();
     showToast('🎨 Vorschau verworfen — Skin zurückgesetzt', '');
   }
-  ['dinoInfo', 'skinEditor', 'garage', 'market', 'group', 'profile', 'lexikon', 'quests', 'lootbox', 'support'].forEach((id) => { el(id).style.display = 'none'; });
+  ['dinoInfo', 'skinEditor', 'garage', 'market', 'group', 'profile', 'lexikon', 'quests', 'lootbox', 'support', 'notifications'].forEach((id) => { el(id).style.display = 'none'; });
   const tc = el('ticketChat'); if (tc) tc.style.display = 'none';   // Ticket-Chat mit schließen
   stopQuestPoll();
   stopSupportPoll();
@@ -5535,6 +5612,7 @@ const DOCK_ICONS = {
   settings: dockSvg('<circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.6 1.6 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.6 1.6 0 0 0-1.8-.3 1.6 1.6 0 0 0-1 1.5V21a2 2 0 0 1-4 0v-.1a1.6 1.6 0 0 0-1-1.5 1.6 1.6 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.6 1.6 0 0 0 .3-1.8 1.6 1.6 0 0 0-1.5-1H3a2 2 0 0 1 0-4h.1a1.6 1.6 0 0 0 1.5-1 1.6 1.6 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.6 1.6 0 0 0 1.8.3H9a1.6 1.6 0 0 0 1-1.5V3a2 2 0 0 1 4 0v.1a1.6 1.6 0 0 0 1 1.5 1.6 1.6 0 0 0 1.8-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.6 1.6 0 0 0-.3 1.8V9a1.6 1.6 0 0 0 1.5 1H21a2 2 0 0 1 0 4h-.1a1.6 1.6 0 0 0-1.5 1z"/>'),
   admin:    dockSvg('<path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10"/>'),
   quests:   dockSvg('<path d="M4 22V4a1 1 0 0 1 1-1h12l-2 4 2 4H6"/><line x1="4" y1="22" x2="4" y2="15"/>'),
+  notifications: dockSvg('<path d="M6 8a6 6 0 0 1 12 0c0 7 3 9 3 9H3s3-2 3-9"/><path d="M10.3 21a1.94 1.94 0 0 0 3.4 0"/>'),
   close:    dockSvg('<line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/>'),
 };
 

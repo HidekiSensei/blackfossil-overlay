@@ -610,6 +610,14 @@
     .comp-val { font-variant-numeric: tabular-nums; color: var(--accent-2); font-weight: 600; }
     .comp-desc { font-size: 10.5px; color: var(--muted); margin-top: 1px; line-height: 1.3; }
     #micCompCtrls.off { opacity: .4; pointer-events: none; filter: grayscale(.5); }
+    .notif-list { max-height: 46vh; overflow-y: auto; display: flex; flex-direction: column; gap: 6px; }
+    .notif-item { display: flex; align-items: baseline; justify-content: space-between; gap: 10px; padding: 8px 10px; border-radius: 8px; background: rgba(255,255,255,0.04); border-left: 3px solid transparent; }
+    .notif-item.unread { background: rgba(var(--accent-rgb),0.12); border-left-color: var(--accent); }
+    .notif-item.error { border-left-color: #ef4444; }
+    .notif-item.warn  { border-left-color: #f59e0b; }
+    .notif-item.success { border-left-color: #22c55e; }
+    .notif-text { font-size: 13px; line-height: 1.35; }
+    .notif-time { font-size: 10.5px; color: var(--muted); white-space: nowrap; flex: none; }
 
     /* ════════════════════════════════════════════════════════════════
        ⚡ BlackFossil FX — elektrische Energie passend zum Lightning-Logo.
@@ -1413,6 +1421,12 @@
   <div id="lootbox" class="feature-panel"></div>
   <div id="lexikon" class="feature-panel"></div>
   <div id="support" class="feature-panel"></div>
+  <div id="notifications" class="feature-panel">
+    <h2>🔔 Postfach</h2>
+    <p>Verpasste Benachrichtigungen — Belohnungen, Hinweise & mehr. Neue Meldungen erscheinen auch als Toast.</p>
+    <div id="notifList" class="notif-list"></div>
+    <button id="notifClearBtn" class="secondary" style="margin-top:12px">🗑️ Verlauf leeren</button>
+  </div>
 
   <!-- Dock (Overlay-Modus / Alt): klickbare Schnellzugriffe. Icons werden per JS injiziert. -->
   <div id="dock">
@@ -1440,6 +1454,7 @@
       <button class="dock-btn" data-act="market" aria-label="Markt"><span>Markt</span></button>
       <button class="dock-btn" data-act="lootbox" aria-label="Lootbox"><span>Lootbox</span></button>
       <button class="dock-btn" data-act="quests" aria-label="Quests"><span>Quests</span></button>
+      <button class="dock-btn" data-act="notifications" aria-label="Postfach"><span>Postfach</span></button>
       <button class="dock-btn" data-act="map" aria-label="Karte"><span>Karte</span></button>
       <button class="dock-btn" data-act="skin" aria-label="Skin"><span>Skin</span></button>
       <button class="dock-btn" data-act="settings" aria-label="Einstellungen"><span>Settings</span></button>
