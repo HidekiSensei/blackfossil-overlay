@@ -469,6 +469,7 @@ function renderGrowTimer() {
   const s = growTimerState;
   if (!s || !me) { box.style.display = 'none'; return; } // nur on-server + aktiv
   box.style.display = 'block';
+  ensureTimerLayout('growTimer');   // nach display → Breite messbar (Rand-Klemmung)
   el('gtIcon').textContent = s.kind === 'boost' ? '📈' : '⏹️';
   el('gtLabel').textContent = s.kind === 'boost' ? 'Grow-Boost' : `Grow-Stop · ${s.targetPct} %`;
   const m = Math.floor(s.remaining / 60), sec = s.remaining % 60;
@@ -830,6 +831,8 @@ function updateParkWarn() {
   if (box.style.display !== 'block') {
     box.innerHTML = '🅿️ Dein Dino wird in <span class="pw-time"></span> in der PvE-Zone eingeparkt — verlasse die Zone!<div class="pw-bar"><div class="pw-fill"></div></div>';
     box.style.display = 'block';
+    ensureTimerLayout('parkWarn');
+    reattachEditHandle('parkWarn');   // innerHTML hat den Resize-Griff entfernt
   }
   box.querySelector('.pw-time').textContent = `${mm}:${ss}`;
   box.querySelector('.pw-fill').style.width = pct + '%';
@@ -883,8 +886,10 @@ function updateGoldenHud() {
       + `<div class="gh-bar"><div class="gh-fill" style="width:${(progress/total)*100}%"></div></div>`;
   }
   box.className = cls;
-  box.innerHTML = html;
+  box.innerHTML = html;              // wirft den Resize-Griff raus …
   box.style.display = 'block';
+  ensureTimerLayout('goldenHud');
+  reattachEditHandle('goldenHud');   // … deshalb im Edit-Modus neu anhängen
 }
 
 // ── Proximity: Lautstärke pro Spieler nach Distanz ──────────────────────────
@@ -5898,6 +5903,10 @@ const MOVABLE = [
   { id: 'minimapWrap', label: 'Minimap', resize: 'mini' },     // Part 3: verschiebbar + skalierbar
   { id: 'hudHeart',    label: 'Lebensanzeige', resize: 'scale' }, // Part 3b: Herz, verschiebbar + skalierbar
   { id: 'hudInfo',     label: 'Info-Boxen', resize: 'scale' }, // Part 4: entkoppelt verschiebbar + skalierbar
+  // Timer-Anzeigen: Standard rechts neben der Punkte-Anzeige (HUD-Pille), verschiebbar + skalierbar.
+  { id: 'growTimer',   label: 'Grow-Timer', resize: 'scale' },
+  { id: 'goldenHud',   label: 'Goldene-Zone-Timer', resize: 'scale' },
+  { id: 'parkWarn',    label: 'PvE-Park-Countdown', resize: 'scale' },
   { id: 'settings',    label: 'Einstellungen', resize: true },
   { id: 'dinoInfo',    label: 'Dino-Info (F5)', resize: true },
   { id: 'skinEditor',  label: 'Skin-Editor', resize: true },
@@ -5911,6 +5920,52 @@ const MOVABLE = [
 let editMode = false;
 function loadPositions() { try { return JSON.parse(localStorage.getItem('bf-layout')) || {}; } catch { return {}; } }
 function savePositions(p) { localStorage.setItem('bf-layout', JSON.stringify(p)); }
+
+// Elemente im 'scale'-Modus behalten beim Verschieben ihren Skalier-Transform;
+// zentrierte Panels werden dagegen „entzentriert" (transform: none).
+const SCALE_IDS = new Set(MOVABLE.filter((m) => m.resize === 'scale').map((m) => m.id));
+function movTransform(id) { return SCALE_IDS.has(id) ? 'scale(var(--info-scale,1))' : 'none'; }
+
+// ── Timer-Anzeigen (Grow · Goldene Zone · PvE-Park) ─────────────────────────
+// Standard-Layout: rechts neben der HUD-Pille (Punkte-Anzeige), vertikal gestapelt.
+// Sobald der Spieler sie verschiebt, gewinnt die gespeicherte Position (bf-layout).
+const TIMER_IDS = ['growTimer', 'goldenHud', 'parkWarn'];
+function ensureTimerLayout(id) {
+  const e = el(id), hud = el('hud');
+  if (!e || !hud) return;
+  const pos = loadPositions()[id];
+  if (pos && pos.left) return;            // vom Spieler platziert → nichts überschreiben
+  const r = hud.getBoundingClientRect();
+  if (!r.width) return;                   // HUD-Pille noch nicht gerendert → später erneut
+  const i = Math.max(0, TIMER_IDS.indexOf(id));
+  // Breite erst messbar, wenn sichtbar (Aufruf erfolgt nach display:block); sonst Schätzwert.
+  const w = e.offsetWidth || 220;
+  e.style.left = Math.round(Math.max(8, Math.min(r.right + 12, window.innerWidth - w - 8))) + 'px';
+  e.style.top = Math.round(r.top + i * 54) + 'px';
+  e.style.right = 'auto'; e.style.bottom = 'auto';
+  e.style.transform = 'scale(var(--info-scale,1))';   // entzentriert + sofort skalierbar
+}
+// innerHTML-Neuaufbau (goldenHud/parkWarn) wirft den Resize-Griff raus → im Edit-Modus neu anhängen.
+function reattachEditHandle(id) {
+  if (!editMode) return;
+  const e = el(id), m = MOVABLE.find((x) => x.id === id);
+  if (e && m && m.resize) addResizeHandle(e, id, m.resize);
+}
+// Im Edit-Modus die (evtl. inaktiven) Timer als Vorschau einblenden — sonst könnte man sie
+// nur platzieren, während gerade ein Timer läuft. Sichtbarkeit erzwingt CSS (body.bf-edit).
+function setTimerEditPreview(on) {
+  for (const id of TIMER_IDS) ensureTimerLayout(id);
+  if (!on) { renderGrowTimer(); updateGoldenHud(); updateParkWarn(); return; }  // echten Zustand zurück
+  const g = el('goldenHud');
+  if (g && !golden) {
+    g.className = 'gh-active';
+    g.innerHTML = '⭐ Goldene Zone — noch <span class="gh-time">7:30</span> drin<div class="gh-bar"><div class="gh-fill" style="width:50%"></div></div>';
+  }
+  const p = el('parkWarn');
+  if (p && !parkAt) {
+    p.innerHTML = '🅿️ Dein Dino wird in <span class="pw-time">2:30</span> in der PvE-Zone eingeparkt — verlasse die Zone!<div class="pw-bar"><div class="pw-fill" style="width:50%"></div></div>';
+  }
+}
 
 // ── Einzelne HUD-Elemente aus-/einblenden (im Edit-Mode) ────────────────────
 // Dauer-sichtbare HUD-Cluster, die der Spieler wegblenden kann (Übersicht + Performance:
@@ -6059,7 +6114,7 @@ function applySavedPositions() {
     if (pos.scale) e.style.setProperty('--info-scale', pos.scale);        // Info-Boxen-Skalierung (vor transform setzen)
     if (pos.left) {
       e.style.left = pos.left; e.style.top = pos.top; e.style.right = 'auto'; e.style.bottom = 'auto';
-      e.style.transform = (m.id === 'hudInfo' || m.id === 'hudHeart') ? 'scale(var(--info-scale,1))' : 'none';
+      e.style.transform = movTransform(m.id);
     }
     if (pos.width) e.style.width = pos.width;
     if (pos.height) { e.style.height = pos.height; e.style.maxHeight = 'none'; }
@@ -6075,6 +6130,7 @@ function resetPositions() {
     e.style.removeProperty('--mini-size');
     e.style.removeProperty('--info-scale');
   }
+  for (const id of TIMER_IDS) ensureTimerLayout(id);   // Timer zurück neben die Punkte-Anzeige
   hiddenEls.clear(); saveHiddenEls(); applyHidden();   // ausgeblendete HUD-Elemente wieder einblenden
   refreshEditAffordances();                            // Auge-Buttons/Ghost-Zustand auffrischen
   showToast('Layout zurückgesetzt', 'success');
@@ -6082,6 +6138,7 @@ function resetPositions() {
 function setEditMode(on) {
   editMode = on;
   document.body.classList.toggle('bf-edit', on);
+  setTimerEditPreview(on);   // Timer im Edit-Modus als Vorschau zeigen (sonst nicht platzierbar)
   if (!on) {
     // Edit-Mode aus → alle Bearbeitungs-Griffe entfernen
     for (const m of MOVABLE) {
@@ -6138,7 +6195,7 @@ function makeDraggable(elm, id) {
     elm.style.left = x + 'px'; elm.style.top = y + 'px';
     elm.style.right = 'auto'; elm.style.bottom = 'auto';
     // Skalierbare HUD-Elemente behalten ihren Transform; zentrierte Panels werden „entzentriert"
-    elm.style.transform = (id === 'hudInfo' || id === 'hudHeart') ? 'scale(var(--info-scale,1))' : 'none';
+    elm.style.transform = movTransform(id);
     syncLightningFrames();   // Blitz-Rahmen mitziehen
   });
   window.addEventListener('mouseup', () => {

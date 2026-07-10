@@ -1,5 +1,13 @@
 # Changelog
 
+## v1.7.2 — Neue Karte & verschiebbare Timer 🗺️
+
+### ✨ Neu
+- **🗺️ Neue Karte: Gateway V5.0** — aktualisiertes Kartenbild mit überarbeitetem Gateway, neuen Anlagen und Flussverläufen. Alle Positionen, Zonen und Wegpunkte passen weiterhin exakt (gleiche Kalibrierung).
+- **⏱️ Timer sind jetzt frei platzierbar**: Der **Grow-Timer**, der **Goldene-Zone-Timer** und der **PvE-Einpark-Countdown** sitzen jetzt standardmäßig **oben neben deiner Punkte-Anzeige** — und lassen sich wie die anderen HUD-Elemente **verschieben und skalieren** (Einstellungen → HUD anpassen).
+  - Im Bearbeiten-Modus werden die Timer als **Vorschau eingeblendet**, auch wenn gerade keiner läuft — so kannst du sie jederzeit platzieren.
+  - „Layout zurücksetzen" stellt die Standard-Position neben den Punkten wieder her.
+
 ## v1.7.1 — Goldene Patrol-Zone: Feinschliff 🔧
 
 ### 🔧 Fixes

@@ -247,7 +247,7 @@
     /* PvE-Groß-Dino: bleibender Einpark-Countdown ganz oben (fixiert, mit ablaufendem Timer + Balken) */
     #parkWarn { position: absolute; top: 16px; left: 50%; transform: translateX(-50%); display: none;
       background: rgba(180,110,20,0.96); color: #fff; padding: 10px 18px; border-radius: 10px; font-size: 13px;
-      font-weight: 600; border: 1px solid #f59e0b; max-width: 66vw; text-align: center; z-index: 51;
+      font-weight: 600; border: 1px solid #f59e0b; max-width: 40vw; text-align: center; z-index: 51;
       box-shadow: 0 4px 18px rgba(0,0,0,.45); }
     #parkWarn .pw-time { font-variant-numeric: tabular-nums; font-weight: 800; color: #ffe08a; }
     #parkWarn .pw-bar { margin-top: 6px; height: 5px; border-radius: 3px; background: rgba(255,255,255,.22); overflow: hidden; }
@@ -255,7 +255,7 @@
 
     /* ⭐ Goldene Patrol-Zone: HUD-Timer oben (aktiv / pausiert / Cooldown) */
     #goldenHud { position: absolute; top: 16px; left: 50%; transform: translateX(-50%); display: none;
-      padding: 10px 18px; border-radius: 10px; font-size: 13px; font-weight: 600; max-width: 70vw;
+      padding: 10px 18px; border-radius: 10px; font-size: 13px; font-weight: 600; max-width: 40vw;
       text-align: center; z-index: 51; box-shadow: 0 4px 18px rgba(0,0,0,.45); color: #fff; }
     #goldenHud.gh-active   { background: rgba(120,85,10,0.95); border: 1px solid #fbbf24; }
     #goldenHud.gh-paused   { background: rgba(150,60,10,0.96); border: 1px solid #f59e0b; }
@@ -265,6 +265,13 @@
     #goldenHud .gh-frozen { color: #ffe08a; opacity: .85; }
     #goldenHud .gh-bar { margin-top: 6px; height: 5px; border-radius: 3px; background: rgba(255,255,255,.22); overflow: hidden; }
     #goldenHud .gh-fill { height: 100%; background: linear-gradient(90deg, #fbbf24, #f59e0b); border-radius: 3px; transition: width 1s linear; }
+
+    /* Timer-Anzeigen (Grow · Goldene Zone · PvE-Park): verschiebbar + skalierbar.
+       Skalierung wächst vom Anker nach rechts/unten (kein Springen beim Skalieren). */
+    #growTimer, #goldenHud, #parkWarn { transform-origin: top left; }
+    /* Im Edit-Modus auch inaktive Timer zeigen, damit man sie platzieren kann
+       (überschreibt das inline gesetzte display:none der Render-Funktionen). */
+    body.bf-edit #growTimer, body.bf-edit #goldenHud, body.bf-edit #parkWarn { display: block !important; }
 
     /* Dock (Overlay-/Nav-Modus, „^") */
     /* #dock = transparenter Anker; #dockInner = sichtbares Panel, das beim Öffnen vom Blitz auseinandergeschoben wird */
