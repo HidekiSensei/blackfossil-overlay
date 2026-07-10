@@ -218,25 +218,14 @@ const CALIB_ANCHORS = [
   { x:  103283, y: -304763 }, // Nord-Zentrum (Land)
 ];
 function pickCalibTargets(n) {
-  // Anker (weit außen) + alle Zonen-Ecken; Farthest-Point-Sampling wählt die n am weitesten verteilten.
-  const pts = [
-    ...CALIB_ANCHORS.map((a) => ({ x: a.x, y: a.y })),
-    ...ZONES.flatMap((z) => z.points || []).map((p) => ({ x: p.x, y: p.y })),
-  ];
-  if (pts.length <= n) return pts;
-  // Farthest-Point-Sampling: maximal weit auseinander liegende Punkte wählen
-  const cx = pts.reduce((s, p) => s + p.x, 0) / pts.length;
-  const cy = pts.reduce((s, p) => s + p.y, 0) / pts.length;
-  const sel = [pts.reduce((a, b) => ((b.x - cx) ** 2 + (b.y - cy) ** 2) > ((a.x - cx) ** 2 + (a.y - cy) ** 2) ? b : a)];
-  while (sel.length < n) {
-    let best = null, bestD = -1;
-    for (const p of pts) {
-      const d = Math.min(...sel.map((s) => (s.x - p.x) ** 2 + (s.y - p.y) ** 2));
-      if (d > bestD) { bestD = d; best = p; }
-    }
-    sel.push(best);
-  }
-  return sel;
+  // NUR die handverlesenen, pixel-verifizierten Land-Anker (CALIB_ANCHORS) — bereits gut über die
+  // Insel verteilt und garantiert an Land.
+  //
+  // FRÜHER wurden zusätzlich ALLE Zonen-Ecken gemischt + Farthest-Point-Sampling gemacht. Das war der
+  // Bug: die extremsten Zonen-Ecken liegen im OZEAN (Patrol/Migration-Zonen reichen bis über die
+  // Küste), und FPS wählt genau die äußersten Punkte → 5 von 8 Kalibrier-Zielen landeten im Wasser,
+  // und die Anker wurden nie ausgewählt. Deshalb hatte das Anpassen der Anker keine Wirkung.
+  return CALIB_ANCHORS.slice(0, Math.max(n, CALIB_ANCHORS.length)).map((a) => ({ x: a.x, y: a.y }));
 }
 let autoCalib = null; // { startPos, pairs, resolveClick }
 const CALIB_HOVER_Z = 80000; // Schwebehöhe über der Zonen-Ecke (klar über jedem Gelände)

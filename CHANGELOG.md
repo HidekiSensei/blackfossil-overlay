@@ -1,5 +1,10 @@
 # Changelog
 
+## v1.7.5 — Kalibrierung: endlich alle Punkte an Land ✅
+
+### 🔧 Fixes
+- **Echter Fix für die Kalibrier-Punkte im Ozean.** Die Auto-Kalibrierung mischte bisher die gezeichneten Zonen-Ecken in die Zielauswahl — und deren äußerste Ecken liegen im Wasser. Dadurch teleportierte sie zu Wasser-Punkten und die zuvor angepassten Land-Anker wurden nie verwendet. Jetzt nutzt sie **ausschließlich die pixel-verifizierten Land-Punkte**.
+
 ## v1.7.4 — Kalibrierung: Referenzpunkte jetzt wirklich an Land 🎯
 
 ### 🔧 Fixes
