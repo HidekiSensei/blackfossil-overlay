@@ -958,7 +958,7 @@ function updateGoldenHud() {
   // die „alle müssen rein"-Anzeige nur störend. Cooldown zeigt immer (folgt stets auf eine Auszahlung).
   if (golden.phase === 'active' && !golden.engaged) { if (box.style.display !== 'none') box.style.display = 'none'; return; }
 
-  const total = Number(golden.totalMs) || (15 * 60 * 1000);
+  const total = Number(golden.totalMs) || (5 * 60 * 1000);
   const elapsed = Date.now() - (golden.syncAt || Date.now());
   let cls, html;
   if (golden.phase === 'cooldown') {
@@ -5121,6 +5121,7 @@ function renderDtPrime() {
 }
 function renderDtMut() {
   const box = el('dtMut'); if (!box) return;
+  const _dtMutScroll = box.querySelector('.dt-mlist') ? box.querySelector('.dt-mlist').scrollTop : 0;
   const c = dtSel, diet = dtDiet(), gender = c.gender;
   const isFemale = gender === 'female' || gender === 'Female';
   // Vollständiger Mutations-Katalog (MUT_CATALOG), gefiltert nach Diät + Geschlecht, alphabetisch.
@@ -5168,6 +5169,7 @@ function renderDtMut() {
   const s = el('dtMutSearch');
   const applyFilter = () => { const q = (dtMutSearchVal || '').trim().toLowerCase(); box.querySelectorAll('.dt-mrow').forEach((r) => { r.style.display = !q || r.dataset.search.includes(q) ? '' : 'none'; }); };
   if (s) { s.value = dtMutSearchVal; s.oninput = () => { dtMutSearchVal = s.value; applyFilter(); }; applyFilter(); }
+  { const _nl = box.querySelector('.dt-mlist'); if (_nl) _nl.scrollTop = _dtMutScroll; }
 }
 function renderDtGive() {
   const c = dtSel;
@@ -6312,8 +6314,9 @@ function applySavedPositions() {
       e.style.left = pos.left; e.style.top = pos.top; e.style.right = 'auto'; e.style.bottom = 'auto';
       e.style.transform = movTransform(m.id);
     }
-    if (pos.width) e.style.width = pos.width;
-    if (pos.height) { e.style.height = pos.height; e.style.maxHeight = 'none'; }
+    if (pos.zoom) e.style.zoom = pos.zoom;                                 // Panel-Skalierung (Layout + Text)
+    if (!pos.zoom && pos.width) e.style.width = pos.width;
+    if (!pos.zoom && pos.height) { e.style.height = pos.height; e.style.maxHeight = 'none'; }
     if (pos.miniSize) e.style.setProperty('--mini-size', pos.miniSize);   // Minimap-Größe
   }
 }
@@ -6322,7 +6325,7 @@ function resetPositions() {
   for (const m of MOVABLE) {
     const e = el(m.id); if (!e) continue;
     e.style.left = ''; e.style.top = ''; e.style.right = ''; e.style.bottom = ''; e.style.transform = '';
-    e.style.width = ''; e.style.height = ''; e.style.maxHeight = '';
+    e.style.width = ''; e.style.height = ''; e.style.maxHeight = ''; e.style.zoom = '';
     e.style.removeProperty('--mini-size');
     e.style.removeProperty('--info-scale');
   }
@@ -6418,9 +6421,10 @@ function addResizeHandle(elm, id, mode) {
       const d = Math.max(ev.clientX - sx, ev.clientY - sy);          // Faktor aus Diagonale
       elm.style.setProperty('--info-scale', Math.max(0.7, Math.min(2.2, ss + d / 220)).toFixed(3));
     } else {
-      elm.style.width = Math.max(220, sw + (ev.clientX - sx)) + 'px';
-      elm.style.height = Math.max(140, sh + (ev.clientY - sy)) + 'px';
-      elm.style.maxHeight = 'none';
+      // Panel skalieren statt nur die Box zu vergrößern → Text & Anzeigen wachsen mit (CSS zoom).
+      const d = Math.max(ev.clientX - sx, ev.clientY - sy);
+      elm.style.zoom = Math.max(0.6, Math.min(2.2, ss + d / 300)).toFixed(3);
+      elm.style.width = ''; elm.style.height = ''; elm.style.maxHeight = '';
     }
     syncLightningFrames();   // Blitz-Rahmen mitskalieren
   };
@@ -6430,7 +6434,7 @@ function addResizeHandle(elm, id, mode) {
     const p = loadPositions();
     if (mode === 'mini') p[id] = { ...(p[id] || {}), miniSize: elm.style.getPropertyValue('--mini-size') };
     else if (mode === 'scale') p[id] = { ...(p[id] || {}), scale: elm.style.getPropertyValue('--info-scale') };
-    else p[id] = { ...(p[id] || {}), width: elm.style.width, height: elm.style.height };
+    else { const np = { ...(p[id] || {}), zoom: elm.style.zoom }; delete np.width; delete np.height; p[id] = np; }
     savePositions(p);
     updateWindowBounds();   // skaliertes HUD → Shrink-Höhe neu berechnen
   };
@@ -6440,6 +6444,7 @@ function addResizeHandle(elm, id, mode) {
     rz = true; const r = elm.getBoundingClientRect(); sx = e.clientX; sy = e.clientY; sw = r.width; sh = r.height;
     if (mode === 'mini') ss = parseInt(getComputedStyle(elm).getPropertyValue('--mini-size')) || el('minimap')?.getBoundingClientRect().width || r.width;
     else if (mode === 'scale') ss = parseFloat(getComputedStyle(elm).getPropertyValue('--info-scale')) || 1;
+    else ss = parseFloat(getComputedStyle(elm).zoom) || 1;
     window.addEventListener('mousemove', mv); window.addEventListener('mouseup', up);
   });
   elm.appendChild(h);
