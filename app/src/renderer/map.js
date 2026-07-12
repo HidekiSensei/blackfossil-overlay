@@ -432,7 +432,7 @@ function headingMapAngle(p) {
   const dx = a1.nx - a0.nx, dy = a1.ny - a0.ny;
   return (dx === 0 && dy === 0) ? -Math.PI / 2 : Math.atan2(dy, dx);
 }
-function arrowAngle(p) { return (typeof p.dirAngle === 'number') ? p.dirAngle : headingMapAngle(p); }
+function arrowAngle(p) { return (typeof p.heading === 'number') ? headingMapAngle(p) : ((typeof p.dirAngle === 'number') ? p.dirAngle : -Math.PI / 2); }
 function drawGroupMember(ctx, px, py, p, scale) {
   const col = groupColorFor(p.steamId);
   drawArrow(ctx, px, py, arrowAngle(p), 6.5 * scale, col);
