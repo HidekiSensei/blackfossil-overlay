@@ -160,6 +160,15 @@ const OUTLINE_TYPES = new Set(['sanctuary', 'patrol', 'migration']);
 // auch wenn der Patrol-Layer ausgeblendet ist.
 let goldenZoneId = null;
 export function setGoldenZone(id) { goldenZoneId = id || null; }
+// Mittelpunkt (Schwerpunkt der Polygon-Ecken) der goldenen Zone in Welt-Koordinaten — für den Kompass.
+export function goldenZoneCenter() {
+  if (!goldenZoneId) return null;
+  const z = ZONES.find((x) => x.id === goldenZoneId);
+  if (!z || !Array.isArray(z.points) || !z.points.length) return null;
+  let sx = 0, sy = 0, n = 0;
+  for (const p of z.points) { if (typeof p.x === 'number' && typeof p.y === 'number') { sx += p.x; sy += p.y; n++; } }
+  return n ? { x: sx / n, y: sy / n } : null;
+}
 
 // Polygon-Punkte um ihren Schwerpunkt sortieren (für sauberes Füllen)
 function orderPolygon(points) {

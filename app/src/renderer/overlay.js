@@ -1,5 +1,5 @@
 import { Room, RoomEvent, Track, ParticipantEvent, AudioPresets } from 'livekit-client';
-import { loadMapImage, drawFullMap, drawMinimap, drawHeatmap, normToWorld, worldToNorm, zoneAt, zonesAt, resetCal, solveAffine, getCal, setCalAffine, setZones, newZone, ZONES, ZONE_TYPES, ZONE_META, loadZoneLayer, setZoneLayer, isZoneLayerVisible, setGoldenZone, groupColorFor, setMarkerStyle } from './map.js';
+import { loadMapImage, drawFullMap, drawMinimap, drawHeatmap, normToWorld, worldToNorm, zoneAt, zonesAt, resetCal, solveAffine, getCal, setCalAffine, setZones, newZone, ZONES, ZONE_TYPES, ZONE_META, loadZoneLayer, setZoneLayer, isZoneLayerVisible, setGoldenZone, goldenZoneCenter, groupColorFor, setMarkerStyle } from './map.js';
 
 const el = (id) => document.getElementById(id);
 
@@ -172,6 +172,7 @@ function setupMarkerSettings() {
   applyMarkerStyle();
 }
 document.addEventListener('DOMContentLoaded', setupMarkerSettings);
+document.addEventListener('DOMContentLoaded', initCompass);
 
 // ── Karten-/Positions-State ─────────────────────────────────────────────────
 let players = [];
@@ -534,6 +535,68 @@ function updateHeart(d) {
   setHex(hp / 100, hcol, 'ghE1', 'ghF1', 'ghF2');
   { const v = document.getElementById('heartVal'); if (v) v.textContent = online ? (typeof d.healthCur === 'number' ? String(Math.round(d.healthCur)) : hp + '%') : '—'; }
 }
+// ── Kompass (verschiebbarer Balken oben) ────────────────────────────────────
+// Himmelsrichtungen (N rot) + Wegpunkt 📍 + Golden-Zone ⭐ + Gruppenmitglieder (Kartenfarben)
+// relativ zur Blickrichtung (Mitte = geradeaus). Verschiebbar über den Edit-Mode (MOVABLE).
+const COMPASS_HALF_FOV = 80;   // ±80° um die Blickrichtung sichtbar
+let COMPASS_NORTH_OFF = 0;     // Feinjustage, falls Norden verdreht ist (Grad)
+let compassCtx = null;
+function initCompass() {
+  const cv = el('compass'), wrap = el('compassWrap');
+  if (!cv || !wrap) return;
+  compassCtx = cv.getContext('2d');
+  const p = loadPositions();
+  if (!p.compassWrap || !p.compassWrap.left) { // Default: oben zentriert
+    wrap.style.left = Math.round(window.innerWidth / 2 - cv.width / 2) + 'px';
+    wrap.style.top = '10px';
+  }
+  renderCompass();
+}
+const cmpNorm = (d) => ((d % 360) + 360) % 360;
+const cmpRel = (target, heading) => { let a = cmpNorm(target - heading); if (a > 180) a -= 360; return a; };
+// Welt-Delta → Peilung in Heading-Space (Umkehr von map.js: heading→(cos((h-90)°),sin((h-90)°)))
+const cmpBearing = (dx, dy) => cmpNorm(Math.atan2(dy, dx) * 180 / Math.PI + 90);
+function cmpRoundRect(ctx, x, y, w, h, r) { ctx.beginPath(); ctx.moveTo(x + r, y); ctx.arcTo(x + w, y, x + w, y + h, r); ctx.arcTo(x + w, y + h, x, y + h, r); ctx.arcTo(x, y + h, x, y, r); ctx.arcTo(x, y, x + w, y, r); ctx.closePath(); }
+function renderCompass() {
+  if (!compassCtx) return;
+  const ctx = compassCtx, cv = ctx.canvas, W = cv.width, H = cv.height, cx = W / 2;
+  ctx.clearRect(0, 0, W, H);
+  ctx.fillStyle = 'rgba(12,16,22,0.66)'; cmpRoundRect(ctx, 0, 12, W, H - 14, 9); ctx.fill();
+  ctx.strokeStyle = 'rgba(255,255,255,0.10)'; ctx.lineWidth = 1; ctx.stroke();
+  ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+  const online = me && typeof me.heading === 'number' && typeof me.x === 'number';
+  if (!online) { ctx.fillStyle = 'rgba(255,255,255,0.5)'; ctx.font = '11px sans-serif'; ctx.fillText('🧭 nicht im Spiel', cx, H / 2 + 2); return; }
+  const hd = me.heading, halfW = W / 2 - 10;
+  const xFor = (rel) => cx + (rel / COMPASS_HALF_FOV) * halfW;
+  const vis = (rel) => Math.abs(rel) <= COMPASS_HALF_FOV;
+  // Himmelsrichtungen + Zwischenrichtungen (N deutlich in Rot)
+  for (const [lbl, deg] of [['N', 0], ['NO', 45], ['O', 90], ['SO', 135], ['S', 180], ['SW', 225], ['W', 270], ['NW', 315]]) {
+    const rel = cmpRel(cmpNorm(deg + COMPASS_NORTH_OFF), hd); if (!vis(rel)) continue;
+    const x = xFor(rel), major = lbl.length === 1, north = lbl === 'N';
+    ctx.strokeStyle = north ? '#ef4444' : 'rgba(255,255,255,0.4)'; ctx.lineWidth = north ? 2 : 1;
+    ctx.beginPath(); ctx.moveTo(x, 14); ctx.lineTo(x, major ? 24 : 20); ctx.stroke();
+    ctx.fillStyle = north ? '#ef4444' : (major ? '#fff' : 'rgba(255,255,255,0.55)');
+    ctx.font = north ? 'bold 14px sans-serif' : (major ? 'bold 12px sans-serif' : '9px sans-serif');
+    ctx.fillText(lbl, x, 36);
+  }
+  // Marker relativ zur Blickrichtung
+  const marks = [];
+  const wp = waypoints[waypoints.length - 1]; if (wp) marks.push({ x: wp.x, y: wp.y, sym: '📍' });
+  const g = goldenZoneCenter(); if (g) marks.push({ x: g.x, y: g.y, sym: '⭐' });
+  const myG = me.groupId;
+  for (const p of players) { if (!p.isYou && typeof p.x === 'number' && ((myG && p.groupId === myG) || p.ovgroup)) marks.push({ x: p.x, y: p.y, dot: groupColorFor(p.steamId) }); }
+  for (const m of marks) {
+    const rel = cmpRel(cmpBearing(m.x - me.x, m.y - me.y), hd); if (!vis(rel)) continue;
+    const x = xFor(rel);
+    if (m.dot) { ctx.beginPath(); ctx.arc(x, 8, 5, 0, 2 * Math.PI); ctx.fillStyle = m.dot; ctx.fill(); ctx.lineWidth = 1.5; ctx.strokeStyle = 'rgba(0,0,0,0.75)'; ctx.stroke(); }
+    else if (m.sym) { ctx.font = '14px sans-serif'; ctx.fillText(m.sym, x, 8); }
+  }
+  // Zentrum = Blickrichtung (Pfeil + Mittellinie)
+  ctx.fillStyle = '#00e5ff';
+  ctx.beginPath(); ctx.moveTo(cx, 14); ctx.lineTo(cx - 5, 6); ctx.lineTo(cx + 5, 6); ctx.closePath(); ctx.fill();
+  ctx.strokeStyle = 'rgba(0,229,255,0.55)'; ctx.lineWidth = 1; ctx.beginPath(); ctx.moveTo(cx, 15); ctx.lineTo(cx, H - 4); ctx.stroke();
+}
+
 // HP/Vitals separat & schnell pollen (Combat-Stat → möglichst live). Eigener leichter Endpoint.
 async function pollVitals() {
   if (!sessionToken) return;
@@ -910,6 +973,7 @@ function startPositionPolling() {
         updateZoneBox();
         checkZoneChange();
         updateProximityVolumes();
+        renderCompass();   // Kompass mit frischer Position/Blickrichtung neu zeichnen (0,5s)
         if (settingsOpen) renderVoiceUsers();
         if (mapOpen) renderBigMap();
         if (featureOpen === 'group') updateGroupLive();   // nur Mitglieder/Chat updaten, NICHT das Eingabefeld neu bauen
@@ -6150,6 +6214,7 @@ async function aiSpawnAt(x, y) {
 // resize: 'mini'|'scale'|true (true = Breite/Höhe). noMove: true → nur skalierbar, nicht verschiebbar.
 // Große Karte (bigMap) ist bewusst NICHT enthalten = weder verschiebbar noch skalierbar.
 const MOVABLE = [
+  { id: 'compassWrap', label: 'Kompass' },                      // Kompass-Balken oben, verschiebbar
   { id: 'minimapWrap', label: 'Minimap', resize: 'mini' },     // Part 3: verschiebbar + skalierbar
   { id: 'hudHeart',    label: 'Lebensanzeige', resize: 'scale' }, // Part 3b: Herz, verschiebbar + skalierbar
   { id: 'hudInfo',     label: 'Info-Boxen', resize: 'scale' }, // Part 4: entkoppelt verschiebbar + skalierbar
