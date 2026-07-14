@@ -389,8 +389,18 @@ async function pollConnStats() {
 }
 
 // ── Toast-System ─────────────────────────────────────────────────────────────
-function showToast(msg, type = '') {
-  addNotif(msg, type);   // ins Postfach protokollieren (auch wer den Toast verpasst, sieht ihn dort)
+// Postfach-Kategorien: NUR diese landen im Benachrichtigungs-Verlauf. [BFT-181]
+// Gruppen-Benachrichtigung, Admin-Benachrichtigung, Gruppeneinladung, Ticket-Antwort.
+const NOTIF_MAILBOX_CATS = new Set(['group', 'admin', 'invite', 'ticket']);
+// Server-Toast-Kategorie aus dem Emoji-Prefix ableiten (Backend liefert unstrukturierte Strings).
+function serverToastCat(msg) {
+  const s = String(msg);
+  if (s.startsWith('💬')) return 'admin';   // Team → Spieler (/admin/toast)
+  if (s.startsWith('⚠️')) return 'group';   // Gruppen-Warnung (Diät-Kick / aus Gruppe entfernt)
+  return '';                                  // Sonstiges (Park 🅿️, Golden ⭐ …): nur transienter Popup, nicht ins Postfach
+}
+function showToast(msg, type = '', cat = '') {
+  addNotif(msg, type, cat);   // ins Postfach protokollieren (nach Kategorie gefiltert; transienter Toast unten zeigt IMMER)
   const t = document.createElement('div');
   t.className = 'toast' + (type ? ' ' + type : '');
   t.textContent = msg;
@@ -405,8 +415,9 @@ function showToast(msg, type = '') {
 let notifHistory = [];
 try { notifHistory = JSON.parse(localStorage.getItem('bf-notif-history') || '[]'); } catch { notifHistory = []; }
 let notifReadTs = Number(localStorage.getItem('bf-notif-read') || 0);
-function addNotif(text, type) {
-  notifHistory.push({ text: String(text), type: type || '', ts: Date.now() });
+function addNotif(text, type, cat) {
+  if (!NOTIF_MAILBOX_CATS.has(cat)) return; // nur die gewünschten Kategorien ins Postfach [BFT-181]
+  notifHistory.push({ text: String(text), type: type || '', cat, ts: Date.now() });
   if (notifHistory.length > 60) notifHistory = notifHistory.slice(-60);
   try { localStorage.setItem('bf-notif-history', JSON.stringify(notifHistory)); } catch {}
   updateNotifBadge();
@@ -464,7 +475,8 @@ function enqueueServerToasts(list) {
   _toastPumping = true;
   const step = () => {
     if (!_toastQueue.length) { _toastPumping = false; return; }
-    showToast(_toastQueue.shift(), 'success');
+    const m = _toastQueue.shift();
+    showToast(m, 'success', serverToastCat(m)); // Kategorie fürs Postfach ableiten [BFT-181]
     setTimeout(step, 1200);
   };
   step();
@@ -2626,7 +2638,7 @@ async function pollGroupChat() {
     if (fresh.length && !panelOpen) {
       setChatUnread(chatUnread + fresh.length);
       const last = fresh[fresh.length - 1];
-      showToast(`💬 ${last.name || 'Gruppe'}: ${String(last.text).slice(0, 80)}`);
+      showToast(`💬 ${last.name || 'Gruppe'}: ${String(last.text).slice(0, 80)}`, '', 'group'); // Gruppen-Chat → Postfach 'group' [BFT-181]
     }
   }
   groupChat = msgs.map((m) => ({ name: m.name, text: m.text, own: !!m.me }));
@@ -2757,7 +2769,7 @@ async function loadOvGroup() {
     if (!r.ok) return;
     ovGroupState = await r.json();
     for (const i of (ovGroupState.invites || [])) {
-      if (!ovInviteSeen.has(i.gid)) { ovInviteSeen.add(i.gid); showToast(`📨 Gruppen-Einladung von ${i.fromName || '?'}`, 'success'); }
+      if (!ovInviteSeen.has(i.gid)) { ovInviteSeen.add(i.gid); showToast(`📨 Gruppen-Einladung von ${i.fromName || '?'}`, 'success', 'invite'); }
     }
     if (featureOpen === 'group') renderGroup();
   } catch {}
@@ -2996,7 +3008,7 @@ async function loadMyTickets() {
     for (const t of myTickets) {
       const last = t.lastMessageAt || 0;
       if (t.lastFromOther && last > (seen[t.channelId] || 0)) {
-        showToast(`💬 Neue Support-Antwort — Ticket #${t.ticketId}`, 'success');
+        showToast(`💬 Neue Support-Antwort — Ticket #${t.ticketId}`, 'success', 'ticket'); // → Postfach 'ticket' [BFT-181]
         seen[t.channelId] = last; changed = true;
       } else if (!(t.channelId in seen)) { seen[t.channelId] = last; changed = true; }
     }
