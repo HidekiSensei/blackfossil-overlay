@@ -516,11 +516,11 @@ function updateHeart(d) {
   const nut = (online && grow <= 0.75) ? ((d.carbs || 0) + (d.protein || 0) + (d.lipid || 0)) : 0;
   setHex(nut / 3, online ? '#e7cf7a' : gray, 'grE1', 'grF1', 'grF2');
   { const v = document.getElementById('rateVal'); if (v) v.textContent = online ? Math.round(nut * 100) + '%' : '—'; }
-  // HP (Farbe nach Höhe)
+  // HP (Farbe nach Höhe). Füllung = Fraktion (%), Text = absoluter Current-Wert. [BFT-179]
   const hp = online && typeof d.health === 'number' ? Math.max(0, Math.min(100, Math.round(d.health * 100))) : 0;
   const hcol = !online ? gray : hp > 50 ? '#22c55e' : hp > 25 ? '#f59e0b' : '#ef4444';
   setHex(hp / 100, hcol, 'ghE1', 'ghF1', 'ghF2');
-  { const v = document.getElementById('heartVal'); if (v) v.textContent = online ? hp + '%' : '—'; }
+  { const v = document.getElementById('heartVal'); if (v) v.textContent = online ? (typeof d.healthCur === 'number' ? String(Math.round(d.healthCur)) : hp + '%') : '—'; }
 }
 // HP/Vitals separat & schnell pollen (Combat-Stat → möglichst live). Eigener leichter Endpoint.
 async function pollVitals() {
@@ -907,8 +907,10 @@ function startPositionPolling() {
     } catch {}
   };
   poll();
-  setInterval(poll, 1500);
-  setInterval(updateParkWarn, 1000); // Countdown flüssig runterzählen (unabhängig vom 1,5s-Poll)
+  // 0,5s = Server-Tickrate: Position (Map + Voice) live. Läuft rein gegen den Backend-Cache
+  // (der Backend-Poller hält /players warm), löst also keinen Game-Server-Call pro Poll aus. [BFT-178]
+  setInterval(poll, 500);
+  setInterval(updateParkWarn, 1000); // Countdown flüssig runterzählen (unabhängig vom Positions-Poll)
   setInterval(updateGoldenHud, 1000); // Golden-Timer flüssig zwischen den Polls interpolieren
 }
 
@@ -4196,7 +4198,13 @@ function dinoCardEl(card, onClick) {
 }
 function vitalsHTML(card) {
   const v = [['Gesundheit', 'health', '#22c55e'], ['Blut', 'blood', '#dc2626'], ['Ausdauer', 'stamina', '#eab308'], ['Hunger', 'hunger', '#f97316'], ['Durst', 'thirst', '#3b82f6']];
-  return v.map(([l, k, c]) => { const p = Math.round((card[k] || 0) * 100); return `<div style="margin:6px 0"><div style="display:flex;justify-content:space-between;font-size:11px"><span>${l}</span><span style="color:var(--muted)">${p}%</span></div><div class="stat-track"><div class="stat-fill" style="width:${p}%;background:${c}"></div></div></div>`; }).join('');
+  // Füllung = Fraktion (%), Beschriftung = absolute Current / Max (Fallback %, falls Cur/Max fehlen). [BFT-179]
+  return v.map(([l, k, c]) => {
+    const p = Math.round((card[k] || 0) * 100);
+    const cur = card[k + 'Cur'], max = card[k + 'Max'];
+    const label = (typeof cur === 'number' && typeof max === 'number') ? `${Math.round(cur)} / ${Math.round(max)}` : `${p}%`;
+    return `<div style="margin:6px 0"><div style="display:flex;justify-content:space-between;font-size:11px"><span>${l}</span><span style="color:var(--muted)">${label}</span></div><div class="stat-track"><div class="stat-fill" style="width:${p}%;background:${c}"></div></div></div>`;
+  }).join('');
 }
 // Deutsche Kurzbeschreibungen der Mutationen — gespiegelt aus token-service staffConfig.MUTATIONS
 // (bei Änderungen dort hier mitziehen). value → [Anzeigename, Beschreibung].
