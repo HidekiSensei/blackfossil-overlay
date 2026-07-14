@@ -389,8 +389,18 @@ async function pollConnStats() {
 }
 
 // ── Toast-System ─────────────────────────────────────────────────────────────
-function showToast(msg, type = '') {
-  addNotif(msg, type);   // ins Postfach protokollieren (auch wer den Toast verpasst, sieht ihn dort)
+// Postfach-Kategorien: NUR diese landen im Benachrichtigungs-Verlauf. [BFT-181]
+// Gruppen-Benachrichtigung, Admin-Benachrichtigung, Gruppeneinladung, Ticket-Antwort.
+const NOTIF_MAILBOX_CATS = new Set(['group', 'admin', 'invite', 'ticket']);
+// Server-Toast-Kategorie aus dem Emoji-Prefix ableiten (Backend liefert unstrukturierte Strings).
+function serverToastCat(msg) {
+  const s = String(msg);
+  if (s.startsWith('💬')) return 'admin';   // Team → Spieler (/admin/toast)
+  if (s.startsWith('⚠️')) return 'group';   // Gruppen-Warnung (Diät-Kick / aus Gruppe entfernt)
+  return '';                                  // Sonstiges (Park 🅿️, Golden ⭐ …): nur transienter Popup, nicht ins Postfach
+}
+function showToast(msg, type = '', cat = '') {
+  addNotif(msg, type, cat);   // ins Postfach protokollieren (nach Kategorie gefiltert; transienter Toast unten zeigt IMMER)
   const t = document.createElement('div');
   t.className = 'toast' + (type ? ' ' + type : '');
   t.textContent = msg;
@@ -405,8 +415,9 @@ function showToast(msg, type = '') {
 let notifHistory = [];
 try { notifHistory = JSON.parse(localStorage.getItem('bf-notif-history') || '[]'); } catch { notifHistory = []; }
 let notifReadTs = Number(localStorage.getItem('bf-notif-read') || 0);
-function addNotif(text, type) {
-  notifHistory.push({ text: String(text), type: type || '', ts: Date.now() });
+function addNotif(text, type, cat) {
+  if (!NOTIF_MAILBOX_CATS.has(cat)) return; // nur die gewünschten Kategorien ins Postfach [BFT-181]
+  notifHistory.push({ text: String(text), type: type || '', cat, ts: Date.now() });
   if (notifHistory.length > 60) notifHistory = notifHistory.slice(-60);
   try { localStorage.setItem('bf-notif-history', JSON.stringify(notifHistory)); } catch {}
   updateNotifBadge();
@@ -464,7 +475,8 @@ function enqueueServerToasts(list) {
   _toastPumping = true;
   const step = () => {
     if (!_toastQueue.length) { _toastPumping = false; return; }
-    showToast(_toastQueue.shift(), 'success');
+    const m = _toastQueue.shift();
+    showToast(m, 'success', serverToastCat(m)); // Kategorie fürs Postfach ableiten [BFT-181]
     setTimeout(step, 1200);
   };
   step();
@@ -516,11 +528,11 @@ function updateHeart(d) {
   const nut = (online && grow <= 0.75) ? ((d.carbs || 0) + (d.protein || 0) + (d.lipid || 0)) : 0;
   setHex(nut / 3, online ? '#e7cf7a' : gray, 'grE1', 'grF1', 'grF2');
   { const v = document.getElementById('rateVal'); if (v) v.textContent = online ? Math.round(nut * 100) + '%' : '—'; }
-  // HP (Farbe nach Höhe)
+  // HP (Farbe nach Höhe). Füllung = Fraktion (%), Text = absoluter Current-Wert. [BFT-179]
   const hp = online && typeof d.health === 'number' ? Math.max(0, Math.min(100, Math.round(d.health * 100))) : 0;
   const hcol = !online ? gray : hp > 50 ? '#22c55e' : hp > 25 ? '#f59e0b' : '#ef4444';
   setHex(hp / 100, hcol, 'ghE1', 'ghF1', 'ghF2');
-  { const v = document.getElementById('heartVal'); if (v) v.textContent = online ? hp + '%' : '—'; }
+  { const v = document.getElementById('heartVal'); if (v) v.textContent = online ? (typeof d.healthCur === 'number' ? String(Math.round(d.healthCur)) : hp + '%') : '—'; }
 }
 // HP/Vitals separat & schnell pollen (Combat-Stat → möglichst live). Eigener leichter Endpoint.
 async function pollVitals() {
@@ -907,8 +919,10 @@ function startPositionPolling() {
     } catch {}
   };
   poll();
-  setInterval(poll, 1500);
-  setInterval(updateParkWarn, 1000); // Countdown flüssig runterzählen (unabhängig vom 1,5s-Poll)
+  // 0,5s = Server-Tickrate: Position (Map + Voice) live. Läuft rein gegen den Backend-Cache
+  // (der Backend-Poller hält /players warm), löst also keinen Game-Server-Call pro Poll aus. [BFT-178]
+  setInterval(poll, 500);
+  setInterval(updateParkWarn, 1000); // Countdown flüssig runterzählen (unabhängig vom Positions-Poll)
   setInterval(updateGoldenHud, 1000); // Golden-Timer flüssig zwischen den Polls interpolieren
 }
 
@@ -2624,7 +2638,7 @@ async function pollGroupChat() {
     if (fresh.length && !panelOpen) {
       setChatUnread(chatUnread + fresh.length);
       const last = fresh[fresh.length - 1];
-      showToast(`💬 ${last.name || 'Gruppe'}: ${String(last.text).slice(0, 80)}`);
+      showToast(`💬 ${last.name || 'Gruppe'}: ${String(last.text).slice(0, 80)}`, '', 'group'); // Gruppen-Chat → Postfach 'group' [BFT-181]
     }
   }
   groupChat = msgs.map((m) => ({ name: m.name, text: m.text, own: !!m.me }));
@@ -2663,16 +2677,23 @@ function groupMembersHtml() {
   } else if (members.length <= 1) {
     html = '<p style="color:var(--muted)">Noch keine Gruppe. Bilde eine im Spiel — oder lade unten Spieler <b>gleicher Diät</b> in eine Overlay-Gruppe ein (auch andere Spezies).</p>';
   } else {
+    // Overlay-Gruppen-Lead-Infos (BFT-182): Krone am Lead, Entfernen-Button nur für den Lead.
+    const ovMembers = new Set((ovGroupState.members || []).map((m) => m.steamId));
+    const lead = ovGroupState.lead || null;
+    const meLead = !!ovGroupState.meLead;
     html = members.map((p) => {
       const you = !!p.isYou;
       const partner = me.partnerSteamId && p.steamId === me.partnerSteamId;
       const grow = p.grow != null ? `${Math.round(p.grow * 100)}%` : '';
       const dist = (!you && me) ? `${Math.round(Math.hypot(p.x - me.x, p.y - me.y) / UNITS_PER_M)} m` : '';
+      const crown = (lead && p.steamId === lead) ? ' 👑' : '';
       const tag = you ? ' <span style="color:var(--accent-2)">(Du)</span>' : (partner ? ' 💞' : (p.ovgroup ? ' 🔗' : ''));
+      const rmBtn = (meLead && !you && ovMembers.has(p.steamId)) ? `<button data-rm="${p.steamId}" title="Aus Gruppe entfernen" class="secondary" style="width:auto;padding:3px 8px;font-size:11px;flex:none">✕</button>` : '';
       return `<div style="display:flex;justify-content:space-between;align-items:center;gap:10px;padding:8px 10px;margin-bottom:6px;border-radius:9px;background:${you ? 'rgba(var(--accent-rgb),0.18)' : 'rgba(255,255,255,0.04)'};border:1px solid ${you ? 'var(--accent)' : 'transparent'}">
-        <span style="font-weight:600;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${escapeHtml(p.name || '?')}${tag}</span>
+        <span style="font-weight:600;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${escapeHtml(p.name || '?')}${crown}${tag}</span>
         <span style="color:var(--muted);font-size:12px;flex:none">${escapeHtml(p.dino || '—')}${grow ? ' · ' + grow : ''}</span>
         <span style="color:var(--accent-2);font-size:12px;flex:none;min-width:42px;text-align:right">${dist}</span>
+        ${rmBtn}
       </div>`;
     }).join('');
   }
@@ -2683,6 +2704,7 @@ function updateGroupLive() {
   const c = el('grpMembers'); if (!c) return;
   const mem = groupMembersHtml();
   c.innerHTML = mem.html;
+  c.querySelectorAll('[data-rm]').forEach((b) => { b.onclick = () => ovRemove(b.dataset.rm); }); // Handler nach Live-Rerender neu binden [BFT-182]
   const cnt = el('grpCount'); if (cnt) cnt.textContent = mem.count > 1 ? ` · ${mem.count} Mitglieder` : '';
   renderGroupChat();
 }
@@ -2697,7 +2719,10 @@ function renderGroup() {
 
   const inv = (ovGroupState.invites || []).map((i) => `<div style="display:flex;justify-content:space-between;align-items:center;gap:8px;padding:6px 8px;margin-bottom:5px;background:rgba(34,197,94,0.12);border:1px solid var(--border);border-radius:8px">
     <span style="font-size:12px">📨 Einladung von <b>${escapeHtml(i.fromName || '?')}</b></span>
-    <button data-acc="${i.gid}" style="width:auto;padding:5px 10px;font-size:12px">Beitreten</button></div>`).join('');
+    <span style="display:flex;gap:6px;flex:none">
+      <button data-acc="${i.gid}" style="width:auto;padding:5px 10px;font-size:12px">Beitreten</button>
+      <button data-dec="${i.gid}" class="secondary" style="width:auto;padding:5px 10px;font-size:12px">Ablehnen</button>
+    </span></div>`).join('');
   let invitable = '';
   if (ovInviteOpen) {
     invitable = ovInvitable.length
@@ -2731,7 +2756,9 @@ function renderGroup() {
     if (_chat && ci) { ci.value = _chat.val; if (_chat.focused) { ci.focus(); try { ci.setSelectionRange(_chat.s, _chat.e); } catch {} } } }
   const tgl = el('ovInviteToggle'); if (tgl) tgl.onclick = () => { ovInviteOpen = !ovInviteOpen; if (ovInviteOpen) loadOvInvitable(); else renderGroup(); };
   panel.querySelectorAll('[data-acc]').forEach((b) => { b.onclick = () => ovAccept(b.dataset.acc); });
+  panel.querySelectorAll('[data-dec]').forEach((b) => { b.onclick = () => ovDecline(b.dataset.dec); }); // Einladung ablehnen [BFT-182]
   panel.querySelectorAll('[data-inv]').forEach((b) => { b.onclick = () => ovInvite(b.dataset.inv); });
+  panel.querySelectorAll('[data-rm]').forEach((b) => { b.onclick = () => ovRemove(b.dataset.rm); }); // Lead entfernt Mitglied [BFT-182]
   const lv = el('ovLeave'); if (lv) lv.onclick = () => ovLeave();
 }
 
@@ -2742,7 +2769,7 @@ async function loadOvGroup() {
     if (!r.ok) return;
     ovGroupState = await r.json();
     for (const i of (ovGroupState.invites || [])) {
-      if (!ovInviteSeen.has(i.gid)) { ovInviteSeen.add(i.gid); showToast(`📨 Gruppen-Einladung von ${i.fromName || '?'}`, 'success'); }
+      if (!ovInviteSeen.has(i.gid)) { ovInviteSeen.add(i.gid); showToast(`📨 Gruppen-Einladung von ${i.fromName || '?'}`, 'success', 'invite'); }
     }
     if (featureOpen === 'group') renderGroup();
   } catch {}
@@ -2769,6 +2796,18 @@ async function ovAccept(gid) {
 }
 async function ovLeave() {
   try { await fetch(`${config.tokenBase}/ovgroup/leave`, { method: 'POST', headers: { Authorization: `Bearer ${sessionToken}` } }); showToast('Overlay-Gruppe verlassen', ''); loadOvGroup(); } catch {}
+}
+// Lead entfernt ein Mitglied [BFT-182]
+async function ovRemove(sid) {
+  try {
+    const r = await fetch(`${config.tokenBase}/ovgroup/remove`, { method: 'POST', headers: { Authorization: `Bearer ${sessionToken}`, 'Content-Type': 'application/json' }, body: JSON.stringify({ steamId: sid }) });
+    const d = await r.json(); if (!r.ok) throw new Error(apiErr(d));
+    showToast('Mitglied entfernt', ''); loadOvGroup();
+  } catch (e) { showToast(e.message, 'error'); }
+}
+// Gruppeneinladung ablehnen [BFT-182]
+async function ovDecline(gid) {
+  try { await fetch(`${config.tokenBase}/ovgroup/decline`, { method: 'POST', headers: { Authorization: `Bearer ${sessionToken}`, 'Content-Type': 'application/json' }, body: JSON.stringify({ gid }) }); showToast('Einladung abgelehnt', ''); loadOvGroup(); } catch {}
 }
 
 // ── Profil / persönliche Stats (aus /me) ─────────────────────────────────────
@@ -2969,7 +3008,7 @@ async function loadMyTickets() {
     for (const t of myTickets) {
       const last = t.lastMessageAt || 0;
       if (t.lastFromOther && last > (seen[t.channelId] || 0)) {
-        showToast(`💬 Neue Support-Antwort — Ticket #${t.ticketId}`, 'success');
+        showToast(`💬 Neue Support-Antwort — Ticket #${t.ticketId}`, 'success', 'ticket'); // → Postfach 'ticket' [BFT-181]
         seen[t.channelId] = last; changed = true;
       } else if (!(t.channelId in seen)) { seen[t.channelId] = last; changed = true; }
     }
@@ -3130,12 +3169,13 @@ async function loadSupportTickets() {
   if (featureOpen === 'support' && !supComposing) renderSupTicketList();
 }
 
-function supCatLabel(id) { return (supCfg && supCfg.categories && (supCfg.categories.find((c) => c.id === id) || {}).label) || id || ''; }
+function supCat(id) { return (supCfg && supCfg.categories && supCfg.categories.find((c) => c.id === id)) || { id, label: id || '', emoji: '🎫' }; }
+function supCatLabel(id) { return supCat(id).label || id || ''; }
 
 function renderSupTicketList() {
   const box = el('supTickets'); if (!box) return;
   if (!supTickets.length) { box.innerHTML = '<div class="sup-empty">Keine Tickets.<br>Öffne oben ein neues.</div>'; return; }
-  box.innerHTML = supTickets.map((t) => {
+  const supRow = (t) => {
     const sel = t.channelId === supSel ? ' sel' : '';
     const inBearb = t.status === 'in_bearbeitung';
     const stCol = inBearb ? '#22c55e' : '#f59e0b';
@@ -3144,9 +3184,18 @@ function renderSupTicketList() {
     const roleTag = t.role === 'handler' ? '🛠️' : (t.role === 'available' ? '🆕' : '');
     const who = (t.role !== 'opener' && t.openerName) ? ` · von ${escapeHtml(t.openerName)}` : '';
     return `<div class="sup-trow${sel}" data-ch="${escapeHtml(t.channelId)}">
-      <div class="sup-trow-top"><b>#${t.ticketId} · ${escapeHtml(supCatLabel(t.category))}</b> ${roleTag}${neu}</div>
+      <div class="sup-trow-top"><b>#${t.ticketId}</b> ${roleTag}${neu}</div>
       <div class="sup-trow-sub" style="color:${stCol}">${stTxt}${who}</div>
     </div>`;
+  };
+  // Nach Kategorie gruppieren (Reihenfolge wie in der Config) — leichter zu unterteilen. [BFT-180]
+  const order = ((supCfg && supCfg.categories) || []).map((c) => c.id);
+  const groups = {};
+  for (const t of supTickets) { (groups[t.category] = groups[t.category] || []).push(t); }
+  const catIds = Object.keys(groups).sort((a, b) => { const ia = order.indexOf(a), ib = order.indexOf(b); return (ia < 0 ? 99 : ia) - (ib < 0 ? 99 : ib); });
+  box.innerHTML = catIds.map((cid) => {
+    const c = supCat(cid);
+    return `<div class="sup-cat-head" style="font-size:11px;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:.4px;margin:10px 2px 4px">${c.emoji || '🎫'} ${escapeHtml(c.label)} <span style="opacity:.7">· ${groups[cid].length}</span></div>${groups[cid].map(supRow).join('')}`;
   }).join('');
   box.querySelectorAll('.sup-trow').forEach((row) => { row.onclick = () => selectSupportTicket(row.dataset.ch); });
 }
@@ -3242,7 +3291,8 @@ function openSupportTicketForm() {
   supComposing = true; supSel = null; supMessages = [];
   renderSupTicketList();
   const chat = el('supChat'); if (!chat) return;
-  const cats = (supCfg && supCfg.categories) || [{ id: 'help', label: 'Frage / Hilfe', emoji: '❓' }, { id: 'report', label: 'Spieler melden', emoji: '🚨' }];
+  // Nur selbst öffenbare Kategorien anbieten (Bewerbungen laufen über Discord, open=false). [BFT-180]
+  const cats = ((supCfg && supCfg.categories) || [{ id: 'help', label: 'Frage / Hilfe', emoji: '❓' }, { id: 'report', label: 'Spieler melden', emoji: '🚨' }]).filter((c) => c.open !== false);
   let cat = cats[0].id; let known = true;
   chat.innerHTML = `
     <div class="sup-chat-head"><div><b>➕ Neues Ticket</b></div></div>
@@ -4196,7 +4246,13 @@ function dinoCardEl(card, onClick) {
 }
 function vitalsHTML(card) {
   const v = [['Gesundheit', 'health', '#22c55e'], ['Blut', 'blood', '#dc2626'], ['Ausdauer', 'stamina', '#eab308'], ['Hunger', 'hunger', '#f97316'], ['Durst', 'thirst', '#3b82f6']];
-  return v.map(([l, k, c]) => { const p = Math.round((card[k] || 0) * 100); return `<div style="margin:6px 0"><div style="display:flex;justify-content:space-between;font-size:11px"><span>${l}</span><span style="color:var(--muted)">${p}%</span></div><div class="stat-track"><div class="stat-fill" style="width:${p}%;background:${c}"></div></div></div>`; }).join('');
+  // Füllung = Fraktion (%), Beschriftung = absolute Current / Max (Fallback %, falls Cur/Max fehlen). [BFT-179]
+  return v.map(([l, k, c]) => {
+    const p = Math.round((card[k] || 0) * 100);
+    const cur = card[k + 'Cur'], max = card[k + 'Max'];
+    const label = (typeof cur === 'number' && typeof max === 'number') ? `${Math.round(cur)} / ${Math.round(max)}` : `${p}%`;
+    return `<div style="margin:6px 0"><div style="display:flex;justify-content:space-between;font-size:11px"><span>${l}</span><span style="color:var(--muted)">${label}</span></div><div class="stat-track"><div class="stat-fill" style="width:${p}%;background:${c}"></div></div></div>`;
+  }).join('');
 }
 // Deutsche Kurzbeschreibungen der Mutationen — gespiegelt aus token-service staffConfig.MUTATIONS
 // (bei Änderungen dort hier mitziehen). value → [Anzeigename, Beschreibung].
