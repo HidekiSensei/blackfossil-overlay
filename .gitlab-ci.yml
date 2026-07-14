@@ -1,0 +1,28 @@
+# GitLab CI — blackfossil-overlay (Windows-Runner)
+# dev  -> Test-Installer bauen (electron-builder, KEIN publish) -> Artefakt
+# main/Tag -> Prod-Release (folgt: braucht generic-Updater-Feed-Entscheidung)
+stages:
+  - build
+
+build:test-installer:
+  stage: build
+  tags: [windows]
+  rules:
+    - if: '$CI_COMMIT_BRANCH == "dev"'
+  script:
+    - cd app
+    - node -v
+    - npm ci
+    - npm run build:renderer
+    - npx electron-builder --win --publish never
+    - |
+      $v = (Get-Content package.json -Raw | ConvertFrom-Json).version
+      $exe = Get-ChildItem release -Filter *.exe -ErrorAction SilentlyContinue | Select-Object -First 1
+      if ($exe) { Copy-Item $exe.FullName "release\BlackFossil-Overlay-test-$v.exe" -Force; Write-Host "TEST-INSTALLER: BlackFossil-Overlay-test-$v.exe ($([math]::Round($exe.Length/1MB,1)) MB)" }
+      else { Write-Host "WARN: keine .exe in release/ gefunden"; Get-ChildItem release -ErrorAction SilentlyContinue }
+  artifacts:
+    name: blackfossil-overlay-test-installer
+    paths:
+      - app/release/*.exe
+    expire_in: 14 days
+    when: always
