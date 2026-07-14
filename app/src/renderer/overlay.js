@@ -3169,12 +3169,13 @@ async function loadSupportTickets() {
   if (featureOpen === 'support' && !supComposing) renderSupTicketList();
 }
 
-function supCatLabel(id) { return (supCfg && supCfg.categories && (supCfg.categories.find((c) => c.id === id) || {}).label) || id || ''; }
+function supCat(id) { return (supCfg && supCfg.categories && supCfg.categories.find((c) => c.id === id)) || { id, label: id || '', emoji: '🎫' }; }
+function supCatLabel(id) { return supCat(id).label || id || ''; }
 
 function renderSupTicketList() {
   const box = el('supTickets'); if (!box) return;
   if (!supTickets.length) { box.innerHTML = '<div class="sup-empty">Keine Tickets.<br>Öffne oben ein neues.</div>'; return; }
-  box.innerHTML = supTickets.map((t) => {
+  const supRow = (t) => {
     const sel = t.channelId === supSel ? ' sel' : '';
     const inBearb = t.status === 'in_bearbeitung';
     const stCol = inBearb ? '#22c55e' : '#f59e0b';
@@ -3183,9 +3184,18 @@ function renderSupTicketList() {
     const roleTag = t.role === 'handler' ? '🛠️' : (t.role === 'available' ? '🆕' : '');
     const who = (t.role !== 'opener' && t.openerName) ? ` · von ${escapeHtml(t.openerName)}` : '';
     return `<div class="sup-trow${sel}" data-ch="${escapeHtml(t.channelId)}">
-      <div class="sup-trow-top"><b>#${t.ticketId} · ${escapeHtml(supCatLabel(t.category))}</b> ${roleTag}${neu}</div>
+      <div class="sup-trow-top"><b>#${t.ticketId}</b> ${roleTag}${neu}</div>
       <div class="sup-trow-sub" style="color:${stCol}">${stTxt}${who}</div>
     </div>`;
+  };
+  // Nach Kategorie gruppieren (Reihenfolge wie in der Config) — leichter zu unterteilen. [BFT-180]
+  const order = ((supCfg && supCfg.categories) || []).map((c) => c.id);
+  const groups = {};
+  for (const t of supTickets) { (groups[t.category] = groups[t.category] || []).push(t); }
+  const catIds = Object.keys(groups).sort((a, b) => { const ia = order.indexOf(a), ib = order.indexOf(b); return (ia < 0 ? 99 : ia) - (ib < 0 ? 99 : ib); });
+  box.innerHTML = catIds.map((cid) => {
+    const c = supCat(cid);
+    return `<div class="sup-cat-head" style="font-size:11px;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:.4px;margin:10px 2px 4px">${c.emoji || '🎫'} ${escapeHtml(c.label)} <span style="opacity:.7">· ${groups[cid].length}</span></div>${groups[cid].map(supRow).join('')}`;
   }).join('');
   box.querySelectorAll('.sup-trow').forEach((row) => { row.onclick = () => selectSupportTicket(row.dataset.ch); });
 }
@@ -3281,7 +3291,8 @@ function openSupportTicketForm() {
   supComposing = true; supSel = null; supMessages = [];
   renderSupTicketList();
   const chat = el('supChat'); if (!chat) return;
-  const cats = (supCfg && supCfg.categories) || [{ id: 'help', label: 'Frage / Hilfe', emoji: '❓' }, { id: 'report', label: 'Spieler melden', emoji: '🚨' }];
+  // Nur selbst öffenbare Kategorien anbieten (Bewerbungen laufen über Discord, open=false). [BFT-180]
+  const cats = ((supCfg && supCfg.categories) || [{ id: 'help', label: 'Frage / Hilfe', emoji: '❓' }, { id: 'report', label: 'Spieler melden', emoji: '🚨' }]).filter((c) => c.open !== false);
   let cat = cats[0].id; let known = true;
   chat.innerHTML = `
     <div class="sup-chat-head"><div><b>➕ Neues Ticket</b></div></div>
