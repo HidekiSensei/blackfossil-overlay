@@ -66,9 +66,8 @@
     },
     "publish": [
       {
-        "provider": "github",
-        "owner": "HidekiSensei",
-        "repo": "blackfossil-overlay"
+        "provider": "generic",
+        "url": "https://api.blackfossil.de/overlay/"
       }
     ]
   }
