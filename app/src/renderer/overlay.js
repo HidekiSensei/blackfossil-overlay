@@ -539,7 +539,7 @@ function updateHeart(d) {
 // Himmelsrichtungen (N rot) + Wegpunkt 📍 + Golden-Zone ⭐ + Gruppenmitglieder (Kartenfarben)
 // relativ zur Blickrichtung (Mitte = geradeaus). Verschiebbar über den Edit-Mode (MOVABLE).
 const COMPASS_HALF_FOV = 80;   // ±80° um die Blickrichtung sichtbar
-let COMPASS_NORTH_OFF = 0;     // Feinjustage, falls Norden verdreht ist (Grad)
+let COMPASS_NORTH_OFF = 90;    // Himmelsrichtungen +90° nach rechts (wie der Karten-Pfeil, Mod-Heading-Offset)
 let compassCtx = null;
 function initCompass() {
   const cv = el('compass'), wrap = el('compassWrap');
