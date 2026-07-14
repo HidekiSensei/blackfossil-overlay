@@ -4244,15 +4244,10 @@ function dinoCardEl(card, onClick) {
   d.innerHTML = dinoPreview(card) + `<div class="body"><div class="nm">${card.dino}${card.isElder ? ' 👑' : ''}</div><div class="mt">${card.gender || ''} · ${Math.round((card.grow || 0) * 100)}%</div></div>` + paletteHTML(card.colors);
   d.onclick = onClick; return d;
 }
+// Garage/Markt-Dino-Info: gespeicherte Dino-Karten → Vitals als Prozent (kein Cur/Max-Kontext).
 function vitalsHTML(card) {
   const v = [['Gesundheit', 'health', '#22c55e'], ['Blut', 'blood', '#dc2626'], ['Ausdauer', 'stamina', '#eab308'], ['Hunger', 'hunger', '#f97316'], ['Durst', 'thirst', '#3b82f6']];
-  // Füllung = Fraktion (%), Beschriftung = absolute Current / Max (Fallback %, falls Cur/Max fehlen). [BFT-179]
-  return v.map(([l, k, c]) => {
-    const p = Math.round((card[k] || 0) * 100);
-    const cur = card[k + 'Cur'], max = card[k + 'Max'];
-    const label = (typeof cur === 'number' && typeof max === 'number') ? `${Math.round(cur)} / ${Math.round(max)}` : `${p}%`;
-    return `<div style="margin:6px 0"><div style="display:flex;justify-content:space-between;font-size:11px"><span>${l}</span><span style="color:var(--muted)">${label}</span></div><div class="stat-track"><div class="stat-fill" style="width:${p}%;background:${c}"></div></div></div>`;
-  }).join('');
+  return v.map(([l, k, c]) => { const p = Math.round((card[k] || 0) * 100); return `<div style="margin:6px 0"><div style="display:flex;justify-content:space-between;font-size:11px"><span>${l}</span><span style="color:var(--muted)">${p}%</span></div><div class="stat-track"><div class="stat-fill" style="width:${p}%;background:${c}"></div></div></div>`; }).join('');
 }
 // Deutsche Kurzbeschreibungen der Mutationen — gespiegelt aus token-service staffConfig.MUTATIONS
 // (bei Änderungen dort hier mitziehen). value → [Anzeigename, Beschreibung].
@@ -4302,11 +4297,12 @@ function mutName(x) { const i = MUT_INFO[x]; return i ? i[0] : x; }
 function mutDesc(x) { const i = MUT_INFO[x]; return i ? i[1] : ''; }
 // Mutationen tabellarisch nach Generation (Basis / Eltern / Elder), je Zeile Name + deutsche Kurzbeschreibung.
 function mutHTML(m) {
+  const isMut = (x) => x && x !== 'None'; // "None"-Platzhalter (feste Mod-Slots) nicht anzeigen
   const groups = [['Basis', m?.base || []], ['Eltern', m?.parent || []], ['Elder', m?.elder || []]];
-  const total = groups.reduce((n, [, arr]) => n + arr.filter(Boolean).length, 0);
+  const total = groups.reduce((n, [, arr]) => n + arr.filter(isMut).length, 0);
   if (!total) return '<span style="color:var(--muted);font-size:12px">Keine Mutationen</span>';
   return '<div class="mut-tbl">' + groups.map(([label, arr]) => {
-    const items = (arr || []).filter(Boolean);
+    const items = (arr || []).filter(isMut);
     if (!items.length) return '';
     const rows = items.map((x) => `<div class="mut-row"><span class="mut-nm">${escapeHtml(mutName(x))}</span><span class="mut-dsc">${escapeHtml(mutDesc(x))}</span></div>`).join('');
     return `<div class="mut-grp"><div class="mut-grp-h">${label}<span class="mut-grp-n">${items.length}</span></div>${rows}</div>`;
@@ -5531,8 +5527,10 @@ async function updateDinoInfo() {
 
   DI_STATS.forEach((s) => {
     const pct = Math.max(0, Math.min(100, Math.round((d[s.key] ?? 0) * 100)));
-    el(`di-${s.key}-f`).style.width = pct + '%';
-    el(`di-${s.key}-v`).textContent = pct + '%';
+    el(`di-${s.key}-f`).style.width = pct + '%'; // Balken bleibt Fraktion
+    // Vitals mit absolutem Current/Max (aus /me: healthCur/Max …); Nährstoffe ohne Cur/Max → %. [BFT-179]
+    const cur = d[s.key + 'Cur'], max = d[s.key + 'Max'];
+    el(`di-${s.key}-v`).textContent = (typeof cur === 'number' && typeof max === 'number') ? `${Math.round(cur)} / ${Math.round(max)}` : pct + '%';
   });
 }
 

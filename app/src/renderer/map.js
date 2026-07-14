@@ -430,7 +430,8 @@ function headingMapAngle(p) {
   const a0 = worldToNorm(p.x, p.y);
   const a1 = worldToNorm(p.x + Math.cos(hr) * L, p.y + Math.sin(hr) * L);
   const dx = a1.nx - a0.nx, dy = a1.ny - a0.ny;
-  return (dx === 0 && dy === 0) ? -Math.PI / 2 : Math.atan2(dy, dx);
+  // +90° (im Uhrzeigersinn / nach rechts) korrigiert den Pfeil-Offset des Mod-Headings.
+  return (dx === 0 && dy === 0) ? -Math.PI / 2 : Math.atan2(dy, dx) + Math.PI / 2;
 }
 function arrowAngle(p) { return (typeof p.heading === 'number') ? headingMapAngle(p) : ((typeof p.dirAngle === 'number') ? p.dirAngle : -Math.PI / 2); }
 function drawGroupMember(ctx, px, py, p, scale) {
