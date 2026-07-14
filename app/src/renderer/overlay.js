@@ -2665,16 +2665,23 @@ function groupMembersHtml() {
   } else if (members.length <= 1) {
     html = '<p style="color:var(--muted)">Noch keine Gruppe. Bilde eine im Spiel — oder lade unten Spieler <b>gleicher Diät</b> in eine Overlay-Gruppe ein (auch andere Spezies).</p>';
   } else {
+    // Overlay-Gruppen-Lead-Infos (BFT-182): Krone am Lead, Entfernen-Button nur für den Lead.
+    const ovMembers = new Set((ovGroupState.members || []).map((m) => m.steamId));
+    const lead = ovGroupState.lead || null;
+    const meLead = !!ovGroupState.meLead;
     html = members.map((p) => {
       const you = !!p.isYou;
       const partner = me.partnerSteamId && p.steamId === me.partnerSteamId;
       const grow = p.grow != null ? `${Math.round(p.grow * 100)}%` : '';
       const dist = (!you && me) ? `${Math.round(Math.hypot(p.x - me.x, p.y - me.y) / UNITS_PER_M)} m` : '';
+      const crown = (lead && p.steamId === lead) ? ' 👑' : '';
       const tag = you ? ' <span style="color:var(--accent-2)">(Du)</span>' : (partner ? ' 💞' : (p.ovgroup ? ' 🔗' : ''));
+      const rmBtn = (meLead && !you && ovMembers.has(p.steamId)) ? `<button data-rm="${p.steamId}" title="Aus Gruppe entfernen" class="secondary" style="width:auto;padding:3px 8px;font-size:11px;flex:none">✕</button>` : '';
       return `<div style="display:flex;justify-content:space-between;align-items:center;gap:10px;padding:8px 10px;margin-bottom:6px;border-radius:9px;background:${you ? 'rgba(var(--accent-rgb),0.18)' : 'rgba(255,255,255,0.04)'};border:1px solid ${you ? 'var(--accent)' : 'transparent'}">
-        <span style="font-weight:600;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${escapeHtml(p.name || '?')}${tag}</span>
+        <span style="font-weight:600;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${escapeHtml(p.name || '?')}${crown}${tag}</span>
         <span style="color:var(--muted);font-size:12px;flex:none">${escapeHtml(p.dino || '—')}${grow ? ' · ' + grow : ''}</span>
         <span style="color:var(--accent-2);font-size:12px;flex:none;min-width:42px;text-align:right">${dist}</span>
+        ${rmBtn}
       </div>`;
     }).join('');
   }
@@ -2685,6 +2692,7 @@ function updateGroupLive() {
   const c = el('grpMembers'); if (!c) return;
   const mem = groupMembersHtml();
   c.innerHTML = mem.html;
+  c.querySelectorAll('[data-rm]').forEach((b) => { b.onclick = () => ovRemove(b.dataset.rm); }); // Handler nach Live-Rerender neu binden [BFT-182]
   const cnt = el('grpCount'); if (cnt) cnt.textContent = mem.count > 1 ? ` · ${mem.count} Mitglieder` : '';
   renderGroupChat();
 }
@@ -2699,7 +2707,10 @@ function renderGroup() {
 
   const inv = (ovGroupState.invites || []).map((i) => `<div style="display:flex;justify-content:space-between;align-items:center;gap:8px;padding:6px 8px;margin-bottom:5px;background:rgba(34,197,94,0.12);border:1px solid var(--border);border-radius:8px">
     <span style="font-size:12px">📨 Einladung von <b>${escapeHtml(i.fromName || '?')}</b></span>
-    <button data-acc="${i.gid}" style="width:auto;padding:5px 10px;font-size:12px">Beitreten</button></div>`).join('');
+    <span style="display:flex;gap:6px;flex:none">
+      <button data-acc="${i.gid}" style="width:auto;padding:5px 10px;font-size:12px">Beitreten</button>
+      <button data-dec="${i.gid}" class="secondary" style="width:auto;padding:5px 10px;font-size:12px">Ablehnen</button>
+    </span></div>`).join('');
   let invitable = '';
   if (ovInviteOpen) {
     invitable = ovInvitable.length
@@ -2733,7 +2744,9 @@ function renderGroup() {
     if (_chat && ci) { ci.value = _chat.val; if (_chat.focused) { ci.focus(); try { ci.setSelectionRange(_chat.s, _chat.e); } catch {} } } }
   const tgl = el('ovInviteToggle'); if (tgl) tgl.onclick = () => { ovInviteOpen = !ovInviteOpen; if (ovInviteOpen) loadOvInvitable(); else renderGroup(); };
   panel.querySelectorAll('[data-acc]').forEach((b) => { b.onclick = () => ovAccept(b.dataset.acc); });
+  panel.querySelectorAll('[data-dec]').forEach((b) => { b.onclick = () => ovDecline(b.dataset.dec); }); // Einladung ablehnen [BFT-182]
   panel.querySelectorAll('[data-inv]').forEach((b) => { b.onclick = () => ovInvite(b.dataset.inv); });
+  panel.querySelectorAll('[data-rm]').forEach((b) => { b.onclick = () => ovRemove(b.dataset.rm); }); // Lead entfernt Mitglied [BFT-182]
   const lv = el('ovLeave'); if (lv) lv.onclick = () => ovLeave();
 }
 
@@ -2771,6 +2784,18 @@ async function ovAccept(gid) {
 }
 async function ovLeave() {
   try { await fetch(`${config.tokenBase}/ovgroup/leave`, { method: 'POST', headers: { Authorization: `Bearer ${sessionToken}` } }); showToast('Overlay-Gruppe verlassen', ''); loadOvGroup(); } catch {}
+}
+// Lead entfernt ein Mitglied [BFT-182]
+async function ovRemove(sid) {
+  try {
+    const r = await fetch(`${config.tokenBase}/ovgroup/remove`, { method: 'POST', headers: { Authorization: `Bearer ${sessionToken}`, 'Content-Type': 'application/json' }, body: JSON.stringify({ steamId: sid }) });
+    const d = await r.json(); if (!r.ok) throw new Error(apiErr(d));
+    showToast('Mitglied entfernt', ''); loadOvGroup();
+  } catch (e) { showToast(e.message, 'error'); }
+}
+// Gruppeneinladung ablehnen [BFT-182]
+async function ovDecline(gid) {
+  try { await fetch(`${config.tokenBase}/ovgroup/decline`, { method: 'POST', headers: { Authorization: `Bearer ${sessionToken}`, 'Content-Type': 'application/json' }, body: JSON.stringify({ gid }) }); showToast('Einladung abgelehnt', ''); loadOvGroup(); } catch {}
 }
 
 // ── Profil / persönliche Stats (aus /me) ─────────────────────────────────────
