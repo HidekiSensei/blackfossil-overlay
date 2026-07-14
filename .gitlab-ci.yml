@@ -1,5 +1,5 @@
 # GitLab CI — blackfossil-overlay (Windows-Runner)
-# dev  -> Test-Installer bauen (electron-builder, KEIN publish) -> Artefakt
+# dev  -> Test-Installer bauen (electron-builder, KEIN publish) -> Artefakt (1 Datei)
 # main/Tag -> Prod-Release (folgt: braucht generic-Updater-Feed-Entscheidung)
 stages:
   - build
@@ -17,12 +17,13 @@ build:test-installer:
     - npx electron-builder --win --publish never
     - |
       $v = (Get-Content package.json -Raw | ConvertFrom-Json).version
-      $exe = Get-ChildItem release -Filter *.exe -ErrorAction SilentlyContinue | Select-Object -First 1
-      if ($exe) { Copy-Item $exe.FullName "release\BlackFossil-Overlay-test-$v.exe" -Force; Write-Host "TEST-INSTALLER: BlackFossil-Overlay-test-$v.exe ($([math]::Round($exe.Length/1MB,1)) MB)" }
-      else { Write-Host "WARN: keine .exe in release/ gefunden"; Get-ChildItem release -ErrorAction SilentlyContinue }
+      $exe = Get-ChildItem release -Filter "*Setup*.exe" -ErrorAction SilentlyContinue | Select-Object -First 1
+      if (-not $exe) { $exe = Get-ChildItem release -Filter "*.exe" -ErrorAction SilentlyContinue | Where-Object { $_.Name -notlike "*uninstaller*" -and $_.Name -notlike "*test*" } | Select-Object -First 1 }
+      Remove-Item "release\BlackFossil-Overlay-test-*.exe" -ErrorAction SilentlyContinue
+      Copy-Item $exe.FullName "release\BlackFossil-Overlay-test-$v.exe" -Force
+      Write-Host "TEST-INSTALLER: BlackFossil-Overlay-test-$v.exe ($([math]::Round((Get-Item "release\BlackFossil-Overlay-test-$v.exe").Length/1MB,1)) MB)"
   artifacts:
     name: blackfossil-overlay-test-installer
     paths:
-      - app/release/*.exe
+      - app/release/BlackFossil-Overlay-test-*.exe
     expire_in: 14 days
-    when: always
