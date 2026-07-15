@@ -1,5 +1,5 @@
 import { Room, RoomEvent, Track, ParticipantEvent, AudioPresets } from 'livekit-client';
-import { loadMapImage, drawFullMap, drawMinimap, drawHeatmap, normToWorld, worldToNorm, zoneAt, zonesAt, resetCal, solveAffine, getCal, setCalAffine, setZones, newZone, ZONES, ZONE_TYPES, ZONE_META, loadZoneLayer, setZoneLayer, isZoneLayerVisible, setGoldenZone, groupColorFor, setMarkerStyle } from './map.js';
+import { loadMapImage, drawFullMap, drawMinimap, drawHeatmap, normToWorld, worldToNorm, zoneAt, zonesAt, resetCal, solveAffine, getCal, setCalAffine, setZones, newZone, ZONES, ZONE_TYPES, ZONE_META, loadZoneLayer, setZoneLayer, isZoneLayerVisible, setGoldenZone, goldenZoneCenter, groupColorFor, setMarkerStyle } from './map.js';
 
 const el = (id) => document.getElementById(id);
 
@@ -26,7 +26,9 @@ function setAboTier(tier) {
   myAboTier = ABO_ORDER.includes(tier) ? tier : 'Fossil';
   // Gespeicherte Theme-Wahl jetzt mit korrektem Rang anwenden (beim Laden war der Rang noch unbekannt).
   applyTheme(localStorage.getItem('bf-theme') || 'violett');
-  if (featureOpen === 'settings') renderThemePicker();
+  // Picker IMMER neu rendern, sobald der Rang da ist — sonst zeigen Schlösser + fehlender
+  // Color-Input den veralteten Fossil-Stand (Settings ist ein eigenes Panel, nie featureOpen).
+  renderThemePicker();
 }
 // Custom-Theme (Obsidian): vollständiges Theme aus EINER Akzent-Farbe ableiten.
 function hexToRgb(hex) { const n = parseInt(String(hex).slice(1), 16); return [(n >> 16) & 255, (n >> 8) & 255, n & 255]; }
@@ -170,6 +172,7 @@ function setupMarkerSettings() {
   applyMarkerStyle();
 }
 document.addEventListener('DOMContentLoaded', setupMarkerSettings);
+document.addEventListener('DOMContentLoaded', initCompass);
 
 // ── Karten-/Positions-State ─────────────────────────────────────────────────
 let players = [];
@@ -195,6 +198,8 @@ function computeMoveAngles() {
 }
 let calibMode = false;
 let heatmapMode = false;
+let aiEncounters = [];    // AI-Dino-Encounter (Spawnpunkte/Patrouillen) — nur Team, große Karte
+let aiLayerOn = true;     // Team-Kartenlayer für KI-Dinos an/aus (Standard an)
 // Auto-Kalibrierung über ZONEN-Ecken: rohe Welt-Koordinaten der hinterlegten Zonen
 // (PVP/PVE), gut über die Karte verteilt ausgewählt. Du erkennst die Ecken am Gelände
 // und klickst sie an → solveAffine schiebt nur die DARSTELLUNG zurecht (kein Umrechnen
@@ -298,6 +303,25 @@ let masterGain = (parseFloat(localStorage.getItem('bf-master-gain')) || 1);
 // Eigene Mikrofon-Verstärkung (0..2) — wird per Web-Audio-GainNode auf den
 // gesendeten Mikro-Track gelegt (siehe createMicGainProcessor).
 let micGain = (parseFloat(localStorage.getItem('bf-mic-gain')) || 1);
+// Erweiterte Audio-Einstellungen: PreGain + DynamicsCompressor VOR dem micGain-Node.
+// Werte in „menschlichen" Einheiten (dB / :1 / ms); WebAudio bekommt ms→s umgerechnet.
+const MIC_COMP_DEFAULTS = {
+  // Kompressor
+  on: false, preGain: 0, threshold: -24, ratio: 12, attack: 3, release: 250, knee: 30,
+  // Noise Gate
+  gateOn: false, gateThreshold: -50, gateAttack: 5, gateRelease: 150, gateHold: 200,
+  // Low-Cut / High-Pass
+  hpOn: false, hpFreq: 80,
+  // Limiter
+  limitOn: false, limitCeil: -3,
+  // Rauschunterdrückung (browser-native)
+  nsOn: false,
+};
+let micComp = (() => {
+  try { return { ...MIC_COMP_DEFAULTS, ...JSON.parse(localStorage.getItem('bf-mic-comp') || '{}') }; }
+  catch { return { ...MIC_COMP_DEFAULTS }; }
+})();
+function saveMicComp() { try { localStorage.setItem('bf-mic-comp', JSON.stringify(micComp)); } catch {} }
 // Welt-Einheiten pro angezeigtem Meter. The Isle skaliert kürzer als erwartet,
 // daher 200 statt 100 — so klingt "25 m" auch wirklich nach 25 m.
 const UNITS_PER_M = 200;
@@ -368,12 +392,97 @@ async function pollConnStats() {
 }
 
 // ── Toast-System ─────────────────────────────────────────────────────────────
-function showToast(msg, type = '') {
+// Postfach-Kategorien: NUR diese landen im Benachrichtigungs-Verlauf. [BFT-181]
+// Gruppen-Benachrichtigung, Admin-Benachrichtigung, Gruppeneinladung, Ticket-Antwort.
+const NOTIF_MAILBOX_CATS = new Set(['group', 'admin', 'invite', 'ticket']);
+// Server-Toast-Kategorie aus dem Emoji-Prefix ableiten (Backend liefert unstrukturierte Strings).
+function serverToastCat(msg) {
+  const s = String(msg);
+  if (s.startsWith('💬')) return 'admin';   // Team → Spieler (/admin/toast)
+  if (s.startsWith('⚠️')) return 'group';   // Gruppen-Warnung (Diät-Kick / aus Gruppe entfernt)
+  return '';                                  // Sonstiges (Park 🅿️, Golden ⭐ …): nur transienter Popup, nicht ins Postfach
+}
+function showToast(msg, type = '', cat = '') {
+  addNotif(msg, type, cat);   // ins Postfach protokollieren (nach Kategorie gefiltert; transienter Toast unten zeigt IMMER)
   const t = document.createElement('div');
   t.className = 'toast' + (type ? ' ' + type : '');
   t.textContent = msg;
   document.getElementById('toasts').appendChild(t);
   setTimeout(() => { t.classList.add('fade'); setTimeout(() => t.remove(), 300); }, 3600);
+}
+
+// ── Benachrichtigungs-Postfach (Verlauf + sequenzielle Anzeige) ──────────────
+// Jeder Toast landet im Verlauf (localStorage). Server-Toasts (Belohnungen etc.) stapeln sich
+// bei geschlossenem Overlay im Backend und werden beim nächsten /positions-Poll geliefert —
+// hier zeigen wir sie NACHEINANDER (nicht alle auf einmal) und man kann Verpasstes nachlesen.
+let notifHistory = [];
+try { notifHistory = JSON.parse(localStorage.getItem('bf-notif-history') || '[]'); } catch { notifHistory = []; }
+let notifReadTs = Number(localStorage.getItem('bf-notif-read') || 0);
+function addNotif(text, type, cat) {
+  if (!NOTIF_MAILBOX_CATS.has(cat)) return; // nur die gewünschten Kategorien ins Postfach [BFT-181]
+  notifHistory.push({ text: String(text), type: type || '', cat, ts: Date.now() });
+  if (notifHistory.length > 60) notifHistory = notifHistory.slice(-60);
+  try { localStorage.setItem('bf-notif-history', JSON.stringify(notifHistory)); } catch {}
+  updateNotifBadge();
+  if (featureOpen === 'notifications') renderNotifications();
+}
+function notifUnread() { return notifHistory.reduce((n, x) => n + (x.ts > notifReadTs ? 1 : 0), 0); }
+function updateNotifBadge() {
+  const btn = document.querySelector('.dock-btn[data-act="notifications"]'); if (!btn) return;
+  let b = btn.querySelector('.chat-badge');
+  const n = notifUnread();
+  if (n > 0) {
+    if (!b) { b = document.createElement('span'); b.className = 'chat-badge'; btn.appendChild(b); }
+    b.textContent = n > 99 ? '99+' : String(n);
+  } else if (b) { b.remove(); }
+}
+function notifRelTime(ts) {
+  const s = Math.max(0, Math.floor((Date.now() - ts) / 1000));
+  if (s < 60) return 'gerade eben';
+  const m = Math.floor(s / 60); if (m < 60) return `vor ${m} Min`;
+  const h = Math.floor(m / 60); if (h < 24) return `vor ${h} Std`;
+  return `vor ${Math.floor(h / 24)} T`;
+}
+function renderNotifications() {
+  const box = el('notifList'); if (!box) return;
+  box.innerHTML = '';
+  if (!notifHistory.length) {
+    const p = document.createElement('p'); p.style.color = 'var(--muted)'; p.textContent = 'Noch keine Benachrichtigungen.';
+    box.appendChild(p);
+  } else {
+    for (const n of notifHistory.slice().reverse()) {
+      const item = document.createElement('div');
+      item.className = 'notif-item' + (n.ts > notifReadTs ? ' unread' : '') + (n.type ? ' ' + n.type : '');
+      const txt = document.createElement('div'); txt.className = 'notif-text'; txt.textContent = n.text;
+      const tm = document.createElement('div'); tm.className = 'notif-time'; tm.textContent = notifRelTime(n.ts);
+      item.appendChild(txt); item.appendChild(tm); box.appendChild(item);
+    }
+  }
+  notifReadTs = Date.now();
+  try { localStorage.setItem('bf-notif-read', String(notifReadTs)); } catch {}
+  updateNotifBadge();
+}
+function clearNotifs() {
+  notifHistory = [];
+  try { localStorage.setItem('bf-notif-history', '[]'); } catch {}
+  renderNotifications();
+}
+
+// Server-Toasts sequenziell durchreichen (nicht alle auf einmal), damit man bei einem Schwung
+// gestauter Belohnungen jede einzeln lesen kann.
+let _toastQueue = [];
+let _toastPumping = false;
+function enqueueServerToasts(list) {
+  for (const t of list) _toastQueue.push(t);
+  if (_toastPumping) return;
+  _toastPumping = true;
+  const step = () => {
+    if (!_toastQueue.length) { _toastPumping = false; return; }
+    const m = _toastQueue.shift();
+    showToast(m, 'success', serverToastCat(m)); // Kategorie fürs Postfach ableiten [BFT-181]
+    setTimeout(step, 1200);
+  };
+  step();
 }
 
 // ── Top-HUD (Name / Tier / Punkte) ───────────────────────────────────────────
@@ -401,7 +510,7 @@ function updateHud(d) {
   updateHeart(d);                   // permanente Lebensanzeige
 }
 // Grow-Waben-HUD: 3 Honigwaben (Grow · Grow-Rate · HP), füllen sich von unten.
-// Wird von pollVitals (0,5 s) UND updateHud (/me, 6 s) aufgerufen — beide liefern
+// Wird von pollVitals (1s, Slow-Cache) UND updateHud (/me, 6 s) aufgerufen — beide liefern
 // grow/carbs/protein/lipid/health/online.
 function setHex(fillFrac, col, e1id, f1id, f2id) {
   const line = 1 - Math.max(0, Math.min(1, fillFrac)); // 0 = voll (von unten), 1 = leer
@@ -422,12 +531,91 @@ function updateHeart(d) {
   const nut = (online && grow <= 0.75) ? ((d.carbs || 0) + (d.protein || 0) + (d.lipid || 0)) : 0;
   setHex(nut / 3, online ? '#e7cf7a' : gray, 'grE1', 'grF1', 'grF2');
   { const v = document.getElementById('rateVal'); if (v) v.textContent = online ? Math.round(nut * 100) + '%' : '—'; }
-  // HP (Farbe nach Höhe)
+  // HP (Farbe nach Höhe). Füllung = Fraktion (%), Text = absoluter Current-Wert. [BFT-179]
   const hp = online && typeof d.health === 'number' ? Math.max(0, Math.min(100, Math.round(d.health * 100))) : 0;
   const hcol = !online ? gray : hp > 50 ? '#22c55e' : hp > 25 ? '#f59e0b' : '#ef4444';
   setHex(hp / 100, hcol, 'ghE1', 'ghF1', 'ghF2');
-  { const v = document.getElementById('heartVal'); if (v) v.textContent = online ? hp + '%' : '—'; }
+  { const v = document.getElementById('heartVal'); if (v) v.textContent = online ? (typeof d.healthCur === 'number' ? String(Math.round(d.healthCur)) : hp + '%') : '—'; }
 }
+// ── Kompass (verschiebbarer Balken oben) ────────────────────────────────────
+// Himmelsrichtungen (N rot) + Wegpunkt 📍 + Golden-Zone ⭐ + Gruppenmitglieder (Kartenfarben)
+// relativ zur Blickrichtung (Mitte = geradeaus). Verschiebbar über den Edit-Mode (MOVABLE).
+const COMPASS_HALF_FOV = 80;   // ±80° um die Blickrichtung sichtbar
+let COMPASS_NORTH_OFF = -90;   // Mod-Heading-Offset für die Himmelsrichtungen (in-game kalibriert)
+let compassCtx = null;
+let compassHd = null;   // gleitend interpolierte Anzeige-Blickrichtung (60fps) für ruckelfreie Drehung
+let compassRAF = 0;
+// 60fps-Render-Loop: gleitet die angezeigte Blickrichtung weich zur echten (die alle 100ms per Poll
+// kommt) — so dreht sich der Kompass flüssig statt in 10fps-Stufen. Läuft rein clientseitig.
+function compassLoop() {
+  compassRAF = requestAnimationFrame(compassLoop);
+  const online = me && typeof me.heading === 'number';
+  if (!online) { compassHd = null; renderCompass(); return; }
+  if (compassHd == null) {
+    compassHd = me.heading;
+  } else {
+    const d = ((me.heading - compassHd + 540) % 360) - 180; // kürzester Winkelweg (Wrap bei 360°)
+    compassHd = cmpNorm(compassHd + d * 0.3);                // 0.3/Frame → weich, folgt aber schnell
+  }
+  renderCompass();
+}
+function initCompass() {
+  const cv = el('compass'), wrap = el('compassWrap');
+  if (!cv || !wrap) return;
+  compassCtx = cv.getContext('2d');
+  const p = loadPositions();
+  if (!p.compassWrap || !p.compassWrap.left) { // Default: oben zentriert
+    wrap.style.left = Math.round(window.innerWidth / 2 - cv.width / 2) + 'px';
+    wrap.style.top = '10px';
+  }
+  if (!compassRAF) compassLoop();   // 60fps-Loop starten (rendert selbst, ersetzt den Poll-Aufruf)
+}
+const cmpNorm = (d) => ((d % 360) + 360) % 360;
+const cmpRel = (target, heading) => { let a = cmpNorm(target - heading); if (a > 180) a -= 360; return a; };
+// Welt-Delta → Peilung in Heading-Space (Umkehr von map.js: heading→(cos((h-90)°),sin((h-90)°)))
+const cmpBearing = (dx, dy) => cmpNorm(Math.atan2(dy, dx) * 180 / Math.PI + 90);
+function cmpRoundRect(ctx, x, y, w, h, r) { ctx.beginPath(); ctx.moveTo(x + r, y); ctx.arcTo(x + w, y, x + w, y + h, r); ctx.arcTo(x + w, y + h, x, y + h, r); ctx.arcTo(x, y + h, x, y, r); ctx.arcTo(x, y, x + w, y, r); ctx.closePath(); }
+function renderCompass() {
+  if (!compassCtx) return;
+  const ctx = compassCtx, cv = ctx.canvas, W = cv.width, H = cv.height, cx = W / 2;
+  ctx.clearRect(0, 0, W, H);
+  ctx.fillStyle = 'rgba(12,16,22,0.66)'; cmpRoundRect(ctx, 0, 12, W, H - 14, 9); ctx.fill();
+  ctx.strokeStyle = 'rgba(255,255,255,0.10)'; ctx.lineWidth = 1; ctx.stroke();
+  ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+  const online = me && typeof me.heading === 'number' && typeof me.x === 'number';
+  if (!online) { ctx.fillStyle = 'rgba(255,255,255,0.5)'; ctx.font = '11px sans-serif'; ctx.fillText('🧭 nicht im Spiel', cx, H / 2 + 2); return; }
+  const hd = (compassHd != null ? compassHd : me.heading), halfW = W / 2 - 10;
+  const xFor = (rel) => cx + (rel / COMPASS_HALF_FOV) * halfW;
+  const vis = (rel) => Math.abs(rel) <= COMPASS_HALF_FOV;
+  // Himmelsrichtungen + Zwischenrichtungen (N deutlich in Rot)
+  for (const [lbl, deg] of [['N', 0], ['NO', 45], ['O', 90], ['SO', 135], ['S', 180], ['SW', 225], ['W', 270], ['NW', 315]]) {
+    const rel = cmpRel(cmpNorm(deg + COMPASS_NORTH_OFF), hd); if (!vis(rel)) continue;
+    const x = xFor(rel), major = lbl.length === 1, north = lbl === 'N';
+    ctx.strokeStyle = north ? '#ef4444' : 'rgba(255,255,255,0.4)'; ctx.lineWidth = north ? 2 : 1;
+    ctx.beginPath(); ctx.moveTo(x, 14); ctx.lineTo(x, major ? 24 : 20); ctx.stroke();
+    ctx.fillStyle = north ? '#ef4444' : (major ? '#fff' : 'rgba(255,255,255,0.55)');
+    ctx.font = north ? 'bold 14px sans-serif' : (major ? 'bold 12px sans-serif' : '9px sans-serif');
+    ctx.fillText(lbl, x, 36);
+  }
+  // Marker relativ zur Blickrichtung
+  const marks = [];
+  const wp = waypoints[waypoints.length - 1]; if (wp) marks.push({ x: wp.x, y: wp.y, sym: '📍' });
+  const g = goldenZoneCenter(); if (g) marks.push({ x: g.x, y: g.y, sym: '⭐' });
+  const myG = me.groupId;
+  for (const p of players) { if (!p.isYou && typeof p.x === 'number' && ((myG && p.groupId === myG) || p.ovgroup)) marks.push({ x: p.x, y: p.y, dot: groupColorFor(p.steamId) }); }
+  for (const m of marks) {
+    // Marker-Peilung braucht denselben Nord-Offset wie die Himmelsrichtungen (sonst 90° verschoben).
+    const rel = cmpRel(cmpNorm(cmpBearing(m.x - me.x, m.y - me.y) + COMPASS_NORTH_OFF), hd); if (!vis(rel)) continue;
+    const x = xFor(rel);
+    if (m.dot) { ctx.beginPath(); ctx.arc(x, 8, 5, 0, 2 * Math.PI); ctx.fillStyle = m.dot; ctx.fill(); ctx.lineWidth = 1.5; ctx.strokeStyle = 'rgba(0,0,0,0.75)'; ctx.stroke(); }
+    else if (m.sym) { ctx.font = '14px sans-serif'; ctx.fillText(m.sym, x, 8); }
+  }
+  // Zentrum = Blickrichtung (Pfeil + Mittellinie)
+  ctx.fillStyle = '#00e5ff';
+  ctx.beginPath(); ctx.moveTo(cx, 14); ctx.lineTo(cx - 5, 6); ctx.lineTo(cx + 5, 6); ctx.closePath(); ctx.fill();
+  ctx.strokeStyle = 'rgba(0,229,255,0.55)'; ctx.lineWidth = 1; ctx.beginPath(); ctx.moveTo(cx, 15); ctx.lineTo(cx, H - 4); ctx.stroke();
+}
+
 // HP/Vitals separat & schnell pollen (Combat-Stat → möglichst live). Eigener leichter Endpoint.
 async function pollVitals() {
   if (!sessionToken) return;
@@ -481,7 +669,7 @@ function tickGrowTimer() {
   renderGrowTimer();
 }
 
-let config = { tokenBase: 'https://api.blackfossil.de', hotkeys: {} };
+let config = { tokenBase: 'https://api-test.blackfossil.de', hotkeys: {} };
 let room = null;
 let micEnabled = false;
 let settingsOpen = false;
@@ -631,6 +819,9 @@ async function init() {
   });
   // Einheitlicher Schließen-Button im Dock → alles zu + zurück ins Spiel
   { const c = el('dockClose'); if (c) { c.insertAdjacentHTML('afterbegin', DOCK_ICONS.close); c.onclick = () => closeOverlayAll(); } }
+  // Postfach: „Leeren"-Button + Ungelesen-Badge beim Start.
+  { const nc = el('notifClearBtn'); if (nc) nc.onclick = () => clearNotifs(); }
+  updateNotifBadge();
 
   // Admin-Panel (eigenständiges Modal, nur Admins) — Einstieg läuft übers Dock (Admin-Button)
   { const oab = el('openAdminBtn'); if (oab) oab.onclick = () => openAdminPanel(); }
@@ -662,6 +853,7 @@ async function init() {
   el('centerBtn').onclick = () => centerOnMe();
   el('resetViewBtn').onclick = () => { mapZoom = 1; mapPanX = 0; mapPanY = 0; renderBigMap(); };
   { const c = el('clearWpBtn'); if (c) c.onclick = () => { waypoints = []; renderBigMap(); renderMinimap(); }; }
+  { const b = el('aiEncBtn'); if (b) b.onclick = () => { aiLayerOn = !aiLayerOn; b.classList.toggle('secondary', !aiLayerOn); renderBigMap(); }; }
 
   // Sprechreichweiten-Buttons
   const rbWrap = el('rangeBtns');
@@ -690,6 +882,7 @@ async function init() {
   // Eigene Mikrofon-Lautstärke (Gain auf den gesendeten Track)
   const mg = el('micGain');
   if (mg) { mg.value = String(Math.round(micGain * 100)); mg.oninput = (e) => setMicGain(parseInt(e.target.value)); }
+  initMicCompUI();   // Erweiterte Audio-Einstellungen (Kompressor)
   // Master-Lautstärke für alle Spieler
   const mv = el('masterGain');
   if (mv) { mv.value = String(Math.round(masterGain * 100)); mv.oninput = (e) => setMasterGain(parseInt(e.target.value)); }
@@ -705,16 +898,9 @@ async function init() {
   el('resetHkBtn').onclick = async () => { await window.bf.resetHotkeys(); await renderHotkeys(); };
   window.addEventListener('keydown', onRebindKey);
 
-  // Render-Loops — Minimap nur neu zeichnen, wenn sichtbar UND etwas geändert.
-  // Spart bei vielen Spielern hunderte identische Redraws/Min; der 1,5s-Positions-Poll
-  // markiert ohnehin dirty → die Minimap ist nie länger als ~1,5s veraltet.
-  setInterval(() => {
-    if (!minimapDirty || !me) return;                 // off-server (!me) → Minimap ausgeblendet
-    const mw = el('minimapWrap');
-    if (mw && mw.style.display === 'none') return;
-    minimapDirty = false;
-    renderMinimap();
-  }, 200);
+  // Minimap-Render: rAF-Loop (~30fps, Perf-Cap) mit Positions-Interpolation (minimapLoop) — flüssige
+  // Bewegung entfernter Spieler statt 10fps-Stufen; Smart-Gating zeichnet nur bei echter Bewegung.
+  if (!minimapRAF) minimapLoop();
   // Minimap per Mausrad zoomen (greift, wenn das Overlay interaktiv ist: Dock/Panel offen)
   { const mm = el('minimap'); if (mm) mm.addEventListener('wheel', (e) => {
       e.preventDefault(); setMiniZoom(miniZoom * (e.deltaY < 0 ? 1.18 : 1 / 1.18));
@@ -787,10 +973,10 @@ function startPositionPolling() {
           else if (!amDead && voiceConnected) showToast('🎙️ Wieder im Spiel — Voice aktiv.', 'success');
           refreshMicState();
         }
-        // Health läuft separat über pollVitals() (0,5s, Combat-Stat) — nicht über Positionen
+        // Health läuft separat über pollVitals() (1s, Slow-Cache; Combat-Stat nicht im Fast-Pull) — nicht über Positionen
         computeMoveAngles();   // Pfeil-Richtung aus tatsächlicher Karten-Bewegung
         minimapDirty = true;   // neue Positionen → Minimap neu zeichnen
-        if (Array.isArray(data.toasts)) for (const t of data.toasts) showToast(t, 'success');
+        if (Array.isArray(data.toasts) && data.toasts.length) enqueueServerToasts(data.toasts);
         parkAt = Number(data.parkAt) || 0; updateParkWarn();
         golden = mergeGolden(golden, data.golden);
         // Zone nur während der AKTIV-Phase golden hervorheben (im Cooldown gibt es keine aktive Zone).
@@ -800,6 +986,7 @@ function startPositionPolling() {
         updateZoneBox();
         checkZoneChange();
         updateProximityVolumes();
+        // Kompass rendert sich selbst per 60fps-rAF-Loop (compassLoop) mit weicher Heading-Interpolation.
         if (settingsOpen) renderVoiceUsers();
         if (mapOpen) renderBigMap();
         if (featureOpen === 'group') updateGroupLive();   // nur Mitglieder/Chat updaten, NICHT das Eingabefeld neu bauen
@@ -809,8 +996,10 @@ function startPositionPolling() {
     } catch {}
   };
   poll();
-  setInterval(poll, 1500);
-  setInterval(updateParkWarn, 1000); // Countdown flüssig runterzählen (unabhängig vom 1,5s-Poll)
+  // 0,1s ≈ Server-Tickrate: Position (Map + Voice) live. Läuft rein gegen den Backend-Cache
+  // (der Backend-Poller hält /players im 0,1s-Takt warm), löst also keinen Game-Server-Call pro Poll aus. [BFT-178]
+  setInterval(poll, 100);
+  setInterval(updateParkWarn, 1000); // Countdown flüssig runterzählen (unabhängig vom Positions-Poll)
   setInterval(updateGoldenHud, 1000); // Golden-Timer flüssig zwischen den Polls interpolieren
 }
 
@@ -1065,7 +1254,35 @@ function fitCanvasDPR(cv, ctx) {
 }
 
 let miniZoom = parseFloat(localStorage.getItem('bf-mini-zoom')) || 1;   // Nutzer-Zoom der Minimap (Mausrad)
-let minimapDirty = true;   // Minimap nur neu zeichnen, wenn sich etwas geändert hat (Daten/Zoom/Theme)
+let minimapDirty = true;   // erzwingt einen Redraw bei Zoom/Theme (Bewegung erkennt der rAF-Loop selbst)
+let miniDisp = {};         // steamId → {x,y} gleitend interpolierte Anzeige-Position
+let minimapRAF = 0;
+let miniFrame = 0;
+// rAF-Loop (~30fps, Perf-Cap): zieht die angezeigten Positionen weich zu den echten (100ms-Poll) nach
+// → entfernte Spieler gleiten statt in 10 Stufen/s zu springen. Smart-Gating: kein Redraw, wenn nichts
+// in Bewegung ist (Minimap zeichnet Karte+Zonen → nur so oft neu wie nötig).
+function minimapLoop() {
+  minimapRAF = requestAnimationFrame(minimapLoop);
+  if (!me) return;                                   // off-server → nichts zu zeichnen
+  const mw = el('minimapWrap');
+  if (mw && mw.style.display === 'none') return;      // Minimap ausgeblendet
+  if (miniFrame++ & 1) return;                        // ~30fps: nur jeden 2. Frame (flüssig genug, halbe Last)
+  let moving = false;
+  const seen = {};
+  for (const p of players) {
+    if (typeof p.x !== 'number') continue;
+    seen[p.steamId] = true;
+    const d = miniDisp[p.steamId];
+    if (!d) { miniDisp[p.steamId] = { x: p.x, y: p.y }; continue; }
+    const dx = p.x - d.x, dy = p.y - d.y;
+    if (Math.hypot(dx, dy) > 8000) { d.x = p.x; d.y = p.y; moving = true; continue; } // Teleport → snappen
+    if (Math.abs(dx) > 1 || Math.abs(dy) > 1) { d.x += dx * 0.35; d.y += dy * 0.35; moving = true; }
+  }
+  for (const sid in miniDisp) { if (!seen[sid]) delete miniDisp[sid]; } // weg vom Server → raus
+  if (!moving && !minimapDirty) return;              // nichts geändert → CPU sparen
+  minimapDirty = false;
+  renderMinimap();
+}
 function setMiniZoom(z) {
   miniZoom = Math.min(6, Math.max(0.5, z));
   localStorage.setItem('bf-mini-zoom', miniZoom.toFixed(2));
@@ -1075,7 +1292,11 @@ function renderMinimap() {
   const cv = el('minimap');
   const ctx = cv.getContext('2d');
   const { w, h } = fitCanvasDPR(cv, ctx);
-  drawMinimap({ ctx, w, h }, players, me, myRange * UNITS_PER_M, waypoints, miniZoom);
+  // Interpolierte Anzeige-Positionen (miniDisp) statt der roh-100ms-Sprünge; Fallback = echte Position.
+  const iplayers = players.map((p) => { const d = miniDisp[p.steamId]; return d ? { ...p, x: d.x, y: d.y } : p; });
+  const dme = me && miniDisp[me.steamId];
+  const ime = dme ? { ...me, x: dme.x, y: dme.y } : me;
+  drawMinimap({ ctx, w, h }, iplayers, ime, myRange * UNITS_PER_M, waypoints, miniZoom);
   ctx.setTransform(1, 0, 0, 1, 0, 0);
 }
 function renderBigMap() {
@@ -1088,6 +1309,7 @@ function renderBigMap() {
   const view = { ctx, w: cv.width, h: cv.height };
   if (heatmapMode) drawHeatmap(view, players, me);
   else drawFullMap(view, players, waypoints, teleports, hoveredTp, 1 / mapZoom);
+  if (!heatmapMode && isTeam && aiLayerOn) drawAiEncounters(ctx, cv.width, cv.height, 1 / mapZoom);
   ctx.setTransform(1, 0, 0, 1, 0, 0);
   if (calibMode) drawCalibOverlay(ctx, cv.width, cv.height);
   renderMapGroup();
@@ -1120,6 +1342,51 @@ function renderMapGroup() {
     row.onmouseleave = () => { row.style.background = 'transparent'; };
     row.onclick = () => centerOnPlayer(row.dataset.sid);
   });
+}
+
+// ── KI-Dino-Encounter-Layer (nur Team) ───────────────────────────────────────
+// Zeichnet die vom Game-Server (/ai/encounters) gelieferten Spawnpunkte (rote Rauten) und
+// Patrouillen (gestrichelte Linien) auf die große Karte. Platzhalter-Einträge mit Spawn {0,0}
+// (noch nicht platziert) werden übersprungen. sc = 1/mapZoom hält Marker/Text zoom-konstant.
+function aiSpeciesShort(sp) { return String(sp || '').replace(/^BP_/, '').replace(/_C$/, ''); }
+function drawAiEncounters(ctx, w, h, sc) {
+  const placed = (p) => p && (p.x !== 0 || p.y !== 0);
+  for (const e of aiEncounters) {
+    if (e.enabled === false || !placed(e.spawn)) continue;
+    const s = worldToNorm(e.spawn.x, e.spawn.y);
+    const sx = s.nx * w, sy = s.ny * h;
+    // Patrouille: gestrichelte Linie + Stützpunkte
+    const patrol = Array.isArray(e.patrol) ? e.patrol.filter(placed) : [];
+    if (patrol.length >= 2) {
+      ctx.beginPath();
+      patrol.forEach((pt, i) => { const n = worldToNorm(pt.x, pt.y); const x = n.nx * w, y = n.ny * h; i ? ctx.lineTo(x, y) : ctx.moveTo(x, y); });
+      ctx.setLineDash([6 * sc, 4 * sc]); ctx.lineWidth = 2 * sc; ctx.strokeStyle = 'rgba(248,113,113,0.9)'; ctx.stroke(); ctx.setLineDash([]);
+      for (const pt of patrol) { const n = worldToNorm(pt.x, pt.y); ctx.beginPath(); ctx.arc(n.nx * w, n.ny * h, 3 * sc, 0, 2 * Math.PI); ctx.fillStyle = '#f87171'; ctx.fill(); }
+    }
+    // Spawn-Marker: rote Raute mit weißem Rand
+    const d = 6 * sc;
+    ctx.save(); ctx.translate(sx, sy); ctx.rotate(Math.PI / 4);
+    ctx.fillStyle = '#ef4444'; ctx.fillRect(-d, -d, 2 * d, 2 * d);
+    ctx.lineWidth = 1.5 * sc; ctx.strokeStyle = '#fff'; ctx.strokeRect(-d, -d, 2 * d, 2 * d);
+    ctx.restore();
+    // Label: Encounter-Name + Anzahl + Nacht-Icon
+    const night = e.params && e.params.activeAt === 'night';
+    const label = `${e.name || aiSpeciesShort(e.species)}${e.count > 1 ? ' ×' + e.count : ''}${night ? ' 🌙' : ''}`;
+    ctx.font = `bold ${Math.max(9, Math.round(11 * sc))}px sans-serif`; ctx.textAlign = 'center'; ctx.textBaseline = 'bottom';
+    ctx.lineWidth = 3 * sc; ctx.strokeStyle = 'rgba(0,0,0,0.85)'; ctx.strokeText(label, sx, sy - 10 * sc);
+    ctx.fillStyle = '#fecaca'; ctx.fillText(label, sx, sy - 10 * sc);
+  }
+}
+// Encounters vom Backend holen (staff-gated). Statische Konfig → ein Fetch pro Karten-Öffnen reicht.
+async function loadAiEncounters() {
+  if (!isTeam || !sessionToken) return;
+  try {
+    const res = await fetch(`${config.tokenBase}/ai/encounters`, { headers: { Authorization: `Bearer ${sessionToken}` } });
+    if (!res.ok) return;
+    const d = await res.json();
+    aiEncounters = Array.isArray(d.encounters) ? d.encounters : [];
+    if (mapOpen) renderBigMap();
+  } catch {}
 }
 
 // Bildschirm-Event → normalisierte Kartenkoordinate (berücksichtigt Zoom/Pan)
@@ -2468,6 +2735,7 @@ function toggleFeature(id) {
   else if (id === 'quests') { loadQuest(); startQuestPoll(); }
   else if (id === 'lootbox') renderLootbox();
   else if (id === 'support') { renderSupport(); startSupportPoll(); }
+  else if (id === 'notifications') renderNotifications();
   el(id).style.display = 'block';
   updateInteractive();
 }
@@ -2477,7 +2745,7 @@ function closeAllFeatures(skipInteractive) {
     revertSkinPreview();
     showToast('🎨 Vorschau verworfen — Skin zurückgesetzt', '');
   }
-  ['dinoInfo', 'skinEditor', 'garage', 'market', 'group', 'profile', 'lexikon', 'quests', 'lootbox', 'support'].forEach((id) => { el(id).style.display = 'none'; });
+  ['dinoInfo', 'skinEditor', 'garage', 'market', 'group', 'profile', 'lexikon', 'quests', 'lootbox', 'support', 'notifications'].forEach((id) => { el(id).style.display = 'none'; });
   const tc = el('ticketChat'); if (tc) tc.style.display = 'none';   // Ticket-Chat mit schließen
   stopQuestPoll();
   stopSupportPoll();
@@ -2525,7 +2793,7 @@ async function pollGroupChat() {
     if (fresh.length && !panelOpen) {
       setChatUnread(chatUnread + fresh.length);
       const last = fresh[fresh.length - 1];
-      showToast(`💬 ${last.name || 'Gruppe'}: ${String(last.text).slice(0, 80)}`);
+      showToast(`💬 ${last.name || 'Gruppe'}: ${String(last.text).slice(0, 80)}`, '', 'group'); // Gruppen-Chat → Postfach 'group' [BFT-181]
     }
   }
   groupChat = msgs.map((m) => ({ name: m.name, text: m.text, own: !!m.me }));
@@ -2564,16 +2832,23 @@ function groupMembersHtml() {
   } else if (members.length <= 1) {
     html = '<p style="color:var(--muted)">Noch keine Gruppe. Bilde eine im Spiel — oder lade unten Spieler <b>gleicher Diät</b> in eine Overlay-Gruppe ein (auch andere Spezies).</p>';
   } else {
+    // Overlay-Gruppen-Lead-Infos (BFT-182): Krone am Lead, Entfernen-Button nur für den Lead.
+    const ovMembers = new Set((ovGroupState.members || []).map((m) => m.steamId));
+    const lead = ovGroupState.lead || null;
+    const meLead = !!ovGroupState.meLead;
     html = members.map((p) => {
       const you = !!p.isYou;
       const partner = me.partnerSteamId && p.steamId === me.partnerSteamId;
       const grow = p.grow != null ? `${Math.round(p.grow * 100)}%` : '';
       const dist = (!you && me) ? `${Math.round(Math.hypot(p.x - me.x, p.y - me.y) / UNITS_PER_M)} m` : '';
+      const crown = (lead && p.steamId === lead) ? ' 👑' : '';
       const tag = you ? ' <span style="color:var(--accent-2)">(Du)</span>' : (partner ? ' 💞' : (p.ovgroup ? ' 🔗' : ''));
+      const rmBtn = (meLead && !you && ovMembers.has(p.steamId)) ? `<button data-rm="${p.steamId}" title="Aus Gruppe entfernen" class="secondary" style="width:auto;padding:3px 8px;font-size:11px;flex:none">✕</button>` : '';
       return `<div style="display:flex;justify-content:space-between;align-items:center;gap:10px;padding:8px 10px;margin-bottom:6px;border-radius:9px;background:${you ? 'rgba(var(--accent-rgb),0.18)' : 'rgba(255,255,255,0.04)'};border:1px solid ${you ? 'var(--accent)' : 'transparent'}">
-        <span style="font-weight:600;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${escapeHtml(p.name || '?')}${tag}</span>
+        <span style="font-weight:600;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${escapeHtml(p.name || '?')}${crown}${tag}</span>
         <span style="color:var(--muted);font-size:12px;flex:none">${escapeHtml(p.dino || '—')}${grow ? ' · ' + grow : ''}</span>
         <span style="color:var(--accent-2);font-size:12px;flex:none;min-width:42px;text-align:right">${dist}</span>
+        ${rmBtn}
       </div>`;
     }).join('');
   }
@@ -2584,6 +2859,7 @@ function updateGroupLive() {
   const c = el('grpMembers'); if (!c) return;
   const mem = groupMembersHtml();
   c.innerHTML = mem.html;
+  c.querySelectorAll('[data-rm]').forEach((b) => { b.onclick = () => ovRemove(b.dataset.rm); }); // Handler nach Live-Rerender neu binden [BFT-182]
   const cnt = el('grpCount'); if (cnt) cnt.textContent = mem.count > 1 ? ` · ${mem.count} Mitglieder` : '';
   renderGroupChat();
 }
@@ -2598,7 +2874,10 @@ function renderGroup() {
 
   const inv = (ovGroupState.invites || []).map((i) => `<div style="display:flex;justify-content:space-between;align-items:center;gap:8px;padding:6px 8px;margin-bottom:5px;background:rgba(34,197,94,0.12);border:1px solid var(--border);border-radius:8px">
     <span style="font-size:12px">📨 Einladung von <b>${escapeHtml(i.fromName || '?')}</b></span>
-    <button data-acc="${i.gid}" style="width:auto;padding:5px 10px;font-size:12px">Beitreten</button></div>`).join('');
+    <span style="display:flex;gap:6px;flex:none">
+      <button data-acc="${i.gid}" style="width:auto;padding:5px 10px;font-size:12px">Beitreten</button>
+      <button data-dec="${i.gid}" class="secondary" style="width:auto;padding:5px 10px;font-size:12px">Ablehnen</button>
+    </span></div>`).join('');
   let invitable = '';
   if (ovInviteOpen) {
     invitable = ovInvitable.length
@@ -2632,7 +2911,9 @@ function renderGroup() {
     if (_chat && ci) { ci.value = _chat.val; if (_chat.focused) { ci.focus(); try { ci.setSelectionRange(_chat.s, _chat.e); } catch {} } } }
   const tgl = el('ovInviteToggle'); if (tgl) tgl.onclick = () => { ovInviteOpen = !ovInviteOpen; if (ovInviteOpen) loadOvInvitable(); else renderGroup(); };
   panel.querySelectorAll('[data-acc]').forEach((b) => { b.onclick = () => ovAccept(b.dataset.acc); });
+  panel.querySelectorAll('[data-dec]').forEach((b) => { b.onclick = () => ovDecline(b.dataset.dec); }); // Einladung ablehnen [BFT-182]
   panel.querySelectorAll('[data-inv]').forEach((b) => { b.onclick = () => ovInvite(b.dataset.inv); });
+  panel.querySelectorAll('[data-rm]').forEach((b) => { b.onclick = () => ovRemove(b.dataset.rm); }); // Lead entfernt Mitglied [BFT-182]
   const lv = el('ovLeave'); if (lv) lv.onclick = () => ovLeave();
 }
 
@@ -2643,7 +2924,7 @@ async function loadOvGroup() {
     if (!r.ok) return;
     ovGroupState = await r.json();
     for (const i of (ovGroupState.invites || [])) {
-      if (!ovInviteSeen.has(i.gid)) { ovInviteSeen.add(i.gid); showToast(`📨 Gruppen-Einladung von ${i.fromName || '?'}`, 'success'); }
+      if (!ovInviteSeen.has(i.gid)) { ovInviteSeen.add(i.gid); showToast(`📨 Gruppen-Einladung von ${i.fromName || '?'}`, 'success', 'invite'); }
     }
     if (featureOpen === 'group') renderGroup();
   } catch {}
@@ -2670,6 +2951,18 @@ async function ovAccept(gid) {
 }
 async function ovLeave() {
   try { await fetch(`${config.tokenBase}/ovgroup/leave`, { method: 'POST', headers: { Authorization: `Bearer ${sessionToken}` } }); showToast('Overlay-Gruppe verlassen', ''); loadOvGroup(); } catch {}
+}
+// Lead entfernt ein Mitglied [BFT-182]
+async function ovRemove(sid) {
+  try {
+    const r = await fetch(`${config.tokenBase}/ovgroup/remove`, { method: 'POST', headers: { Authorization: `Bearer ${sessionToken}`, 'Content-Type': 'application/json' }, body: JSON.stringify({ steamId: sid }) });
+    const d = await r.json(); if (!r.ok) throw new Error(apiErr(d));
+    showToast('Mitglied entfernt', ''); loadOvGroup();
+  } catch (e) { showToast(e.message, 'error'); }
+}
+// Gruppeneinladung ablehnen [BFT-182]
+async function ovDecline(gid) {
+  try { await fetch(`${config.tokenBase}/ovgroup/decline`, { method: 'POST', headers: { Authorization: `Bearer ${sessionToken}`, 'Content-Type': 'application/json' }, body: JSON.stringify({ gid }) }); showToast('Einladung abgelehnt', ''); loadOvGroup(); } catch {}
 }
 
 // ── Profil / persönliche Stats (aus /me) ─────────────────────────────────────
@@ -2870,7 +3163,7 @@ async function loadMyTickets() {
     for (const t of myTickets) {
       const last = t.lastMessageAt || 0;
       if (t.lastFromOther && last > (seen[t.channelId] || 0)) {
-        showToast(`💬 Neue Support-Antwort — Ticket #${t.ticketId}`, 'success');
+        showToast(`💬 Neue Support-Antwort — Ticket #${t.ticketId}`, 'success', 'ticket'); // → Postfach 'ticket' [BFT-181]
         seen[t.channelId] = last; changed = true;
       } else if (!(t.channelId in seen)) { seen[t.channelId] = last; changed = true; }
     }
@@ -3031,12 +3324,13 @@ async function loadSupportTickets() {
   if (featureOpen === 'support' && !supComposing) renderSupTicketList();
 }
 
-function supCatLabel(id) { return (supCfg && supCfg.categories && (supCfg.categories.find((c) => c.id === id) || {}).label) || id || ''; }
+function supCat(id) { return (supCfg && supCfg.categories && supCfg.categories.find((c) => c.id === id)) || { id, label: id || '', emoji: '🎫' }; }
+function supCatLabel(id) { return supCat(id).label || id || ''; }
 
 function renderSupTicketList() {
   const box = el('supTickets'); if (!box) return;
   if (!supTickets.length) { box.innerHTML = '<div class="sup-empty">Keine Tickets.<br>Öffne oben ein neues.</div>'; return; }
-  box.innerHTML = supTickets.map((t) => {
+  const supRow = (t) => {
     const sel = t.channelId === supSel ? ' sel' : '';
     const inBearb = t.status === 'in_bearbeitung';
     const stCol = inBearb ? '#22c55e' : '#f59e0b';
@@ -3045,9 +3339,18 @@ function renderSupTicketList() {
     const roleTag = t.role === 'handler' ? '🛠️' : (t.role === 'available' ? '🆕' : '');
     const who = (t.role !== 'opener' && t.openerName) ? ` · von ${escapeHtml(t.openerName)}` : '';
     return `<div class="sup-trow${sel}" data-ch="${escapeHtml(t.channelId)}">
-      <div class="sup-trow-top"><b>#${t.ticketId} · ${escapeHtml(supCatLabel(t.category))}</b> ${roleTag}${neu}</div>
+      <div class="sup-trow-top"><b>#${t.ticketId}</b> ${roleTag}${neu}</div>
       <div class="sup-trow-sub" style="color:${stCol}">${stTxt}${who}</div>
     </div>`;
+  };
+  // Nach Kategorie gruppieren (Reihenfolge wie in der Config) — leichter zu unterteilen. [BFT-180]
+  const order = ((supCfg && supCfg.categories) || []).map((c) => c.id);
+  const groups = {};
+  for (const t of supTickets) { (groups[t.category] = groups[t.category] || []).push(t); }
+  const catIds = Object.keys(groups).sort((a, b) => { const ia = order.indexOf(a), ib = order.indexOf(b); return (ia < 0 ? 99 : ia) - (ib < 0 ? 99 : ib); });
+  box.innerHTML = catIds.map((cid) => {
+    const c = supCat(cid);
+    return `<div class="sup-cat-head" style="font-size:11px;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:.4px;margin:10px 2px 4px">${c.emoji || '🎫'} ${escapeHtml(c.label)} <span style="opacity:.7">· ${groups[cid].length}</span></div>${groups[cid].map(supRow).join('')}`;
   }).join('');
   box.querySelectorAll('.sup-trow').forEach((row) => { row.onclick = () => selectSupportTicket(row.dataset.ch); });
 }
@@ -3143,7 +3446,8 @@ function openSupportTicketForm() {
   supComposing = true; supSel = null; supMessages = [];
   renderSupTicketList();
   const chat = el('supChat'); if (!chat) return;
-  const cats = (supCfg && supCfg.categories) || [{ id: 'help', label: 'Frage / Hilfe', emoji: '❓' }, { id: 'report', label: 'Spieler melden', emoji: '🚨' }];
+  // Nur selbst öffenbare Kategorien anbieten (Bewerbungen laufen über Discord, open=false). [BFT-180]
+  const cats = ((supCfg && supCfg.categories) || [{ id: 'help', label: 'Frage / Hilfe', emoji: '❓' }, { id: 'report', label: 'Spieler melden', emoji: '🚨' }]).filter((c) => c.open !== false);
   let cat = cats[0].id; let known = true;
   chat.innerHTML = `
     <div class="sup-chat-head"><div><b>➕ Neues Ticket</b></div></div>
@@ -4095,6 +4399,7 @@ function dinoCardEl(card, onClick) {
   d.innerHTML = dinoPreview(card) + `<div class="body"><div class="nm">${card.dino}${card.isElder ? ' 👑' : ''}</div><div class="mt">${card.gender || ''} · ${Math.round((card.grow || 0) * 100)}%</div></div>` + paletteHTML(card.colors);
   d.onclick = onClick; return d;
 }
+// Garage/Markt-Dino-Info: gespeicherte Dino-Karten → Vitals als Prozent (kein Cur/Max-Kontext).
 function vitalsHTML(card) {
   const v = [['Gesundheit', 'health', '#22c55e'], ['Blut', 'blood', '#dc2626'], ['Ausdauer', 'stamina', '#eab308'], ['Hunger', 'hunger', '#f97316'], ['Durst', 'thirst', '#3b82f6']];
   return v.map(([l, k, c]) => { const p = Math.round((card[k] || 0) * 100); return `<div style="margin:6px 0"><div style="display:flex;justify-content:space-between;font-size:11px"><span>${l}</span><span style="color:var(--muted)">${p}%</span></div><div class="stat-track"><div class="stat-fill" style="width:${p}%;background:${c}"></div></div></div>`; }).join('');
@@ -4147,11 +4452,12 @@ function mutName(x) { const i = MUT_INFO[x]; return i ? i[0] : x; }
 function mutDesc(x) { const i = MUT_INFO[x]; return i ? i[1] : ''; }
 // Mutationen tabellarisch nach Generation (Basis / Eltern / Elder), je Zeile Name + deutsche Kurzbeschreibung.
 function mutHTML(m) {
+  const isMut = (x) => x && x !== 'None'; // "None"-Platzhalter (feste Mod-Slots) nicht anzeigen
   const groups = [['Basis', m?.base || []], ['Eltern', m?.parent || []], ['Elder', m?.elder || []]];
-  const total = groups.reduce((n, [, arr]) => n + arr.filter(Boolean).length, 0);
+  const total = groups.reduce((n, [, arr]) => n + arr.filter(isMut).length, 0);
   if (!total) return '<span style="color:var(--muted);font-size:12px">Keine Mutationen</span>';
   return '<div class="mut-tbl">' + groups.map(([label, arr]) => {
-    const items = (arr || []).filter(Boolean);
+    const items = (arr || []).filter(isMut);
     if (!items.length) return '';
     const rows = items.map((x) => `<div class="mut-row"><span class="mut-nm">${escapeHtml(mutName(x))}</span><span class="mut-dsc">${escapeHtml(mutDesc(x))}</span></div>`).join('');
     return `<div class="mut-grp"><div class="mut-grp-h">${label}<span class="mut-grp-n">${items.length}</span></div>${rows}</div>`;
@@ -5376,8 +5682,10 @@ async function updateDinoInfo() {
 
   DI_STATS.forEach((s) => {
     const pct = Math.max(0, Math.min(100, Math.round((d[s.key] ?? 0) * 100)));
-    el(`di-${s.key}-f`).style.width = pct + '%';
-    el(`di-${s.key}-v`).textContent = pct + '%';
+    el(`di-${s.key}-f`).style.width = pct + '%'; // Balken bleibt Fraktion
+    // Vitals mit absolutem Current/Max (aus /me: healthCur/Max …); Nährstoffe ohne Cur/Max → %. [BFT-179]
+    const cur = d[s.key + 'Cur'], max = d[s.key + 'Max'];
+    el(`di-${s.key}-v`).textContent = (typeof cur === 'number' && typeof max === 'number') ? `${Math.round(cur)} / ${Math.round(max)}` : pct + '%';
   });
 }
 
@@ -5524,6 +5832,7 @@ const DOCK_ICONS = {
   settings: dockSvg('<circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.6 1.6 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.6 1.6 0 0 0-1.8-.3 1.6 1.6 0 0 0-1 1.5V21a2 2 0 0 1-4 0v-.1a1.6 1.6 0 0 0-1-1.5 1.6 1.6 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.6 1.6 0 0 0 .3-1.8 1.6 1.6 0 0 0-1.5-1H3a2 2 0 0 1 0-4h.1a1.6 1.6 0 0 0 1.5-1 1.6 1.6 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.6 1.6 0 0 0 1.8.3H9a1.6 1.6 0 0 0 1-1.5V3a2 2 0 0 1 4 0v.1a1.6 1.6 0 0 0 1 1.5 1.6 1.6 0 0 0 1.8-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.6 1.6 0 0 0-.3 1.8V9a1.6 1.6 0 0 0 1.5 1H21a2 2 0 0 1 0 4h-.1a1.6 1.6 0 0 0-1.5 1z"/>'),
   admin:    dockSvg('<path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10"/>'),
   quests:   dockSvg('<path d="M4 22V4a1 1 0 0 1 1-1h12l-2 4 2 4H6"/><line x1="4" y1="22" x2="4" y2="15"/>'),
+  notifications: dockSvg('<path d="M6 8a6 6 0 0 1 12 0c0 7 3 9 3 9H3s3-2 3-9"/><path d="M10.3 21a1.94 1.94 0 0 0 3.4 0"/>'),
   close:    dockSvg('<line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/>'),
 };
 
@@ -5561,7 +5870,7 @@ function navTo(target) {
 function toggleSettings(force) {
   settingsOpen = force !== undefined ? force : !settingsOpen;
   el('settings').style.display = settingsOpen ? 'block' : 'none';
-  if (settingsOpen) renderVoiceUsers();
+  if (settingsOpen) { renderVoiceUsers(); renderThemePicker(); }   // frisch rendern → korrekte Schlösser + Color-Input
   updateInteractive();
 }
 
@@ -5573,6 +5882,8 @@ function toggleMap(force) {
     if (calibMode) { el('calibPanel').style.display = 'block'; renderCalibList(); }
     if (zoneEditMode) { el('zonePanel').style.display = 'block'; renderZoneList(); syncZoneName(); updateZoneInfo(); }
     loadTeleports();
+    { const b = el('aiEncBtn'); if (b) { b.style.display = isTeam ? 'block' : 'none'; b.classList.toggle('secondary', !aiLayerOn); } }
+    if (isTeam) loadAiEncounters();   // KI-Dino-Spawnpunkte/Patrouillen (Team-Layer)
     renderBigMap();
   }
   // Kalibrierung NICHT abbrechen beim Schließen — Punkte bleiben erhalten,
@@ -5607,7 +5918,8 @@ async function applyMic() {
 // damit micGain (0..2) das eigene Mikro für alle anderen lauter/leiser macht.
 let micProc = null;
 function createMicGainProcessor() {
-  let src = null, gain = null, dest = null;
+  let src = null, pre = null, hp = null, gateNode = null, comp = null, limiter = null, gain = null, dest = null;
+  let analyser = null, gateBuf = null, gateTimer = null, gateLastOpen = 0, srcTrack = null;
   const proc = {
     name: 'bf-mic-gain',
     async init(opts) {
@@ -5618,21 +5930,68 @@ function createMicGainProcessor() {
       const wake = () => { if (ctx.state === 'suspended') ctx.resume().catch(() => {}); };
       wake();
       ctx.addEventListener('statechange', wake);
+      srcTrack = opts.track;
       src = ctx.createMediaStreamSource(new MediaStream([opts.track]));
-      gain = ctx.createGain();
+      pre = ctx.createGain();                    // Vorverstärkung
+      hp = ctx.createBiquadFilter(); hp.type = 'highpass'; hp.frequency.value = 20; hp.Q.value = 0.707; // Low-Cut
+      gateNode = ctx.createGain();               // Noise Gate (per Pegel-Erkennung gesteuert)
+      comp = ctx.createDynamicsCompressor();     // Kompressor
+      limiter = ctx.createDynamicsCompressor();  // Limiter (Brickwall)
+      gain = ctx.createGain();                   // bestehende Mikrofon-Lautstärke
       gain.gain.value = micGain;
       dest = ctx.createMediaStreamDestination();
-      src.connect(gain); gain.connect(dest);
+      analyser = ctx.createAnalyser(); analyser.fftSize = 1024; gateBuf = new Float32Array(analyser.fftSize);
+      // Kette: Source → PreGain → High-Pass → Gate → Kompressor → Limiter → micGain → Track
+      src.connect(pre); pre.connect(hp); hp.connect(gateNode); gateNode.connect(comp);
+      comp.connect(limiter); limiter.connect(gain); gain.connect(dest);
+      hp.connect(analyser);   // Pegel-Tap fürs Gate (nach dem Filter, vor dem Gate)
       proc.processedTrack = dest.stream.getAudioTracks()[0];
       proc._ctx = ctx;
+      proc.applyAudio();
+      proc.applyNS();
+      // Gate-Detektionsschleife (setInterval läuft auch bei nicht-fokussiertem Overlay, anders als rAF).
+      gateTimer = setInterval(() => {
+        if (!gateNode || !proc._ctx) return;
+        const t = proc._ctx.currentTime;
+        if (!micComp.gateOn) { gateNode.gain.setTargetAtTime(1, t, 0.01); return; }
+        analyser.getFloatTimeDomainData(gateBuf);
+        let sum = 0; for (let i = 0; i < gateBuf.length; i++) sum += gateBuf[i] * gateBuf[i];
+        const db = 20 * Math.log10(Math.sqrt(sum / gateBuf.length) || 1e-8);
+        const now = Date.now();
+        if (db > micComp.gateThreshold) gateLastOpen = now;
+        const open = (now - gateLastOpen) < micComp.gateHold;   // Hold hält kurz offen → kein Zerhacken
+        const tc = open ? Math.max(0.001, micComp.gateAttack / 1000) : Math.max(0.005, micComp.gateRelease / 1000);
+        gateNode.gain.setTargetAtTime(open ? 1 : 0, t, tc);
+      }, 30);
     },
     async restart(opts) { await proc.destroy(); await proc.init(opts); },
     async destroy() {
-      try { src && src.disconnect(); } catch {}
-      try { gain && gain.disconnect(); } catch {}
-      try { dest && dest.disconnect(); } catch {}
+      if (gateTimer) { clearInterval(gateTimer); gateTimer = null; }
+      [src, pre, hp, gateNode, comp, limiter, gain, dest, analyser].forEach((n) => { try { n && n.disconnect(); } catch {} });
     },
     setGain(v) { if (gain && proc._ctx) gain.gain.setTargetAtTime(v, proc._ctx.currentTime, 0.05); },
+    // Alle Filter-/Dynamik-Parameter live setzen. Jede Sektion „aus" = neutral (durchlässig).
+    applyAudio() {
+      if (!proc._ctx || !pre) return;
+      const t = proc._ctx.currentTime, on = !!micComp.on;
+      pre.gain.setTargetAtTime(on ? Math.pow(10, micComp.preGain / 20) : 1, t, 0.03);
+      hp.frequency.setTargetAtTime(micComp.hpOn ? Math.max(20, micComp.hpFreq) : 20, t, 0.03);  // aus = 20 Hz ≈ kein Cut
+      comp.threshold.setValueAtTime(on ? micComp.threshold : 0, t);
+      comp.ratio.setValueAtTime(on ? micComp.ratio : 1, t);
+      comp.attack.setValueAtTime(on ? micComp.attack / 1000 : 0.003, t);
+      comp.release.setValueAtTime(on ? micComp.release / 1000 : 0.25, t);
+      comp.knee.setValueAtTime(on ? micComp.knee : 0, t);
+      limiter.threshold.setValueAtTime(micComp.limitOn ? micComp.limitCeil : 0, t);
+      limiter.ratio.setValueAtTime(micComp.limitOn ? 20 : 1, t);           // 20:1 + schneller Attack = Brickwall
+      limiter.attack.setValueAtTime(micComp.limitOn ? 0.002 : 0.003, t);
+      limiter.release.setValueAtTime(micComp.limitOn ? 0.05 : 0.25, t);
+      limiter.knee.setValueAtTime(0, t);
+    },
+    // Browser-native Rauschunterdrückung auf dem Quell-Track an/aus.
+    applyNS() {
+      if (!srcTrack || !srcTrack.applyConstraints) return;
+      try { srcTrack.applyConstraints({ noiseSuppression: !!micComp.nsOn }); } catch {}
+    },
   };
   return proc;
 }
@@ -5649,6 +6008,57 @@ function setMicGain(pct) {
   micGain = Math.max(0, Math.min(2, pct / 100));
   try { localStorage.setItem('bf-mic-gain', String(Math.round(micGain * 100) / 100)); } catch {}
   if (micProc) micProc.setGain(micGain);
+}
+function applyMicComp() { if (micProc) { if (micProc.applyAudio) micProc.applyAudio(); if (micProc.applyNS) micProc.applyNS(); } }
+
+// Slider (id ↔ micComp-Key ↔ Wert-Formatierung) und Toggles (id ↔ Key ↔ optionale Sektion zum Ausgrauen).
+const MIC_SLIDERS = [
+  { id: 'micPreGain',       key: 'preGain',       fmt: (v) => `${v > 0 ? '+' : ''}${v} dB` },
+  { id: 'micThreshold',     key: 'threshold',     fmt: (v) => `${v} dB` },
+  { id: 'micRatio',         key: 'ratio',         fmt: (v) => `${v}:1` },
+  { id: 'micAttack',        key: 'attack',        fmt: (v) => `${v} ms` },
+  { id: 'micRelease',       key: 'release',       fmt: (v) => `${v} ms` },
+  { id: 'micKnee',          key: 'knee',          fmt: (v) => `${v} dB` },
+  { id: 'micGateThreshold', key: 'gateThreshold', fmt: (v) => `${v} dB` },
+  { id: 'micGateAttack',    key: 'gateAttack',    fmt: (v) => `${v} ms` },
+  { id: 'micGateRelease',   key: 'gateRelease',   fmt: (v) => `${v} ms` },
+  { id: 'micGateHold',      key: 'gateHold',      fmt: (v) => `${v} ms` },
+  { id: 'micHpFreq',        key: 'hpFreq',        fmt: (v) => `${v} Hz` },
+  { id: 'micLimitCeil',     key: 'limitCeil',     fmt: (v) => `${v} dB` },
+];
+const MIC_TOGGLES = [
+  { id: 'micNsOn',    key: 'nsOn' },
+  { id: 'micHpOn',    key: 'hpOn',    ctrls: 'micHpCtrls' },
+  { id: 'micGateOn',  key: 'gateOn',  ctrls: 'micGateCtrls' },
+  { id: 'micCompOn',  key: 'on',      ctrls: 'micCompCtrls' },
+  { id: 'micLimitOn', key: 'limitOn', ctrls: 'micLimitCtrls' },
+];
+function refreshMicCompLabels() {
+  for (const s of MIC_SLIDERS) { const e = el(s.id + 'V'); if (e) e.textContent = s.fmt(micComp[s.key]); }
+  for (const t of MIC_TOGGLES) { if (t.ctrls) { const c = el(t.ctrls); if (c) c.classList.toggle('off', !micComp[t.key]); } }
+}
+// Einmalig beim Init: Inputs auf gespeicherte Werte setzen + Handler binden.
+function initMicCompUI() {
+  for (const t of MIC_TOGGLES) {
+    const chk = el(t.id); if (!chk) continue;
+    chk.checked = !!micComp[t.key];
+    chk.onchange = () => { micComp[t.key] = chk.checked; saveMicComp(); applyMicComp(); refreshMicCompLabels(); };
+  }
+  for (const s of MIC_SLIDERS) {
+    const inp = el(s.id); if (!inp) continue;
+    inp.value = String(micComp[s.key]);
+    inp.oninput = () => { micComp[s.key] = parseInt(inp.value, 10); saveMicComp(); applyMicComp(); refreshMicCompLabels(); };
+  }
+  const reset = el('micCompReset');
+  if (reset) reset.onclick = () => {
+    // Nur die Regler-Werte zurücksetzen; die An/Aus-Schalter behalten.
+    const keep = {}; for (const t of MIC_TOGGLES) keep[t.key] = micComp[t.key];
+    micComp = { ...MIC_COMP_DEFAULTS, ...keep };
+    saveMicComp();
+    for (const s of MIC_SLIDERS) { const inp = el(s.id); if (inp) inp.value = String(micComp[s.key]); }
+    applyMicComp(); refreshMicCompLabels();
+  };
+  refreshMicCompLabels();
 }
 
 function refreshMicState() {
@@ -5692,7 +6102,7 @@ async function connectWithSession(session) {
     if (!pollHud._timer) pollHud._timer = setInterval(pollHud, 6000);
     if (!tickGrowTimer._timer) tickGrowTimer._timer = setInterval(tickGrowTimer, 1000);
     if (!pollGroupChat._timer) pollGroupChat._timer = setInterval(pollGroupChat, 4000);
-    if (!pollVitals._timer) { pollVitals(); pollVitals._timer = setInterval(pollVitals, 500); }   // HP live (0,5s)
+    if (!pollVitals._timer) { pollVitals(); pollVitals._timer = setInterval(pollVitals, 1000); }   // Vitals aus Slow-Cache (1s); Position/Kompass laufen separat mit 100ms über /positions
     loadTeleports();
     if (!loadTeleports._timer) loadTeleports._timer = setInterval(() => { if (mapOpen) loadTeleports(); }, 4000);
     await connect(data);
@@ -5897,6 +6307,7 @@ async function aiSpawnAt(x, y) {
 // resize: 'mini'|'scale'|true (true = Breite/Höhe). noMove: true → nur skalierbar, nicht verschiebbar.
 // Große Karte (bigMap) ist bewusst NICHT enthalten = weder verschiebbar noch skalierbar.
 const MOVABLE = [
+  { id: 'compassWrap', label: 'Kompass' },                      // Kompass-Balken oben, verschiebbar
   { id: 'minimapWrap', label: 'Minimap', resize: 'mini' },     // Part 3: verschiebbar + skalierbar
   { id: 'hudHeart',    label: 'Lebensanzeige', resize: 'scale' }, // Part 3b: Herz, verschiebbar + skalierbar
   { id: 'hudInfo',     label: 'Info-Boxen', resize: 'scale' }, // Part 4: entkoppelt verschiebbar + skalierbar

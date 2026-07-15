@@ -160,6 +160,15 @@ const OUTLINE_TYPES = new Set(['sanctuary', 'patrol', 'migration']);
 // auch wenn der Patrol-Layer ausgeblendet ist.
 let goldenZoneId = null;
 export function setGoldenZone(id) { goldenZoneId = id || null; }
+// Mittelpunkt (Schwerpunkt der Polygon-Ecken) der goldenen Zone in Welt-Koordinaten — für den Kompass.
+export function goldenZoneCenter() {
+  if (!goldenZoneId) return null;
+  const z = ZONES.find((x) => x.id === goldenZoneId);
+  if (!z || !Array.isArray(z.points) || !z.points.length) return null;
+  let sx = 0, sy = 0, n = 0;
+  for (const p of z.points) { if (typeof p.x === 'number' && typeof p.y === 'number') { sx += p.x; sy += p.y; n++; } }
+  return n ? { x: sx / n, y: sy / n } : null;
+}
 
 // Polygon-Punkte um ihren Schwerpunkt sortieren (für sauberes Füllen)
 function orderPolygon(points) {
@@ -430,9 +439,10 @@ function headingMapAngle(p) {
   const a0 = worldToNorm(p.x, p.y);
   const a1 = worldToNorm(p.x + Math.cos(hr) * L, p.y + Math.sin(hr) * L);
   const dx = a1.nx - a0.nx, dy = a1.ny - a0.ny;
-  return (dx === 0 && dy === 0) ? -Math.PI / 2 : Math.atan2(dy, dx);
+  // +90° (im Uhrzeigersinn / nach rechts) korrigiert den Pfeil-Offset des Mod-Headings.
+  return (dx === 0 && dy === 0) ? -Math.PI / 2 : Math.atan2(dy, dx) + Math.PI / 2;
 }
-function arrowAngle(p) { return (typeof p.dirAngle === 'number') ? p.dirAngle : headingMapAngle(p); }
+function arrowAngle(p) { return (typeof p.heading === 'number') ? headingMapAngle(p) : ((typeof p.dirAngle === 'number') ? p.dirAngle : -Math.PI / 2); }
 function drawGroupMember(ctx, px, py, p, scale) {
   const col = groupColorFor(p.steamId);
   drawArrow(ctx, px, py, arrowAngle(p), 6.5 * scale, col);

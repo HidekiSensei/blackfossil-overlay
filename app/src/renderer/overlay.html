@@ -602,6 +602,24 @@
     .theme-custom.locked { opacity: .55; cursor: default; }
     .theme-custom.on { border-color: #fff; box-shadow: 0 0 0 1px var(--accent); }
     .theme-custom input[type=color] { width: 24px; height: 20px; border: 0; background: none; padding: 0; cursor: pointer; }
+    .bf-audio-adv summary::-webkit-details-marker { display: none; }
+    .bf-audio-adv summary::before { content: '▸'; display: inline-block; margin-right: 6px; transition: transform .12s; color: var(--muted); }
+    .bf-audio-adv[open] summary::before { transform: rotate(90deg); }
+    .comp-row { margin-bottom: 11px; }
+    .comp-head { display: flex; justify-content: space-between; align-items: baseline; font-size: 12px; margin-bottom: 2px; }
+    .comp-val { font-variant-numeric: tabular-nums; color: var(--accent-2); font-weight: 600; }
+    .comp-desc { font-size: 10.5px; color: var(--muted); margin-top: 1px; line-height: 1.3; }
+    .bf-comp-toggle { display: flex; align-items: center; gap: 8px; margin-bottom: 8px; cursor: pointer; font-size: 12.5px; font-weight: 600; }
+    .comp-sec { margin: 0 0 12px 4px; padding-left: 8px; border-left: 2px solid rgba(var(--accent-rgb),0.25); }
+    .comp-sec.off { opacity: .4; pointer-events: none; filter: grayscale(.5); }
+    .notif-list { max-height: 46vh; overflow-y: auto; display: flex; flex-direction: column; gap: 6px; }
+    .notif-item { display: flex; align-items: baseline; justify-content: space-between; gap: 10px; padding: 8px 10px; border-radius: 8px; background: rgba(255,255,255,0.04); border-left: 3px solid transparent; }
+    .notif-item.unread { background: rgba(var(--accent-rgb),0.12); border-left-color: var(--accent); }
+    .notif-item.error { border-left-color: #ef4444; }
+    .notif-item.warn  { border-left-color: #f59e0b; }
+    .notif-item.success { border-left-color: #22c55e; }
+    .notif-text { font-size: 13px; line-height: 1.35; }
+    .notif-time { font-size: 10.5px; color: var(--muted); white-space: nowrap; flex: none; }
 
     /* ════════════════════════════════════════════════════════════════
        ⚡ BlackFossil FX — elektrische Energie passend zum Lightning-Logo.
@@ -932,6 +950,9 @@
   <!-- Toast-Container -->
   <div id="toasts"></div>
 
+  <!-- Kompass (verschiebbarer Balken oben): Himmelsrichtungen + Wegpunkt + Gruppe + Golden-Zone, Mitte = Blickrichtung -->
+  <div id="compassWrap" style="position:fixed;top:10px;z-index:36"><canvas id="compass" width="480" height="46"></canvas></div>
+
   <!-- Minimap + Mikro -->
   <!-- Part 3: Minimap (verschiebbar + skalierbar) -->
   <div id="minimapWrap">
@@ -1037,6 +1058,7 @@
             <button id="zlPatrol" class="map-viewbtn">🐾 Patrol</button>
             <button id="zlMigration" class="map-viewbtn">🧭 Migration</button>
           </div>
+          <button id="aiEncBtn" class="map-viewbtn" style="display:none;margin-top:6px;color:#fca5a5">🦖 KI-Dinos (Spawns/Patrouillen)</button>
           <div style="height:1px;background:var(--border);margin:10px 0"></div>
           <div style="font-weight:700;margin-bottom:8px">🎯 Steuerung</div>
           <button id="centerBtn" class="map-viewbtn">⌖ Auf mich zentrieren</button>
@@ -1077,6 +1099,96 @@
           <input id="micGain" type="range" min="0" max="200" step="5" value="100" style="width:100%;accent-color:var(--accent)">
           <div style="font-size:11px;color:var(--muted)">Macht dein eigenes Mikro für alle anderen lauter oder leiser (100&nbsp;%&nbsp;=&nbsp;normal).</div>
         </div>
+        <details class="set-block bf-audio-adv">
+          <summary class="set-label" style="cursor:pointer;list-style:none">🎚️ Erweiterte Audio-Einstellungen</summary>
+          <div style="font-size:11px;color:var(--muted);margin:2px 0 12px">Bearbeitet dein gesendetes Mikro (Reihenfolge: Rauschunterdrückung → Low-Cut → Gate → Kompressor → Limiter). Wirkt für alle anderen.</div>
+
+          <!-- Rauschunterdrückung -->
+          <label class="bf-comp-toggle"><input id="micNsOn" type="checkbox"> 🔇 Rauschunterdrückung</label>
+          <div class="comp-desc" style="margin:-2px 0 12px">Browser-Rauschminderung (Lüfter, Tastatur, Grundrauschen) direkt am Mikro.</div>
+
+          <!-- Low-Cut / High-Pass -->
+          <label class="bf-comp-toggle"><input id="micHpOn" type="checkbox"> 🩹 Low-Cut (High-Pass)</label>
+          <div id="micHpCtrls" class="comp-sec">
+            <div class="comp-row">
+              <div class="comp-head"><span>Grenzfrequenz</span><span id="micHpFreqV" class="comp-val"></span></div>
+              <input id="micHpFreq" type="range" min="40" max="300" step="5" style="width:100%;accent-color:var(--accent)">
+              <div class="comp-desc">Schneidet tiefes Brummen/Rumpeln unterhalb dieser Frequenz weg (macht die Stimme klarer).</div>
+            </div>
+          </div>
+
+          <!-- Noise Gate -->
+          <label class="bf-comp-toggle"><input id="micGateOn" type="checkbox"> 🚪 Noise Gate</label>
+          <div id="micGateCtrls" class="comp-sec">
+            <div class="comp-row">
+              <div class="comp-head"><span>Schwelle (Threshold)</span><span id="micGateThresholdV" class="comp-val"></span></div>
+              <input id="micGateThreshold" type="range" min="-80" max="-20" step="1" style="width:100%;accent-color:var(--accent)">
+              <div class="comp-desc">Ab welchem Pegel das Mikro öffnet. Höher = strenger (schneidet mehr weg).</div>
+            </div>
+            <div class="comp-row">
+              <div class="comp-head"><span>Attack</span><span id="micGateAttackV" class="comp-val"></span></div>
+              <input id="micGateAttack" type="range" min="0" max="50" step="1" style="width:100%;accent-color:var(--accent)">
+              <div class="comp-desc">Wie schnell das Gate öffnet, wenn du sprichst.</div>
+            </div>
+            <div class="comp-row">
+              <div class="comp-head"><span>Release</span><span id="micGateReleaseV" class="comp-val"></span></div>
+              <input id="micGateRelease" type="range" min="20" max="1000" step="10" style="width:100%;accent-color:var(--accent)">
+              <div class="comp-desc">Wie schnell es wieder schließt, wenn du still bist.</div>
+            </div>
+            <div class="comp-row">
+              <div class="comp-head"><span>Hold</span><span id="micGateHoldV" class="comp-val"></span></div>
+              <input id="micGateHold" type="range" min="0" max="1000" step="10" style="width:100%;accent-color:var(--accent)">
+              <div class="comp-desc">Hält das Gate nach dem letzten Ton offen (verhindert Zerhacken in Sprechpausen).</div>
+            </div>
+          </div>
+
+          <!-- Kompressor -->
+          <label class="bf-comp-toggle"><input id="micCompOn" type="checkbox"> 🎚️ Kompressor</label>
+          <div id="micCompCtrls" class="comp-sec">
+            <div class="comp-row">
+              <div class="comp-head"><span>Vorverstärkung</span><span id="micPreGainV" class="comp-val"></span></div>
+              <input id="micPreGain" type="range" min="-24" max="24" step="1" style="width:100%;accent-color:var(--accent)">
+              <div class="comp-desc">Signal anheben, bevor der Kompressor greift. Negative Werte senken.</div>
+            </div>
+            <div class="comp-row">
+              <div class="comp-head"><span>Schwelle (Threshold)</span><span id="micThresholdV" class="comp-val"></span></div>
+              <input id="micThreshold" type="range" min="-60" max="0" step="1" style="width:100%;accent-color:var(--accent)">
+              <div class="comp-desc">Ab welchem Pegel er eingreift. Je niedriger, desto mehr Kompression.</div>
+            </div>
+            <div class="comp-row">
+              <div class="comp-head"><span>Ratio</span><span id="micRatioV" class="comp-val"></span></div>
+              <input id="micRatio" type="range" min="1" max="20" step="1" style="width:100%;accent-color:var(--accent)">
+              <div class="comp-desc">Kompressionsverhältnis. Höher = stärkere Begrenzung. 1:1 = aus.</div>
+            </div>
+            <div class="comp-row">
+              <div class="comp-head"><span>Attack</span><span id="micAttackV" class="comp-val"></span></div>
+              <input id="micAttack" type="range" min="0" max="200" step="1" style="width:100%;accent-color:var(--accent)">
+              <div class="comp-desc">Wie schnell er zuschlägt. Niedrig = schneller.</div>
+            </div>
+            <div class="comp-row">
+              <div class="comp-head"><span>Release</span><span id="micReleaseV" class="comp-val"></span></div>
+              <input id="micRelease" type="range" min="0" max="1000" step="10" style="width:100%;accent-color:var(--accent)">
+              <div class="comp-desc">Wie schnell er loslässt. Höher = weicher.</div>
+            </div>
+            <div class="comp-row">
+              <div class="comp-head"><span>Knee</span><span id="micKneeV" class="comp-val"></span></div>
+              <input id="micKnee" type="range" min="0" max="40" step="1" style="width:100%;accent-color:var(--accent)">
+              <div class="comp-desc">Sanfter Übergang am Threshold. Höher = weicherer Einsatz.</div>
+            </div>
+          </div>
+
+          <!-- Limiter -->
+          <label class="bf-comp-toggle"><input id="micLimitOn" type="checkbox"> 🧱 Limiter</label>
+          <div id="micLimitCtrls" class="comp-sec">
+            <div class="comp-row">
+              <div class="comp-head"><span>Obergrenze (Ceiling)</span><span id="micLimitCeilV" class="comp-val"></span></div>
+              <input id="micLimitCeil" type="range" min="-12" max="0" step="1" style="width:100%;accent-color:var(--accent)">
+              <div class="comp-desc">Harte Decke gegen Übersteuern/Clipping bei lauten Spitzen (Schreien).</div>
+            </div>
+          </div>
+
+          <button id="micCompReset" class="secondary" style="width:100%;margin-top:6px;font-size:12px">↺ Standardwerte (Regler)</button>
+        </details>
         <div class="set-block">
           <div class="set-label">🎨 Layout</div>
           <button id="editModeBtn" style="width:100%">🎨 Edit-Mode (Panels verschieben)</button>
@@ -1365,6 +1477,12 @@
   <div id="lootbox" class="feature-panel"></div>
   <div id="lexikon" class="feature-panel"></div>
   <div id="support" class="feature-panel"></div>
+  <div id="notifications" class="feature-panel">
+    <h2>🔔 Postfach</h2>
+    <p>Verpasste Benachrichtigungen — Belohnungen, Hinweise & mehr. Neue Meldungen erscheinen auch als Toast.</p>
+    <div id="notifList" class="notif-list"></div>
+    <button id="notifClearBtn" class="secondary" style="margin-top:12px">🗑️ Verlauf leeren</button>
+  </div>
 
   <!-- Dock (Overlay-Modus / Alt): klickbare Schnellzugriffe. Icons werden per JS injiziert. -->
   <div id="dock">
@@ -1392,6 +1510,7 @@
       <button class="dock-btn" data-act="market" aria-label="Markt"><span>Markt</span></button>
       <button class="dock-btn" data-act="lootbox" aria-label="Lootbox"><span>Lootbox</span></button>
       <button class="dock-btn" data-act="quests" aria-label="Quests"><span>Quests</span></button>
+      <button class="dock-btn" data-act="notifications" aria-label="Postfach"><span>Postfach</span></button>
       <button class="dock-btn" data-act="map" aria-label="Karte"><span>Karte</span></button>
       <button class="dock-btn" data-act="skin" aria-label="Skin"><span>Skin</span></button>
       <button class="dock-btn" data-act="settings" aria-label="Einstellungen"><span>Settings</span></button>
