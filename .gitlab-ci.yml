@@ -8,7 +8,10 @@ stages:
 
 build:test-installer:
   stage: build
-  tags: [windows]
+  # windows UND msvc: nur der windows-test-box-Runner hat beide Tags. Ohne "msvc" greift auch der
+  # SanServer-Runner (nur "windows"), auf dem aber kein pwsh installiert ist → "prepare environment"-
+  # Systemfehler. Der msvc-Tag routet den Job gezielt auf die richtige Build-Box.
+  tags: [windows, msvc]
   rules:
     - if: '$CI_COMMIT_BRANCH == "dev"'
   script:
@@ -30,7 +33,10 @@ build:test-installer:
 
 build:prod:
   stage: build
-  tags: [windows]
+  # windows UND msvc: nur der windows-test-box-Runner hat beide Tags. Ohne "msvc" greift auch der
+  # SanServer-Runner (nur "windows"), auf dem aber kein pwsh installiert ist → "prepare environment"-
+  # Systemfehler. Der msvc-Tag routet den Job gezielt auf die richtige Build-Box.
+  tags: [windows, msvc]
   rules:
     - if: '$CI_COMMIT_BRANCH == "main"'
       when: manual
