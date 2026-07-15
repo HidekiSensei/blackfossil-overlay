@@ -198,6 +198,8 @@ function computeMoveAngles() {
 }
 let calibMode = false;
 let heatmapMode = false;
+let aiEncounters = [];    // AI-Dino-Encounter (Spawnpunkte/Patrouillen) — nur Team, große Karte
+let aiLayerOn = true;     // Team-Kartenlayer für KI-Dinos an/aus (Standard an)
 // Auto-Kalibrierung über ZONEN-Ecken: rohe Welt-Koordinaten der hinterlegten Zonen
 // (PVP/PVE), gut über die Karte verteilt ausgewählt. Du erkennst die Ecken am Gelände
 // und klickst sie an → solveAffine schiebt nur die DARSTELLUNG zurecht (kein Umrechnen
@@ -835,6 +837,7 @@ async function init() {
   el('centerBtn').onclick = () => centerOnMe();
   el('resetViewBtn').onclick = () => { mapZoom = 1; mapPanX = 0; mapPanY = 0; renderBigMap(); };
   { const c = el('clearWpBtn'); if (c) c.onclick = () => { waypoints = []; renderBigMap(); renderMinimap(); }; }
+  { const b = el('aiEncBtn'); if (b) b.onclick = () => { aiLayerOn = !aiLayerOn; b.classList.toggle('secondary', !aiLayerOn); renderBigMap(); }; }
 
   // Sprechreichweiten-Buttons
   const rbWrap = el('rangeBtns');
@@ -1265,6 +1268,7 @@ function renderBigMap() {
   const view = { ctx, w: cv.width, h: cv.height };
   if (heatmapMode) drawHeatmap(view, players, me);
   else drawFullMap(view, players, waypoints, teleports, hoveredTp, 1 / mapZoom);
+  if (!heatmapMode && isTeam && aiLayerOn) drawAiEncounters(ctx, cv.width, cv.height, 1 / mapZoom);
   ctx.setTransform(1, 0, 0, 1, 0, 0);
   if (calibMode) drawCalibOverlay(ctx, cv.width, cv.height);
   renderMapGroup();
@@ -1297,6 +1301,51 @@ function renderMapGroup() {
     row.onmouseleave = () => { row.style.background = 'transparent'; };
     row.onclick = () => centerOnPlayer(row.dataset.sid);
   });
+}
+
+// ── KI-Dino-Encounter-Layer (nur Team) ───────────────────────────────────────
+// Zeichnet die vom Game-Server (/ai/encounters) gelieferten Spawnpunkte (rote Rauten) und
+// Patrouillen (gestrichelte Linien) auf die große Karte. Platzhalter-Einträge mit Spawn {0,0}
+// (noch nicht platziert) werden übersprungen. sc = 1/mapZoom hält Marker/Text zoom-konstant.
+function aiSpeciesShort(sp) { return String(sp || '').replace(/^BP_/, '').replace(/_C$/, ''); }
+function drawAiEncounters(ctx, w, h, sc) {
+  const placed = (p) => p && (p.x !== 0 || p.y !== 0);
+  for (const e of aiEncounters) {
+    if (e.enabled === false || !placed(e.spawn)) continue;
+    const s = worldToNorm(e.spawn.x, e.spawn.y);
+    const sx = s.nx * w, sy = s.ny * h;
+    // Patrouille: gestrichelte Linie + Stützpunkte
+    const patrol = Array.isArray(e.patrol) ? e.patrol.filter(placed) : [];
+    if (patrol.length >= 2) {
+      ctx.beginPath();
+      patrol.forEach((pt, i) => { const n = worldToNorm(pt.x, pt.y); const x = n.nx * w, y = n.ny * h; i ? ctx.lineTo(x, y) : ctx.moveTo(x, y); });
+      ctx.setLineDash([6 * sc, 4 * sc]); ctx.lineWidth = 2 * sc; ctx.strokeStyle = 'rgba(248,113,113,0.9)'; ctx.stroke(); ctx.setLineDash([]);
+      for (const pt of patrol) { const n = worldToNorm(pt.x, pt.y); ctx.beginPath(); ctx.arc(n.nx * w, n.ny * h, 3 * sc, 0, 2 * Math.PI); ctx.fillStyle = '#f87171'; ctx.fill(); }
+    }
+    // Spawn-Marker: rote Raute mit weißem Rand
+    const d = 6 * sc;
+    ctx.save(); ctx.translate(sx, sy); ctx.rotate(Math.PI / 4);
+    ctx.fillStyle = '#ef4444'; ctx.fillRect(-d, -d, 2 * d, 2 * d);
+    ctx.lineWidth = 1.5 * sc; ctx.strokeStyle = '#fff'; ctx.strokeRect(-d, -d, 2 * d, 2 * d);
+    ctx.restore();
+    // Label: Encounter-Name + Anzahl + Nacht-Icon
+    const night = e.params && e.params.activeAt === 'night';
+    const label = `${e.name || aiSpeciesShort(e.species)}${e.count > 1 ? ' ×' + e.count : ''}${night ? ' 🌙' : ''}`;
+    ctx.font = `bold ${Math.max(9, Math.round(11 * sc))}px sans-serif`; ctx.textAlign = 'center'; ctx.textBaseline = 'bottom';
+    ctx.lineWidth = 3 * sc; ctx.strokeStyle = 'rgba(0,0,0,0.85)'; ctx.strokeText(label, sx, sy - 10 * sc);
+    ctx.fillStyle = '#fecaca'; ctx.fillText(label, sx, sy - 10 * sc);
+  }
+}
+// Encounters vom Backend holen (staff-gated). Statische Konfig → ein Fetch pro Karten-Öffnen reicht.
+async function loadAiEncounters() {
+  if (!isTeam || !sessionToken) return;
+  try {
+    const res = await fetch(`${config.tokenBase}/ai/encounters`, { headers: { Authorization: `Bearer ${sessionToken}` } });
+    if (!res.ok) return;
+    const d = await res.json();
+    aiEncounters = Array.isArray(d.encounters) ? d.encounters : [];
+    if (mapOpen) renderBigMap();
+  } catch {}
 }
 
 // Bildschirm-Event → normalisierte Kartenkoordinate (berücksichtigt Zoom/Pan)
@@ -5792,6 +5841,8 @@ function toggleMap(force) {
     if (calibMode) { el('calibPanel').style.display = 'block'; renderCalibList(); }
     if (zoneEditMode) { el('zonePanel').style.display = 'block'; renderZoneList(); syncZoneName(); updateZoneInfo(); }
     loadTeleports();
+    { const b = el('aiEncBtn'); if (b) { b.style.display = isTeam ? 'block' : 'none'; b.classList.toggle('secondary', !aiLayerOn); } }
+    if (isTeam) loadAiEncounters();   // KI-Dino-Spawnpunkte/Patrouillen (Team-Layer)
     renderBigMap();
   }
   // Kalibrierung NICHT abbrechen beim Schließen — Punkte bleiben erhalten,
