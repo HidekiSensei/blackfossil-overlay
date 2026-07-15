@@ -586,7 +586,8 @@ function renderCompass() {
   const myG = me.groupId;
   for (const p of players) { if (!p.isYou && typeof p.x === 'number' && ((myG && p.groupId === myG) || p.ovgroup)) marks.push({ x: p.x, y: p.y, dot: groupColorFor(p.steamId) }); }
   for (const m of marks) {
-    const rel = cmpRel(cmpBearing(m.x - me.x, m.y - me.y), hd); if (!vis(rel)) continue;
+    // Marker-Peilung braucht denselben Nord-Offset wie die Himmelsrichtungen (sonst 90° verschoben).
+    const rel = cmpRel(cmpNorm(cmpBearing(m.x - me.x, m.y - me.y) + COMPASS_NORTH_OFF), hd); if (!vis(rel)) continue;
     const x = xFor(rel);
     if (m.dot) { ctx.beginPath(); ctx.arc(x, 8, 5, 0, 2 * Math.PI); ctx.fillStyle = m.dot; ctx.fill(); ctx.lineWidth = 1.5; ctx.strokeStyle = 'rgba(0,0,0,0.75)'; ctx.stroke(); }
     else if (m.sym) { ctx.font = '14px sans-serif'; ctx.fillText(m.sym, x, 8); }
