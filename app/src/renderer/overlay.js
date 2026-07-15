@@ -882,16 +882,16 @@ async function init() {
   el('resetHkBtn').onclick = async () => { await window.bf.resetHotkeys(); await renderHotkeys(); };
   window.addEventListener('keydown', onRebindKey);
 
-  // Render-Loops — Minimap nur neu zeichnen, wenn sichtbar UND etwas geändert.
-  // Spart bei vielen Spielern hunderte identische Redraws/Min; der 1,5s-Positions-Poll
-  // markiert ohnehin dirty → die Minimap ist nie länger als ~1,5s veraltet.
+  // Render-Loops — Minimap nur neu zeichnen, wenn sichtbar UND etwas geändert (dirty-Flag spart
+  // identische Redraws, wenn nichts passiert). Takt = Positions-Poll (100ms), damit die Minimap so
+  // frisch ist wie die Daten; der 100ms-Poll markiert bei neuen Positionen dirty.
   setInterval(() => {
     if (!minimapDirty || !me) return;                 // off-server (!me) → Minimap ausgeblendet
     const mw = el('minimapWrap');
     if (mw && mw.style.display === 'none') return;
     minimapDirty = false;
     renderMinimap();
-  }, 200);
+  }, 100);
   // Minimap per Mausrad zoomen (greift, wenn das Overlay interaktiv ist: Dock/Panel offen)
   { const mm = el('minimap'); if (mm) mm.addEventListener('wheel', (e) => {
       e.preventDefault(); setMiniZoom(miniZoom * (e.deltaY < 0 ? 1.18 : 1 / 1.18));
