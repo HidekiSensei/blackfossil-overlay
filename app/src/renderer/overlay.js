@@ -508,7 +508,7 @@ function updateHud(d) {
   updateHeart(d);                   // permanente Lebensanzeige
 }
 // Grow-Waben-HUD: 3 Honigwaben (Grow · Grow-Rate · HP), füllen sich von unten.
-// Wird von pollVitals (0,5 s) UND updateHud (/me, 6 s) aufgerufen — beide liefern
+// Wird von pollVitals (0,1 s) UND updateHud (/me, 6 s) aufgerufen — beide liefern
 // grow/carbs/protein/lipid/health/online.
 function setHex(fillFrac, col, e1id, f1id, f2id) {
   const line = 1 - Math.max(0, Math.min(1, fillFrac)); // 0 = voll (von unten), 1 = leer
@@ -961,7 +961,7 @@ function startPositionPolling() {
           else if (!amDead && voiceConnected) showToast('🎙️ Wieder im Spiel — Voice aktiv.', 'success');
           refreshMicState();
         }
-        // Health läuft separat über pollVitals() (0,5s, Combat-Stat) — nicht über Positionen
+        // Health läuft separat über pollVitals() (0,1s, Combat-Stat) — nicht über Positionen
         computeMoveAngles();   // Pfeil-Richtung aus tatsächlicher Karten-Bewegung
         minimapDirty = true;   // neue Positionen → Minimap neu zeichnen
         if (Array.isArray(data.toasts) && data.toasts.length) enqueueServerToasts(data.toasts);
@@ -974,7 +974,7 @@ function startPositionPolling() {
         updateZoneBox();
         checkZoneChange();
         updateProximityVolumes();
-        renderCompass();   // Kompass mit frischer Position/Blickrichtung neu zeichnen (0,5s)
+        renderCompass();   // Kompass mit frischer Position/Blickrichtung neu zeichnen (0,1s)
         if (settingsOpen) renderVoiceUsers();
         if (mapOpen) renderBigMap();
         if (featureOpen === 'group') updateGroupLive();   // nur Mitglieder/Chat updaten, NICHT das Eingabefeld neu bauen
@@ -984,9 +984,9 @@ function startPositionPolling() {
     } catch {}
   };
   poll();
-  // 0,5s = Server-Tickrate: Position (Map + Voice) live. Läuft rein gegen den Backend-Cache
-  // (der Backend-Poller hält /players warm), löst also keinen Game-Server-Call pro Poll aus. [BFT-178]
-  setInterval(poll, 500);
+  // 0,1s ≈ Server-Tickrate: Position (Map + Voice) live. Läuft rein gegen den Backend-Cache
+  // (der Backend-Poller hält /players im 0,1s-Takt warm), löst also keinen Game-Server-Call pro Poll aus. [BFT-178]
+  setInterval(poll, 100);
   setInterval(updateParkWarn, 1000); // Countdown flüssig runterzählen (unabhängig vom Positions-Poll)
   setInterval(updateGoldenHud, 1000); // Golden-Timer flüssig zwischen den Polls interpolieren
 }
@@ -6010,7 +6010,7 @@ async function connectWithSession(session) {
     if (!pollHud._timer) pollHud._timer = setInterval(pollHud, 6000);
     if (!tickGrowTimer._timer) tickGrowTimer._timer = setInterval(tickGrowTimer, 1000);
     if (!pollGroupChat._timer) pollGroupChat._timer = setInterval(pollGroupChat, 4000);
-    if (!pollVitals._timer) { pollVitals(); pollVitals._timer = setInterval(pollVitals, 500); }   // HP live (0,5s)
+    if (!pollVitals._timer) { pollVitals(); pollVitals._timer = setInterval(pollVitals, 100); }   // HP live (0,1s, gegen Backend-Cache)
     loadTeleports();
     if (!loadTeleports._timer) loadTeleports._timer = setInterval(() => { if (mapOpen) loadTeleports(); }, 4000);
     await connect(data);
