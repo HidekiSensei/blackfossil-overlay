@@ -31,6 +31,32 @@ build:test-installer:
     paths: [app/release/BlackFossil-Overlay-test-*.exe]
     expire_in: 14 days
 
+build:test-installer-prod:
+  # Test-Installer MIT Prod-Adressen (main hat tokenBase=api.blackfossil.de). Manuell, KEIN Feed-Publish
+  # (publish:feed hängt an build:prod, nicht an diesem Job) → Team kann gegen Prod testen, ohne dass
+  # alle Spieler auto-updaten. Cutover-Test.
+  stage: build
+  tags: [windows, msvc]
+  rules:
+    - if: '$CI_COMMIT_BRANCH == "main"'
+      when: manual
+  script:
+    - cd app
+    - node -v
+    - npm ci
+    - npm run build:renderer
+    - npx electron-builder --win --publish never
+    - |
+      $v = (Get-Content package.json -Raw | ConvertFrom-Json).version
+      $exe = Get-ChildItem release -Filter "*Setup*.exe" -ErrorAction SilentlyContinue | Select-Object -First 1
+      Remove-Item "release\BlackFossil-Overlay-cutovertest-*.exe" -ErrorAction SilentlyContinue
+      Copy-Item $exe.FullName "release\BlackFossil-Overlay-cutovertest-$v.exe" -Force
+      Write-Host "CUTOVER-TEST-INSTALLER (Prod-URL api.blackfossil.de): BlackFossil-Overlay-cutovertest-$v.exe"
+  artifacts:
+    name: blackfossil-overlay-cutovertest
+    paths: [app/release/BlackFossil-Overlay-cutovertest-*.exe]
+    expire_in: 14 days
+
 build:prod:
   stage: build
   # windows UND msvc: nur der windows-test-box-Runner hat beide Tags. Ohne "msvc" greift auch der
