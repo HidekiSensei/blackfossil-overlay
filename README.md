@@ -15,7 +15,9 @@ Maintained by **[@HidekiSensei](https://github.com/HidekiSensei)**.
 ## Project structure
 
 - `app/` — the Electron overlay application (this is what players install)
-- `token-service/` — backend service: Discord login → LiveKit token + player positions relay
+
+> Der frühere `token-service/` (Node: Discord-Login → LiveKit-Token + Positions-Relay) wurde
+> vollständig durch das Go-Backend (`blackfossil-backend`, `config.tokenBase`) ersetzt und entfernt.
 
 ## Tech
 
