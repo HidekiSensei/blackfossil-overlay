@@ -898,16 +898,9 @@ async function init() {
   el('resetHkBtn').onclick = async () => { await window.bf.resetHotkeys(); await renderHotkeys(); };
   window.addEventListener('keydown', onRebindKey);
 
-  // Render-Loops — Minimap nur neu zeichnen, wenn sichtbar UND etwas geändert (dirty-Flag spart
-  // identische Redraws, wenn nichts passiert). Takt = Positions-Poll (100ms), damit die Minimap so
-  // frisch ist wie die Daten; der 100ms-Poll markiert bei neuen Positionen dirty.
-  setInterval(() => {
-    if (!minimapDirty || !me) return;                 // off-server (!me) → Minimap ausgeblendet
-    const mw = el('minimapWrap');
-    if (mw && mw.style.display === 'none') return;
-    minimapDirty = false;
-    renderMinimap();
-  }, 100);
+  // Minimap-Render: rAF-Loop (~30fps, Perf-Cap) mit Positions-Interpolation (minimapLoop) — flüssige
+  // Bewegung entfernter Spieler statt 10fps-Stufen; Smart-Gating zeichnet nur bei echter Bewegung.
+  if (!minimapRAF) minimapLoop();
   // Minimap per Mausrad zoomen (greift, wenn das Overlay interaktiv ist: Dock/Panel offen)
   { const mm = el('minimap'); if (mm) mm.addEventListener('wheel', (e) => {
       e.preventDefault(); setMiniZoom(miniZoom * (e.deltaY < 0 ? 1.18 : 1 / 1.18));
@@ -1261,7 +1254,35 @@ function fitCanvasDPR(cv, ctx) {
 }
 
 let miniZoom = parseFloat(localStorage.getItem('bf-mini-zoom')) || 1;   // Nutzer-Zoom der Minimap (Mausrad)
-let minimapDirty = true;   // Minimap nur neu zeichnen, wenn sich etwas geändert hat (Daten/Zoom/Theme)
+let minimapDirty = true;   // erzwingt einen Redraw bei Zoom/Theme (Bewegung erkennt der rAF-Loop selbst)
+let miniDisp = {};         // steamId → {x,y} gleitend interpolierte Anzeige-Position
+let minimapRAF = 0;
+let miniFrame = 0;
+// rAF-Loop (~30fps, Perf-Cap): zieht die angezeigten Positionen weich zu den echten (100ms-Poll) nach
+// → entfernte Spieler gleiten statt in 10 Stufen/s zu springen. Smart-Gating: kein Redraw, wenn nichts
+// in Bewegung ist (Minimap zeichnet Karte+Zonen → nur so oft neu wie nötig).
+function minimapLoop() {
+  minimapRAF = requestAnimationFrame(minimapLoop);
+  if (!me) return;                                   // off-server → nichts zu zeichnen
+  const mw = el('minimapWrap');
+  if (mw && mw.style.display === 'none') return;      // Minimap ausgeblendet
+  if (miniFrame++ & 1) return;                        // ~30fps: nur jeden 2. Frame (flüssig genug, halbe Last)
+  let moving = false;
+  const seen = {};
+  for (const p of players) {
+    if (typeof p.x !== 'number') continue;
+    seen[p.steamId] = true;
+    const d = miniDisp[p.steamId];
+    if (!d) { miniDisp[p.steamId] = { x: p.x, y: p.y }; continue; }
+    const dx = p.x - d.x, dy = p.y - d.y;
+    if (Math.hypot(dx, dy) > 8000) { d.x = p.x; d.y = p.y; moving = true; continue; } // Teleport → snappen
+    if (Math.abs(dx) > 1 || Math.abs(dy) > 1) { d.x += dx * 0.35; d.y += dy * 0.35; moving = true; }
+  }
+  for (const sid in miniDisp) { if (!seen[sid]) delete miniDisp[sid]; } // weg vom Server → raus
+  if (!moving && !minimapDirty) return;              // nichts geändert → CPU sparen
+  minimapDirty = false;
+  renderMinimap();
+}
 function setMiniZoom(z) {
   miniZoom = Math.min(6, Math.max(0.5, z));
   localStorage.setItem('bf-mini-zoom', miniZoom.toFixed(2));
@@ -1271,7 +1292,11 @@ function renderMinimap() {
   const cv = el('minimap');
   const ctx = cv.getContext('2d');
   const { w, h } = fitCanvasDPR(cv, ctx);
-  drawMinimap({ ctx, w, h }, players, me, myRange * UNITS_PER_M, waypoints, miniZoom);
+  // Interpolierte Anzeige-Positionen (miniDisp) statt der roh-100ms-Sprünge; Fallback = echte Position.
+  const iplayers = players.map((p) => { const d = miniDisp[p.steamId]; return d ? { ...p, x: d.x, y: d.y } : p; });
+  const dme = me && miniDisp[me.steamId];
+  const ime = dme ? { ...me, x: dme.x, y: dme.y } : me;
+  drawMinimap({ ctx, w, h }, iplayers, ime, myRange * UNITS_PER_M, waypoints, miniZoom);
   ctx.setTransform(1, 0, 0, 1, 0, 0);
 }
 function renderBigMap() {
