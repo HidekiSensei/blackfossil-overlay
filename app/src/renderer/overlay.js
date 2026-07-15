@@ -510,7 +510,7 @@ function updateHud(d) {
   updateHeart(d);                   // permanente Lebensanzeige
 }
 // Grow-Waben-HUD: 3 Honigwaben (Grow · Grow-Rate · HP), füllen sich von unten.
-// Wird von pollVitals (0,1 s) UND updateHud (/me, 6 s) aufgerufen — beide liefern
+// Wird von pollVitals (1s, Slow-Cache) UND updateHud (/me, 6 s) aufgerufen — beide liefern
 // grow/carbs/protein/lipid/health/online.
 function setHex(fillFrac, col, e1id, f1id, f2id) {
   const line = 1 - Math.max(0, Math.min(1, fillFrac)); // 0 = voll (von unten), 1 = leer
@@ -964,7 +964,7 @@ function startPositionPolling() {
           else if (!amDead && voiceConnected) showToast('🎙️ Wieder im Spiel — Voice aktiv.', 'success');
           refreshMicState();
         }
-        // Health läuft separat über pollVitals() (0,1s, Combat-Stat) — nicht über Positionen
+        // Health läuft separat über pollVitals() (1s, Slow-Cache; Combat-Stat nicht im Fast-Pull) — nicht über Positionen
         computeMoveAngles();   // Pfeil-Richtung aus tatsächlicher Karten-Bewegung
         minimapDirty = true;   // neue Positionen → Minimap neu zeichnen
         if (Array.isArray(data.toasts) && data.toasts.length) enqueueServerToasts(data.toasts);
@@ -6061,7 +6061,7 @@ async function connectWithSession(session) {
     if (!pollHud._timer) pollHud._timer = setInterval(pollHud, 6000);
     if (!tickGrowTimer._timer) tickGrowTimer._timer = setInterval(tickGrowTimer, 1000);
     if (!pollGroupChat._timer) pollGroupChat._timer = setInterval(pollGroupChat, 4000);
-    if (!pollVitals._timer) { pollVitals(); pollVitals._timer = setInterval(pollVitals, 100); }   // HP live (0,1s, gegen Backend-Cache)
+    if (!pollVitals._timer) { pollVitals(); pollVitals._timer = setInterval(pollVitals, 1000); }   // Vitals aus Slow-Cache (1s); Position/Kompass laufen separat mit 100ms über /positions
     loadTeleports();
     if (!loadTeleports._timer) loadTeleports._timer = setInterval(() => { if (mapOpen) loadTeleports(); }, 4000);
     await connect(data);
