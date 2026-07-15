@@ -543,6 +543,22 @@ function updateHeart(d) {
 const COMPASS_HALF_FOV = 80;   // ±80° um die Blickrichtung sichtbar
 let COMPASS_NORTH_OFF = -90;   // Mod-Heading-Offset für die Himmelsrichtungen (in-game kalibriert)
 let compassCtx = null;
+let compassHd = null;   // gleitend interpolierte Anzeige-Blickrichtung (60fps) für ruckelfreie Drehung
+let compassRAF = 0;
+// 60fps-Render-Loop: gleitet die angezeigte Blickrichtung weich zur echten (die alle 100ms per Poll
+// kommt) — so dreht sich der Kompass flüssig statt in 10fps-Stufen. Läuft rein clientseitig.
+function compassLoop() {
+  compassRAF = requestAnimationFrame(compassLoop);
+  const online = me && typeof me.heading === 'number';
+  if (!online) { compassHd = null; renderCompass(); return; }
+  if (compassHd == null) {
+    compassHd = me.heading;
+  } else {
+    const d = ((me.heading - compassHd + 540) % 360) - 180; // kürzester Winkelweg (Wrap bei 360°)
+    compassHd = cmpNorm(compassHd + d * 0.3);                // 0.3/Frame → weich, folgt aber schnell
+  }
+  renderCompass();
+}
 function initCompass() {
   const cv = el('compass'), wrap = el('compassWrap');
   if (!cv || !wrap) return;
@@ -552,7 +568,7 @@ function initCompass() {
     wrap.style.left = Math.round(window.innerWidth / 2 - cv.width / 2) + 'px';
     wrap.style.top = '10px';
   }
-  renderCompass();
+  if (!compassRAF) compassLoop();   // 60fps-Loop starten (rendert selbst, ersetzt den Poll-Aufruf)
 }
 const cmpNorm = (d) => ((d % 360) + 360) % 360;
 const cmpRel = (target, heading) => { let a = cmpNorm(target - heading); if (a > 180) a -= 360; return a; };
@@ -568,7 +584,7 @@ function renderCompass() {
   ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
   const online = me && typeof me.heading === 'number' && typeof me.x === 'number';
   if (!online) { ctx.fillStyle = 'rgba(255,255,255,0.5)'; ctx.font = '11px sans-serif'; ctx.fillText('🧭 nicht im Spiel', cx, H / 2 + 2); return; }
-  const hd = me.heading, halfW = W / 2 - 10;
+  const hd = (compassHd != null ? compassHd : me.heading), halfW = W / 2 - 10;
   const xFor = (rel) => cx + (rel / COMPASS_HALF_FOV) * halfW;
   const vis = (rel) => Math.abs(rel) <= COMPASS_HALF_FOV;
   // Himmelsrichtungen + Zwischenrichtungen (N deutlich in Rot)
@@ -977,7 +993,7 @@ function startPositionPolling() {
         updateZoneBox();
         checkZoneChange();
         updateProximityVolumes();
-        renderCompass();   // Kompass mit frischer Position/Blickrichtung neu zeichnen (0,1s)
+        // Kompass rendert sich selbst per 60fps-rAF-Loop (compassLoop) mit weicher Heading-Interpolation.
         if (settingsOpen) renderVoiceUsers();
         if (mapOpen) renderBigMap();
         if (featureOpen === 'group') updateGroupLive();   // nur Mitglieder/Chat updaten, NICHT das Eingabefeld neu bauen
