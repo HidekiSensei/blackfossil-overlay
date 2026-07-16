@@ -1,4 +1,4 @@
-name: Build Windows Release
+name: Build Release
 
 on:
   push:
@@ -34,6 +34,47 @@ jobs:
         run: npx electron-builder --win --publish always
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  # Linux-AppImage ins SELBE Release. Läuft NACH dem Windows-Job, nicht parallel: beide Jobs würden
+  # sonst gleichzeitig versuchen, das Draft-Release anzulegen (Race). AppImage, nicht deb/rpm/pacman —
+  # electron-updater wählt auf Linux per Default den AppImageUpdater und braucht für die Paket-Updater
+  # sonst root/pkexec beim Installieren (out/main.js). Der Feed heißt latest-linux.yml und ist von
+  # latest.yml (Windows) getrennt → die Updater sehen einander nicht.
+  build-linux:
+    needs: build-windows
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: app
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build renderer
+        run: npm run build:renderer
+
+      - name: Build & publish Linux AppImage
+        run: npx electron-builder --linux --publish always
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  # Release erst live schalten, wenn BEIDE Artefakte oben liegen — sonst sieht der Auto-Updater der
+  # einen Plattform ein Release, dessen Datei für die andere noch fehlt.
+  publish-release:
+    needs: [build-windows, build-linux]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0   # volle Historie + Tags für den Changelog
 
       # Schöner Changelog aus den Commits seit dem letzten Tag, Release
       # veröffentlichen + als Latest markieren (wichtig für den Auto-Updater).
