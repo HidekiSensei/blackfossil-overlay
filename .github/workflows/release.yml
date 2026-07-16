@@ -1,51 +1,109 @@
-name: Build Release
+# Public-Release des Overlays bei jedem Push/Merge auf main.
+#
+# Die Version wird aus app/package.json DES MERGES gelesen — der Mensch bumpt sie im
+# Feature-/Release-PR, der Merge released dann genau diese Version.
+# Veröffentlicht wird auf GitHub Releases: das IST der electron-updater-Feed
+# (publish-Provider "github" in app/package.json) -> Auto-Update greift sofort für alle.
+#
+# Guard: Existiert der Tag zur Version schon (Version nicht gebumpt), wird sauber
+# übersprungen statt zu scheitern — sonst würde jeder main-Push ohne Bump rot.
+#
+# Zwei Plattformen, ein Release: Windows (nsis) und Linux (AppImage) laden in DASSELBE
+# GitHub-Release. Die Feeds sind getrennt (latest.yml / latest-linux.yml), die Updater
+# sehen einander nicht. Reihenfolge ist wichtig — siehe die Job-Kommentare unten.
+name: Build & Release (main)
 
 on:
   push:
-    tags:
-      - 'v*'
+    branches: [main]
   workflow_dispatch:
 
 permissions:
   contents: write
 
+concurrency:
+  group: overlay-release
+  cancel-in-progress: false   # ein laufendes Release NIE abbrechen
+
 jobs:
-  build-windows:
+  # Windows-Build. Setzt ausserdem Version/Tag fest und legt den Tag an — die Folgejobs
+  # uebernehmen beides ueber die Outputs, damit der Guard nur EINMAL ausgewertet wird.
+  release:
     runs-on: windows-latest
-    defaults:
-      run:
-        working-directory: app
+    outputs:
+      version: ${{ steps.v.outputs.version }}
+      tag: ${{ steps.v.outputs.tag }}
+      exists: ${{ steps.v.outputs.exists }}
     steps:
       - uses: actions/checkout@v4
         with:
-          fetch-depth: 0   # volle Historie + Tags für den Changelog
+          fetch-depth: 0   # volle Historie + Tags für Changelog und Tag-Guard
+
+      - name: Version + Tag aus dem Merge bestimmen
+        id: v
+        shell: bash
+        run: |
+          V=$(node -p "require('./app/package.json').version")
+          echo "version=$V" >> "$GITHUB_OUTPUT"
+          echo "tag=v$V"    >> "$GITHUB_OUTPUT"
+          if git rev-parse "v$V" >/dev/null 2>&1; then
+            echo "exists=true" >> "$GITHUB_OUTPUT"
+            echo "::notice::Version $V ist bereits released (Tag v$V existiert) -> kein neues Release. Fuer ein Release die Version in app/package.json bumpen."
+          else
+            echo "exists=false" >> "$GITHUB_OUTPUT"
+            echo "Release-Version: $V (Tag v$V)"
+          fi
+
+      - name: Kontrolle — main muss auf die PROD-API zeigen
+        if: steps.v.outputs.exists == 'false'
+        shell: bash
+        run: |
+          if ! grep -q "const TOKEN_BASE = 'https://api.blackfossil.de'" app/src/main.js; then
+            echo "::error::main zeigt NICHT auf die Prod-API (tokenBase). Nach einem dev-Merge in app/src/main.js + app/src/renderer/overlay.js auf api.blackfossil.de setzen."
+            exit 1
+          fi
+          echo "tokenBase ok: $(grep -m1 'const TOKEN_BASE' app/src/main.js)"
 
       - uses: actions/setup-node@v4
+        if: steps.v.outputs.exists == 'false'
         with:
           node-version: 20
 
-      - name: Install dependencies
+      - name: Tag setzen
+        if: steps.v.outputs.exists == 'false'
+        shell: bash
+        run: |
+          git config user.name  "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git tag -a "${{ steps.v.outputs.tag }}" -m "BlackFossil Overlay ${{ steps.v.outputs.tag }}"
+          git push origin "${{ steps.v.outputs.tag }}"
+
+      - name: Dependencies
+        if: steps.v.outputs.exists == 'false'
+        working-directory: app
         run: npm ci
 
-      - name: Build renderer
+      - name: Renderer bauen
+        if: steps.v.outputs.exists == 'false'
+        working-directory: app
         run: npm run build:renderer
 
-      - name: Build & publish Windows installer
+      - name: Installer bauen & auf GitHub Releases veröffentlichen
+        if: steps.v.outputs.exists == 'false'
+        working-directory: app
         run: npx electron-builder --win --publish always
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
-  # Linux-AppImage ins SELBE Release. Läuft NACH dem Windows-Job, nicht parallel: beide Jobs würden
-  # sonst gleichzeitig versuchen, das Draft-Release anzulegen (Race). AppImage, nicht deb/rpm/pacman —
-  # electron-updater wählt auf Linux per Default den AppImageUpdater und braucht für die Paket-Updater
-  # sonst root/pkexec beim Installieren (out/main.js). Der Feed heißt latest-linux.yml und ist von
-  # latest.yml (Windows) getrennt → die Updater sehen einander nicht.
+  # Linux-AppImage ins SELBE Release. NACH dem Windows-Job, nicht parallel: sonst wuerden beide
+  # gleichzeitig das Draft-Release anlegen wollen (Race), und den Tag setzt ohnehin nur "release".
+  # AppImage und nicht deb/rpm/pacman — electron-updater 6.8.9 nimmt auf Linux per Default den
+  # AppImageUpdater; die Paket-Updater brauchen root/pkexec zum Installieren (out/main.js:44-74),
+  # was fuer ein vom Spieler gestartetes Overlay unbrauchbar ist.
   build-linux:
-    needs: build-windows
+    needs: release
+    if: needs.release.outputs.exists == 'false'
     runs-on: ubuntu-latest
-    defaults:
-      run:
-        working-directory: app
     steps:
       - uses: actions/checkout@v4
         with:
@@ -55,33 +113,38 @@ jobs:
         with:
           node-version: 20
 
-      - name: Install dependencies
+      - name: Dependencies
+        working-directory: app
         run: npm ci
 
-      - name: Build renderer
+      - name: Renderer bauen
+        working-directory: app
         run: npm run build:renderer
 
-      - name: Build & publish Linux AppImage
+      - name: AppImage bauen & auf GitHub Releases veröffentlichen
+        working-directory: app
         run: npx electron-builder --linux --publish always
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
-  # Release erst live schalten, wenn BEIDE Artefakte oben liegen — sonst sieht der Auto-Updater der
-  # einen Plattform ein Release, dessen Datei für die andere noch fehlt.
-  publish-release:
-    needs: [build-windows, build-linux]
+  # Release erst live schalten, wenn BEIDE Artefakte oben liegen. Vorher stand dieser Schritt am
+  # Ende des Windows-Jobs — damit waere das Release "latest" gewesen, waehrend die AppImage noch
+  # fehlt, und der Linux-Updater liefe gegen eine 404 auf latest-linux.yml.
+  publish:
+    needs: [release, build-linux]
+    if: needs.release.outputs.exists == 'false'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0   # volle Historie + Tags für den Changelog
 
-      # Schöner Changelog aus den Commits seit dem letzten Tag, Release
-      # veröffentlichen + als Latest markieren (wichtig für den Auto-Updater).
-      - name: Generate changelog & publish release
+      # Changelog aus den Commits seit dem letzten Tag + Release veröffentlichen und als
+      # Latest markieren — Letztes ist entscheidend, sonst zieht der Auto-Updater es nicht.
+      - name: Changelog + Release veröffentlichen
         shell: bash
         run: |
-          TAG="${GITHUB_REF_NAME}"
+          TAG="${{ needs.release.outputs.tag }}"
           PREV=$(git describe --tags --abbrev=0 "${TAG}^" 2>/dev/null || echo "")
           {
             echo "## 📝 Änderungen"

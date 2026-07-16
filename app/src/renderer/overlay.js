@@ -1049,7 +1049,7 @@ function updateGoldenHud() {
   // die „alle müssen rein"-Anzeige nur störend. Cooldown zeigt immer (folgt stets auf eine Auszahlung).
   if (golden.phase === 'active' && !golden.engaged) { if (box.style.display !== 'none') box.style.display = 'none'; return; }
 
-  const total = Number(golden.totalMs) || (15 * 60 * 1000);
+  const total = Number(golden.totalMs) || (5 * 60 * 1000);
   const elapsed = Date.now() - (golden.syncAt || Date.now());
   let cls, html;
   if (golden.phase === 'cooldown') {
@@ -1684,8 +1684,191 @@ function showAdminTab(t) {
   else if (t === 'lootbox') ensureLootboxCfgLoaded();
   else if (t === 'server') renderServer();
   else if (t === 'warn') renderWarnPane();
+  else if (t === 'audit') renderAudit();
   else if (t === 'handbuch') renderHandbuch();
   bfScheduleFrameSync && bfScheduleFrameSync();
+}
+
+// ── Player-Audit: Dino-Aktions-Log (nur Owner/Admin/Developer) ───────────────
+// Das Backend (/admin/player-audit) filtert, sortiert und paginiert SERVERSEITIG und gated
+// selbst auf einen echten Menschen mit Rang aus ADMIN_RANKS — hier ist nur UI. Die Filterleiste
+// wird EINMAL gebaut und danach nie neu gezeichnet (sonst verlöre man beim Nachladen Fokus und
+// Eingaben); neu gerendert wird ausschliesslich die Tabelle + der Fuss.
+const PA_COLS = [ // key = Sort-Whitelist des Backends; null = nicht sortierbar
+  { key: 'time', label: 'Zeit', w: '86px' },
+  { key: 'name', label: 'Spieler' },
+  { key: 'steam', label: 'SteamID', w: '130px' },
+  { key: 'action', label: 'Aktion', w: '120px' },
+  { key: 'dino', label: 'Dino', w: '110px' },
+  { key: null, label: 'Via', w: '96px' },
+  { key: null, label: 'Details' },
+];
+const PA_VIA = { overlay: ['🎮', 'Spieler'], staff: ['🛡️', 'Staff'], system: ['⚙️', 'System'], service: ['🤖', 'Bot'] };
+let paState = { built: false, items: [], total: 0, sort: 'time', order: 'desc', limit: 100, offset: 0, loading: false, fromMs: 0, toMs: 0 };
+
+const paVal = (id) => (el(id)?.value || '').trim();
+// ms -> Wert für <input type="datetime-local"> (lokale Zeit, nicht UTC)
+function paToLocalInput(ms) {
+  const d = new Date(ms - new Date().getTimezoneOffset() * 60000);
+  return d.toISOString().slice(0, 16);
+}
+function paQuery() {
+  const p = new URLSearchParams();
+  const sel = el('paAction');
+  const acts = sel ? [...sel.selectedOptions].map((o) => o.value).filter(Boolean) : [];
+  if (acts.length) p.set('action', acts.join(',')); // Backend nimmt mehrere Aktionen als CSV
+  for (const [id, key] of [['paName', 'name'], ['paSteam', 'steamId'], ['paDino', 'dinoClass'], ['paVia', 'via']]) {
+    if (paVal(id)) p.set(key, paVal(id));
+  }
+  for (const [id, key] of [['paFrom', 'from'], ['paTo', 'to']]) {
+    const ms = Date.parse(paVal(id));
+    if (!isNaN(ms)) p.set(key, String(ms));
+  }
+  p.set('sort', paState.sort); p.set('order', paState.order);
+  p.set('limit', String(paState.limit)); p.set('offset', String(paState.offset));
+  return p.toString();
+}
+function paDetails(d) {
+  if (!d || typeof d !== 'object') return '';
+  return Object.entries(d)
+    .map(([k, v]) => `${k}=${v && typeof v === 'object' ? JSON.stringify(v) : v}`)
+    .join(' · ');
+}
+async function paLoad(resetOffset) {
+  if (!sessionToken) return;
+  if (resetOffset) paState.offset = 0;
+  paState.loading = true; paRenderTable();
+  try {
+    const r = await fetch(`${config.tokenBase}/admin/player-audit?${paQuery()}`, { headers: { Authorization: `Bearer ${sessionToken}` } });
+    if (!r.ok) throw new Error(r.status === 403 ? 'Nicht berechtigt — nur Owner/Admin/Developer.' : `Fehler ${r.status}`);
+    const d = await r.json();
+    paState.items = d.items || []; paState.total = d.total || 0;
+    paState.limit = d.limit || paState.limit; paState.offset = d.offset || 0;
+    paState.fromMs = d.fromMs || 0; paState.toMs = d.toMs || 0; // vom Server normalisiert
+  } catch (e) {
+    paState.items = []; paState.total = 0;
+    showToast(e.message, 'error');
+  }
+  paState.loading = false;
+  paRenderTable();
+}
+function paSort(key) {
+  if (paState.sort === key) paState.order = paState.order === 'asc' ? 'desc' : 'asc';
+  else { paState.sort = key; paState.order = key === 'time' ? 'desc' : 'asc'; }
+  paLoad(true);
+}
+function paRenderTable() {
+  const box = el('paTableWrap'); if (!box) return;
+  if (paState.loading) {
+    box.innerHTML = '<div class="dt-muted" style="padding:12px">Lade…</div>';
+  } else if (!paState.items.length) {
+    box.innerHTML = '<div class="dt-muted" style="padding:12px">Keine Einträge für diese Filter.</div>';
+  } else {
+    const th = (c) => {
+      const base = `padding:6px 8px;text-align:left;color:var(--muted);font-weight:600;white-space:nowrap${c.w ? `;width:${c.w}` : ''}`;
+      if (!c.key) return `<th style="${base}">${c.label}</th>`;
+      const on = paState.sort === c.key;
+      return `<th data-pasort="${c.key}" title="Nach ${c.label} sortieren" style="${base};cursor:pointer;${on ? 'color:#eee' : ''}">${c.label}${on ? (paState.order === 'asc' ? ' ▲' : ' ▼') : ' <span style="opacity:.35">↕</span>'}</th>`;
+    };
+    const rows = paState.items.map((it) => {
+      const t = new Date(it.createdAtMs);
+      const zeit = t.toLocaleTimeString('de-DE', { hour12: false });
+      const datum = t.toLocaleDateString('de-DE', { day: '2-digit', month: '2-digit' });
+      const [ico, lbl] = PA_VIA[it.via] || ['•', it.via || ''];
+      const det = paDetails(it.details);
+      // actorSteam ist nur gesetzt, wenn jemand ANDERES gehandelt hat (Staff) — dann sichtbar machen.
+      const actor = it.actorSteam ? `<div style="font-size:10px;opacity:.7">durch ${escapeHtml(it.actorSteam)}</div>` : '';
+      const td = 'padding:5px 8px;vertical-align:top';
+      return `<tr style="border-top:1px solid var(--border)">
+        <td style="${td};white-space:nowrap" title="${escapeHtml(t.toLocaleString('de-DE'))}">${zeit}<div style="font-size:10px;opacity:.6">${datum}</div></td>
+        <td style="${td};max-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${escapeHtml(it.playerName || '')}">${escapeHtml(it.playerName || '—')}</td>
+        <td style="${td};font-family:monospace;font-size:11px;white-space:nowrap">${escapeHtml(it.steamId || '')}</td>
+        <td style="${td};white-space:nowrap"><span style="background:rgba(255,255,255,.07);padding:2px 6px;border-radius:6px">${escapeHtml(it.action || '')}</span></td>
+        <td style="${td};white-space:nowrap">${escapeHtml(it.dinoClass || '—')}</td>
+        <td style="${td};white-space:nowrap" title="${escapeHtml(it.via || '')}">${ico} ${escapeHtml(lbl)}${actor}</td>
+        <td style="${td};max-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:11px;opacity:.85" title="${escapeHtml(det)}">${escapeHtml(det)}</td>
+      </tr>`;
+    }).join('');
+    box.innerHTML = `<table style="width:100%;border-collapse:collapse;font-size:12px">
+      <thead><tr style="position:sticky;top:0;background:#1c1c22;z-index:1">${PA_COLS.map(th).join('')}</tr></thead>
+      <tbody>${rows}</tbody></table>`;
+    box.querySelectorAll('[data-pasort]').forEach((h) => { h.onclick = () => paSort(h.dataset.pasort); });
+  }
+  // Fuss: Trefferbereich + effektiver Zeitraum (der Server kappt/defaultet ihn) + Blättern
+  const foot = el('paFoot'); if (!foot) return;
+  const von = paState.offset + 1, bis = paState.offset + paState.items.length;
+  const zeitraum = paState.fromMs && paState.toMs
+    ? `${new Date(paState.fromMs).toLocaleString('de-DE')} – ${new Date(paState.toMs).toLocaleString('de-DE')}` : '';
+  foot.innerHTML = `<span>${paState.total ? `${von}–${bis} von ${paState.total}` : '0 Treffer'}${zeitraum ? ` · Zeitraum: ${escapeHtml(zeitraum)}` : ''}</span>
+    <span style="display:flex;gap:6px">
+      <button id="paPrev" class="secondary" style="width:auto;padding:3px 9px;font-size:11px" ${paState.offset <= 0 ? 'disabled' : ''}>← Zurück</button>
+      <button id="paNext" class="secondary" style="width:auto;padding:3px 9px;font-size:11px" ${bis >= paState.total ? 'disabled' : ''}>Weiter →</button>
+    </span>`;
+  const pv = el('paPrev'), nx = el('paNext');
+  if (pv) pv.onclick = () => { paState.offset = Math.max(0, paState.offset - paState.limit); paLoad(false); };
+  if (nx) nx.onclick = () => { paState.offset += paState.limit; paLoad(false); };
+}
+async function renderAudit() {
+  const box = el('paBody'); if (!box) return;
+  if (paState.built) { paLoad(true); return; }
+
+  // Aktions-/Via-Listen vom Backend holen, damit die Filter bei neuen Aktionen nicht auseinanderlaufen.
+  let actions = [], vias = [];
+  try {
+    const r = await fetch(`${config.tokenBase}/admin/player-audit/actions`, { headers: { Authorization: `Bearer ${sessionToken}` } });
+    if (r.ok) { const d = await r.json(); actions = d.actions || []; vias = d.via || []; }
+  } catch {}
+
+  const lab = 'font-size:11px;color:var(--muted);display:block;margin-bottom:2px';
+  const inp = 'width:100%;box-sizing:border-box;padding:7px 8px;border-radius:8px;border:1px solid var(--border);background:var(--input-bg);color:#eee;font-size:12px';
+  box.innerHTML = `
+    <div style="font-weight:600;font-size:14px">📋 Player-Audit <span style="font-weight:400;font-size:11px;color:var(--muted)">— jede Aktion, die einen Dino verändert</span></div>
+    <div style="font-size:11px;color:var(--muted);margin:2px 0 8px">Alle Filter lassen sich frei kombinieren. Spaltenüberschrift klicken = sortieren.</div>
+    <div style="display:flex;flex-wrap:wrap;gap:8px;align-items:flex-end;margin-bottom:6px">
+      <div style="flex:1;min-width:120px"><label style="${lab}">Spieler-Name</label><input id="paName" style="${inp}" placeholder="Teil des Namens"></div>
+      <div style="flex:1;min-width:130px"><label style="${lab}">SteamID</label><input id="paSteam" style="${inp}" placeholder="7656…"></div>
+      <div style="flex:1;min-width:110px"><label style="${lab}">Dino</label><input id="paDino" style="${inp}" placeholder="z. B. Allosaurus"></div>
+      <div style="min-width:110px"><label style="${lab}">Via</label><select id="paVia" style="${inp}"><option value="">alle</option>${vias.map((v) => `<option value="${escapeHtml(v)}">${(PA_VIA[v] || ['', v])[1]}</option>`).join('')}</select></div>
+      <div style="min-width:150px"><label style="${lab}">Aktion <span style="opacity:.7">(Strg/Cmd = mehrere)</span></label>
+        <select id="paAction" multiple size="4" style="${inp};height:auto">${actions.map((a) => `<option value="${escapeHtml(a)}">${escapeHtml(a)}</option>`).join('')}</select></div>
+      <div style="min-width:158px"><label style="${lab}">Von</label><input id="paFrom" type="datetime-local" style="${inp}"></div>
+      <div style="min-width:158px"><label style="${lab}">Bis</label><input id="paTo" type="datetime-local" style="${inp}"></div>
+    </div>
+    <div style="display:flex;flex-wrap:wrap;gap:6px;align-items:center;margin-bottom:8px">
+      <span style="font-size:11px;color:var(--muted)">Schnell:</span>
+      <button class="secondary" data-parange="1" style="width:auto;padding:4px 9px;font-size:11px">1 h</button>
+      <button class="secondary" data-parange="24" style="width:auto;padding:4px 9px;font-size:11px">24 h</button>
+      <button class="secondary" data-parange="168" style="width:auto;padding:4px 9px;font-size:11px">7 Tage</button>
+      <span style="flex:1"></span>
+      <button id="paApply" style="width:auto;padding:5px 12px;font-size:12px">🔍 Filtern</button>
+      <button id="paReset" class="secondary" style="width:auto;padding:5px 12px;font-size:12px">Zurücksetzen</button>
+    </div>
+    <div id="paTableWrap" style="max-height:46vh;overflow:auto;border:1px solid var(--border);border-radius:8px;background:rgba(0,0,0,.18)"></div>
+    <div id="paFoot" style="display:flex;justify-content:space-between;align-items:center;gap:8px;margin-top:6px;font-size:11px;color:var(--muted)"></div>`;
+
+  el('paApply').onclick = () => paLoad(true);
+  el('paReset').onclick = () => {
+    ['paName', 'paSteam', 'paDino', 'paFrom', 'paTo'].forEach((id) => { const e = el(id); if (e) e.value = ''; });
+    el('paVia').value = '';
+    [...el('paAction').options].forEach((o) => { o.selected = false; });
+    paState.sort = 'time'; paState.order = 'desc';
+    paLoad(true);
+  };
+  box.querySelectorAll('[data-parange]').forEach((b) => {
+    b.onclick = () => {
+      const now = Date.now();
+      el('paTo').value = paToLocalInput(now);
+      el('paFrom').value = paToLocalInput(now - Number(b.dataset.parange) * 3600_000);
+      paLoad(true);
+    };
+  });
+  ['paName', 'paSteam', 'paDino'].forEach((id) => {
+    const e = el(id); if (e) e.onkeydown = (ev) => { if (ev.key === 'Enter') { ev.preventDefault(); paLoad(true); } };
+  });
+  ['paVia', 'paAction', 'paFrom', 'paTo'].forEach((id) => { const e = el(id); if (e) e.onchange = () => paLoad(true); });
+
+  paState.built = true;
+  paLoad(true);
 }
 
 // ── Verwarnungen (Staff) ─────────────────────────────────────────────────────
@@ -2813,6 +2996,7 @@ async function sendGroupChat(text) {
   pollGroupChat();   // eigene Nachricht sofort nachladen
 }
 let ovInviteOpen = false;
+let ovInviteSearch = '';   // Suchtext der Einladen-Tabelle (nach Spielername)
 const ovInviteSeen = new Set();
 
 // Mitglieder-Liste als HTML (+ Anzahl) — getrennt, damit der Live-Update (Polling)
@@ -2869,6 +3053,9 @@ function renderGroup() {
   // Chat-Eingabefeld über das (seltene) volle Re-Render retten
   const _ci = el('grpChatInput');
   const _chat = _ci ? { val: _ci.value, focused: document.activeElement === _ci, s: _ci.selectionStart, e: _ci.selectionEnd } : null;
+  // Such-Feld der Einladen-Tabelle ebenso retten (renderGroup läuft auch beim Gruppen-Poll)
+  const _si = el('ovInviteSearch');
+  const _srch = _si ? { focused: document.activeElement === _si, s: _si.selectionStart, e: _si.selectionEnd } : null;
   const mem = groupMembersHtml();
   const body = mem.html;
 
@@ -2880,11 +3067,33 @@ function renderGroup() {
     </span></div>`).join('');
   let invitable = '';
   if (ovInviteOpen) {
-    invitable = ovInvitable.length
-      ? ovInvitable.map((p) => `<div style="display:flex;justify-content:space-between;align-items:center;gap:8px;padding:6px 8px;margin-bottom:4px;background:rgba(255,255,255,0.04);border-radius:8px">
-          <span style="font-size:12px;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${escapeHtml(p.name)} <span style="color:var(--muted)">· ${escapeHtml(p.dino)}</span></span>
-          <button data-inv="${p.steamId}" style="width:auto;padding:5px 10px;font-size:12px">＋ Einladen</button></div>`).join('')
-      : '<div style="color:var(--muted);font-size:12px">Keine einladbaren Spieler (gleiche Diät, online).</div>';
+    // Das Backend (/ovgroup/invitable) liefert bereits NUR berechtigte Spieler: gleiche Diät,
+    // lebend, online, nicht man selbst, nicht schon in der eigenen Gruppe. Hier wird nur noch
+    // nach Namen gefiltert.
+    const q = ovInviteSearch.trim().toLowerCase();
+    const list = q ? ovInvitable.filter((p) => (p.name || '').toLowerCase().includes(q)) : ovInvitable;
+    const rows = list.map((p) => `<tr style="border-top:1px solid var(--border)">
+        <td style="padding:5px 8px;max-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${escapeHtml(p.name)}">${escapeHtml(p.name)}</td>
+        <td style="padding:5px 8px;color:var(--muted);white-space:nowrap">${escapeHtml(p.dino || '')}</td>
+        <td style="padding:4px 6px;text-align:right"><button data-inv="${p.steamId}" style="width:auto;padding:4px 9px;font-size:11px;white-space:nowrap">＋ Einladen</button></td>
+      </tr>`).join('');
+    const empty = ovInvitable.length
+      ? `Kein Treffer für „${escapeHtml(ovInviteSearch)}".`
+      : 'Keine einladbaren Spieler (gleiche Diät, online).';
+    invitable = `
+      <input id="ovInviteSearch" value="${escapeHtml(ovInviteSearch)}" maxlength="32" placeholder="🔍 Spieler suchen…"
+             style="width:100%;margin:6px 0;padding:7px 9px;border-radius:8px;border:1px solid var(--border);background:var(--input-bg);color:#eee;font-size:12px;box-sizing:border-box">
+      <div style="max-height:30vh;overflow:auto;border:1px solid var(--border);border-radius:8px;background:rgba(0,0,0,0.18)">
+        ${list.length ? `<table style="width:100%;border-collapse:collapse;font-size:12px">
+          <thead><tr style="position:sticky;top:0;background:#1c1c22;z-index:1">
+            <th style="text-align:left;padding:6px 8px;color:var(--muted);font-weight:600">Spieler</th>
+            <th style="text-align:left;padding:6px 8px;color:var(--muted);font-weight:600">Dino</th>
+            <th style="width:1%;padding:6px 8px"></th>
+          </tr></thead>
+          <tbody>${rows}</tbody></table>`
+        : `<div style="color:var(--muted);font-size:12px;padding:10px">${empty}</div>`}
+      </div>
+      <div style="color:var(--muted);font-size:11px;margin-top:4px">${list.length} von ${ovInvitable.length} einladbar</div>`;
   }
 
   panel.innerHTML = `<h2>👥 Gruppe <span id="grpCount" style="font-size:13px;color:var(--muted);font-weight:400">${mem.count > 1 ? ` · ${mem.count} Mitglieder` : ''}</span></h2>
@@ -2909,7 +3118,12 @@ function renderGroup() {
     if (cs && ci) cs.onclick = () => { sendGroupChat(ci.value); ci.value = ''; ci.focus(); };
     if (ci) ci.onkeydown = (e) => { if (e.key === 'Enter') { e.preventDefault(); sendGroupChat(ci.value); ci.value = ''; } };
     if (_chat && ci) { ci.value = _chat.val; if (_chat.focused) { ci.focus(); try { ci.setSelectionRange(_chat.s, _chat.e); } catch {} } } }
-  const tgl = el('ovInviteToggle'); if (tgl) tgl.onclick = () => { ovInviteOpen = !ovInviteOpen; if (ovInviteOpen) loadOvInvitable(); else renderGroup(); };
+  const tgl = el('ovInviteToggle'); if (tgl) tgl.onclick = () => { ovInviteOpen = !ovInviteOpen; ovInviteSearch = ''; if (ovInviteOpen) loadOvInvitable(); else renderGroup(); };
+  { const si = el('ovInviteSearch');
+    if (si) {
+      si.oninput = () => { ovInviteSearch = si.value; renderGroup(); };
+      if (_srch && _srch.focused) { si.focus(); try { si.setSelectionRange(_srch.s, _srch.e); } catch {} }
+    } }
   panel.querySelectorAll('[data-acc]').forEach((b) => { b.onclick = () => ovAccept(b.dataset.acc); });
   panel.querySelectorAll('[data-dec]').forEach((b) => { b.onclick = () => ovDecline(b.dataset.dec); }); // Einladung ablehnen [BFT-182]
   panel.querySelectorAll('[data-inv]').forEach((b) => { b.onclick = () => ovInvite(b.dataset.inv); });
@@ -3748,8 +3962,11 @@ const DINO_LEXIKON = {
   Omniraptor:       { diet: 'carni', role: 'Rudel-Raptor', growth: 'schnell', strengths: ['Rudel', 'Pounce/Sprung', 'Wendig'], weaknesses: ['Einzeln schwach'], tip: 'Nur im Rudel stark — koordiniert Pounces.', fact: 'Spielname; angelehnt an Dromaeosaurier wie Utahraptor — den größten bekannten „Raptor" (~5–7 m) mit großer Sichelkralle und Federn.' },
   Pteranodon:       { diet: 'carni', role: 'Flieger / Scout', growth: 'mittel', strengths: ['Flug', 'Aufklärung', 'Fisch'], weaknesses: ['Am Boden hilflos'], tip: 'Bleib in der Luft und scoute für deine Gruppe.', fact: 'Ein Flugsaurier (kein Dinosaurier) der Kreidezeit mit bis zu 7 m Spannweite, zahnlosem Schnabel und langem Kopfkamm.' },
   Troodon:          { diet: 'carni', role: 'Nacht-Jäger (Small)', growth: 'schnell', strengths: ['Nachtsicht', 'Gift', 'Rudel'], weaknesses: ['Extrem fragil'], tip: 'Jage nachts und nur in der Gruppe.', fact: 'Kleiner Kreidezeit-Theropod mit großem Gehirn und riesigen Augen — galt als besonders „clever" und war wohl nachtaktiv.' },
+  Austroraptor:     { diet: 'carni', role: 'Großer Raptor / Fischjäger', growth: 'mittel', strengths: ['Größter Raptor', 'Stark am Wasser', 'Rudel'], weaknesses: ['Schmaler Kiefer', 'Kaum Panzerung'], tip: 'Jage entlang von Ufern und Flüssen — im Rudel deutlich gefährlicher.', fact: 'Raptor der späten Kreidezeit aus Argentinien (~70 Mio. J.). Mit ~5–6 m einer der größten Dromaeosaurier; sein langer, flacher Schädel mit konischen Zähnen spricht für Fischfang.' },
+  Baryonyx:         { diet: 'carni', role: 'Semi-aquatischer Carni', growth: 'mittel', strengths: ['Riesige Daumenkralle', 'Stark im Wasser', 'Fischfang'], weaknesses: ['An Land weniger wendig', 'Schmaler Schädel'], tip: 'Mach Gewässer zu deinem Revier — jage und flieh übers Wasser.', fact: 'Spinosaurier aus England (frühe Kreidezeit, ~125 Mio. J.). Namensgebend ist die ~30 cm lange Daumenkralle; in einem Fund lagen Fischschuppen im Magen — ein spezialisierter Fischjäger.' },
   Triceratops:      { diet: 'herbi', role: 'Tank-Herbi (Apex)', growth: 'langsam', strengths: ['Enorme HP', 'Charge', 'Konter'], weaknesses: ['Langsam', 'Wendet schlecht'], tip: 'Stell dich und kontere Angreifer mit der Charge.', fact: 'Einer der letzten Dinos vor dem Massenaussterben (~66 Mio. J.). Drei Hörner und ein riesiger Nackenschild zum Schutz und Imponieren.' },
   Stegosaurus:      { diet: 'herbi', role: 'Tank-Herbi', growth: 'mittel', strengths: ['Thagomizer-Schwanz', 'Hohe Defensive'], weaknesses: ['Langsam', 'Nach vorn verwundbar'], tip: 'Halte Angreifer hinter dir und triff mit dem Schwanz.', fact: 'Oberjura-Nordamerika. Die Rückenplatten dienten wohl Wärmeregulation/Schau, die Schwanzstacheln („Thagomizer") der Verteidigung — bei walnussgroßem Gehirn.' },
+  Kentrosaurus:     { diet: 'herbi', role: 'Stachel-Herbi (Mid)', growth: 'mittel', strengths: ['Schwanzstacheln', 'Starke Defensive', 'Wendiger als Stego'], weaknesses: ['Langsam', 'Nach vorn verwundbar'], tip: 'Dreh Angreifern das Hinterteil zu — die Stacheln erledigen den Rest.', fact: 'Stegosaurier aus Tansania (Oberjura, ~152 Mio. J.). Mit ~4,5 m deutlich kleiner als Stegosaurus — dafür ab der Körpermitte lange Stacheln statt Platten, plus je einen Schulterstachel.' },
   Diabloceratops:   { diet: 'herbi', role: 'Konter-Herbi (Mid)', growth: 'mittel', strengths: ['Hörner', 'Wendig', 'Konter'], weaknesses: ['Mittlere HP'], tip: 'Aggressiver Konter — nutze die Hörner offensiv.', fact: 'Früher Ceratopsier (Kreidezeit, Utah). Zwei große Schildhörner gaben ihm das „Teufelsgesicht", das seinen Namen prägte.' },
   Tenontosaurus:    { diet: 'herbi', role: 'Mid-Herbi', growth: 'mittel', strengths: ['Schwanzschlag', 'Zäh'], weaknesses: ['Kein Burst'], tip: 'Defensiv kämpfen, mit dem Schwanz auf Abstand halten.', fact: 'Frühe Kreidezeit-Nordamerika. Mittelgroßer Pflanzenfresser mit auffällig langem Schwanz; oft zusammen mit Deinonychus-Funden entdeckt.' },
   Maiasaura:        { diet: 'herbi', role: 'Herden-Herbi / Nester', growth: 'mittel', strengths: ['Tritt', 'Soziale Herde', 'Nest-Heilung'], weaknesses: ['Kein starker Burst'], tip: 'In der Herde sicher — tritt nach hinten aus.', fact: '„Gute-Mutter-Echse": In Montana fand man ganze Brutkolonien — einer der ersten klaren Belege, dass Dinos ihren Nachwuchs im Nest pflegten.' },
@@ -3758,6 +3975,7 @@ const DINO_LEXIKON = {
   Hypsilophodon:    { diet: 'herbi', role: 'Tiny-Herbi', growth: 'schnell', strengths: ['Winzig', 'Schnell', 'Versteckt'], weaknesses: ['Wehrlos'], tip: 'Bleib unsichtbar, nutze Büsche und Deckung.', fact: 'Kleiner, flinker Pflanzenfresser (~2 m) aus der frühen Kreidezeit Englands; lange fälschlich als baumkletternd dargestellt.' },
   Gallimimus:       { diet: 'both', role: 'Speed-Omni (Small)', growth: 'schnell', strengths: ['Extrem schnell', 'Ausdauer'], weaknesses: ['Kaum Verteidigung'], tip: 'Speed-Build — fliehe statt zu kämpfen.', fact: '„Hühnchen-Nachahmer" aus der Mongolei (Kreidezeit). Straußenähnlich, mit zahnlosem Schnabel und einer der schnellsten Dinosaurier.' },
   Beipiaosaurus:    { diet: 'both', role: 'Krallen-Herbi (Small)', growth: 'schnell', strengths: ['Krallen', 'Wendig'], weaknesses: ['Fragil'], tip: 'Defensiv spielen und in Deckung wachsen.', fact: 'Gefiederter Therizinosaurier aus China (frühe Kreidezeit) mit langen Krallen — Pflanzen-/Allesfresser und einer der größten bekannten gefiederten Dinos.' },
+  Oviraptor:        { diet: 'both', role: 'Allesfresser (Small)', growth: 'schnell', strengths: ['Schnell', 'Wendig', 'Genügsam'], weaknesses: ['Sehr fragil', 'Kaum Offensive'], tip: 'Ausweichen statt kämpfen — lebe von Deckung und Tempo.', fact: 'Gefiederter Kleindino aus der Mongolei (~75 Mio. J.). Sein Name heißt „Eierdieb" — ein Irrtum: das berühmte Fossil saß nicht auf fremden Eiern, sondern brütete sein eigenes Gelege aus.' },
 };
 const DIET_LABEL = { carni: '🥩 Fleischfresser', herbi: '🌿 Pflanzenfresser', both: '🍽️ Allesfresser' };
 const DIET_DOT = { carni: '#ef4444', herbi: '#22c55e', both: '#f59e0b' };
@@ -4218,9 +4436,10 @@ async function doRedeemGrow(body) {
 const DIET_MAP = {
   Allosaurus: 'carni', Carnotaurus: 'carni', Ceratosaurus: 'carni', Deinosuchus: 'carni', Dilophosaurus: 'carni',
   Herrerasaurus: 'carni', Omniraptor: 'carni', Pteranodon: 'carni', Troodon: 'carni', Tyrannosaurus: 'carni', Rex: 'carni',
+  Austroraptor: 'carni', Baryonyx: 'carni',
   Diabloceratops: 'herbi', Dryosaurus: 'herbi', Hypsilophodon: 'herbi', Kentrosaurus: 'herbi', Maiasaura: 'herbi', Maiasaurus: 'herbi',
   Pachycephalosaurus: 'herbi', Stegosaurus: 'herbi', Tenontosaurus: 'herbi', Triceratops: 'herbi',
-  Beipiaosaurus: 'both', Gallimimus: 'both',
+  Beipiaosaurus: 'both', Gallimimus: 'both', Oviraptor: 'both',
 };
 // Mutations-Katalog: v=Ingame-Name, l=Label, d=diet, s=Basis-Slots, h=hidden(★), f=femaleOnly, x=Beschreibung.
 const MUT_CATALOG = [
@@ -5328,6 +5547,7 @@ function renderDtPrime() {
 }
 function renderDtMut() {
   const box = el('dtMut'); if (!box) return;
+  const _dtMutScroll = box.querySelector('.dt-mlist') ? box.querySelector('.dt-mlist').scrollTop : 0;
   const c = dtSel, diet = dtDiet(), gender = c.gender;
   const isFemale = gender === 'female' || gender === 'Female';
   // Vollständiger Mutations-Katalog (MUT_CATALOG), gefiltert nach Diät + Geschlecht, alphabetisch.
@@ -5375,6 +5595,7 @@ function renderDtMut() {
   const s = el('dtMutSearch');
   const applyFilter = () => { const q = (dtMutSearchVal || '').trim().toLowerCase(); box.querySelectorAll('.dt-mrow').forEach((r) => { r.style.display = !q || r.dataset.search.includes(q) ? '' : 'none'; }); };
   if (s) { s.value = dtMutSearchVal; s.oninput = () => { dtMutSearchVal = s.value; applyFilter(); }; applyFilter(); }
+  { const _nl = box.querySelector('.dt-mlist'); if (_nl) _nl.scrollTop = _dtMutScroll; }
 }
 function renderDtGive() {
   const c = dtSel;
@@ -6524,8 +6745,9 @@ function applySavedPositions() {
       e.style.left = pos.left; e.style.top = pos.top; e.style.right = 'auto'; e.style.bottom = 'auto';
       e.style.transform = movTransform(m.id);
     }
-    if (pos.width) e.style.width = pos.width;
-    if (pos.height) { e.style.height = pos.height; e.style.maxHeight = 'none'; }
+    if (pos.zoom) e.style.zoom = pos.zoom;                                 // Panel-Skalierung (Layout + Text)
+    if (!pos.zoom && pos.width) e.style.width = pos.width;
+    if (!pos.zoom && pos.height) { e.style.height = pos.height; e.style.maxHeight = 'none'; }
     if (pos.miniSize) e.style.setProperty('--mini-size', pos.miniSize);   // Minimap-Größe
   }
 }
@@ -6534,7 +6756,7 @@ function resetPositions() {
   for (const m of MOVABLE) {
     const e = el(m.id); if (!e) continue;
     e.style.left = ''; e.style.top = ''; e.style.right = ''; e.style.bottom = ''; e.style.transform = '';
-    e.style.width = ''; e.style.height = ''; e.style.maxHeight = '';
+    e.style.width = ''; e.style.height = ''; e.style.maxHeight = ''; e.style.zoom = '';
     e.style.removeProperty('--mini-size');
     e.style.removeProperty('--info-scale');
   }
@@ -6630,9 +6852,10 @@ function addResizeHandle(elm, id, mode) {
       const d = Math.max(ev.clientX - sx, ev.clientY - sy);          // Faktor aus Diagonale
       elm.style.setProperty('--info-scale', Math.max(0.7, Math.min(2.2, ss + d / 220)).toFixed(3));
     } else {
-      elm.style.width = Math.max(220, sw + (ev.clientX - sx)) + 'px';
-      elm.style.height = Math.max(140, sh + (ev.clientY - sy)) + 'px';
-      elm.style.maxHeight = 'none';
+      // Panel skalieren statt nur die Box zu vergrößern → Text & Anzeigen wachsen mit (CSS zoom).
+      const d = Math.max(ev.clientX - sx, ev.clientY - sy);
+      elm.style.zoom = Math.max(0.6, Math.min(2.2, ss + d / 300)).toFixed(3);
+      elm.style.width = ''; elm.style.height = ''; elm.style.maxHeight = '';
     }
     syncLightningFrames();   // Blitz-Rahmen mitskalieren
   };
@@ -6642,7 +6865,7 @@ function addResizeHandle(elm, id, mode) {
     const p = loadPositions();
     if (mode === 'mini') p[id] = { ...(p[id] || {}), miniSize: elm.style.getPropertyValue('--mini-size') };
     else if (mode === 'scale') p[id] = { ...(p[id] || {}), scale: elm.style.getPropertyValue('--info-scale') };
-    else p[id] = { ...(p[id] || {}), width: elm.style.width, height: elm.style.height };
+    else { const np = { ...(p[id] || {}), zoom: elm.style.zoom }; delete np.width; delete np.height; p[id] = np; }
     savePositions(p);
     updateWindowBounds();   // skaliertes HUD → Shrink-Höhe neu berechnen
   };
@@ -6652,6 +6875,7 @@ function addResizeHandle(elm, id, mode) {
     rz = true; const r = elm.getBoundingClientRect(); sx = e.clientX; sy = e.clientY; sw = r.width; sh = r.height;
     if (mode === 'mini') ss = parseInt(getComputedStyle(elm).getPropertyValue('--mini-size')) || el('minimap')?.getBoundingClientRect().width || r.width;
     else if (mode === 'scale') ss = parseFloat(getComputedStyle(elm).getPropertyValue('--info-scale')) || 1;
+    else ss = parseFloat(getComputedStyle(elm).zoom) || 1;
     window.addEventListener('mousemove', mv); window.addEventListener('mouseup', up);
   });
   elm.appendChild(h);
