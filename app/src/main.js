@@ -2,7 +2,7 @@ const { app, BrowserWindow, ipcMain, shell, session, globalShortcut, screen, Tra
 const path = require('node:path');
 const fs = require('node:fs');
 const http = require('node:http');
-const { exec, spawn } = require('node:child_process');
+const { exec, spawn, execSync } = require('node:child_process');
 const { autoUpdater } = require('electron-updater');
 
 // ⚡ PERFORMANCE: Overlay auf die dedizierte (High-Performance-)GPU zwingen. Auf Laptops mit zwei
@@ -179,6 +179,39 @@ function isGameForeground() {
   return !fgEverSawGame;
 }
 
+// ── Linux: Overlay aufs Spielfenster einmessen ──────────────────────────────
+// Unter Windows folgt das Overlay dem Spiel über den Foreground-Watch (PowerShell). Unter Linux
+// gibt es den nicht — dort wird das Fenster per xdotool eingemessen und das Overlay deckungsgleich
+// darübergelegt. Nur X11; unter Wayland liefert xdotool nichts Brauchbares (still übersprungen).
+let xdotoolOk = null; // null = noch nicht geprüft
+function hasXdotool() {
+  if (xdotoolOk === null) {
+    try {
+      execSync('command -v xdotool', { stdio: 'ignore', timeout: 2000 });
+      xdotoolOk = true;
+    } catch {
+      // EINMAL prüfen und merken: sonst kostet ein fehlendes xdotool bei jedem Tick einen
+      // Prozess-Spawn und scheitert still — niemand erführe je, warum das Overlay nicht sitzt.
+      xdotoolOk = false;
+      console.warn('[overlay] xdotool nicht gefunden — Fenster-Einmessung deaktiviert (Paket "xdotool" installieren)');
+    }
+  }
+  return xdotoolOk;
+}
+function syncOverlayToGameWindow() {
+  if (!overlayWindow || !hasXdotool()) return;
+  const run = (cmd) => execSync(cmd, { encoding: 'utf8', timeout: 2000, stdio: ['ignore', 'pipe', 'ignore'] }).trim();
+  try {
+    if (run('xdotool getactivewindow getwindowname') !== 'TheIsle') return; // Spiel nicht im Vordergrund
+    const geo = run(`xdotool getwindowgeometry ${run('xdotool getactivewindow')}`);
+    const pos = geo.match(/Position: (\d+),(\d+)/);
+    const dim = geo.match(/Geometry: (\d+)x(\d+)/);
+    if (!pos || !dim) return;
+    const [x, y, w, h] = [Number(pos[1]), Number(pos[2]), Number(dim[1]), Number(dim[2])];
+    if (w > 0 && h > 0) overlayWindow.setBounds({ x, y, width: w, height: h });
+  } catch { /* Fenster verschwunden / keine X11-Sitzung → nächster Tick */ }
+}
+
 // Hotkeys (globalShortcut + PTT/PTM-Hook) nur aktiv, wenn The Isle im Vordergrund ist.
 let hotkeysActive = true;
 function setHotkeysActive(active) {
@@ -220,6 +253,7 @@ function startGameWatch() {
     }
     gameMissCount = 0;
     gameWasRunning = true;
+    if (process.platform !== 'win32') syncOverlayToGameWindow();
     // Läuft → nur sichtbar UND mit aktiven Hotkeys, wenn The Isle im Vordergrund ist.
     // Hysterese: erst nach 2 "nicht im Vordergrund"-Ticks ausblenden (kein Flackern).
     const fg = isGameForeground();
@@ -378,6 +412,12 @@ function openOverlay() {
   overlayWindow.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: true });
   // Standardmäßig klick-durchlässig — Maus geht an das Spiel
   overlayWindow.setIgnoreMouseEvents(true, { forward: true });
+  // Linux/X11: setIgnoreMouseEvents allein reicht nicht — erst der Fenster-Typ "dock" macht das
+  // Overlay wirklich klick-durchlässig. Unter Windows existiert setWindowType nicht (Electron:
+  // Linux/macOS only) → Guard.
+  if (process.platform !== 'win32') {
+    try { overlayWindow.setWindowType('dock'); } catch { /* nicht-X11-Sitzung: ignorieren */ }
+  }
 
   session.defaultSession.setPermissionRequestHandler((_wc, permission, cb) =>
     cb(permission === 'media' || permission === 'microphone'));
