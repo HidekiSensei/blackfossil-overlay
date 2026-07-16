@@ -2813,6 +2813,7 @@ async function sendGroupChat(text) {
   pollGroupChat();   // eigene Nachricht sofort nachladen
 }
 let ovInviteOpen = false;
+let ovInviteSearch = '';   // Suchtext der Einladen-Tabelle (nach Spielername)
 const ovInviteSeen = new Set();
 
 // Mitglieder-Liste als HTML (+ Anzahl) — getrennt, damit der Live-Update (Polling)
@@ -2869,6 +2870,9 @@ function renderGroup() {
   // Chat-Eingabefeld über das (seltene) volle Re-Render retten
   const _ci = el('grpChatInput');
   const _chat = _ci ? { val: _ci.value, focused: document.activeElement === _ci, s: _ci.selectionStart, e: _ci.selectionEnd } : null;
+  // Such-Feld der Einladen-Tabelle ebenso retten (renderGroup läuft auch beim Gruppen-Poll)
+  const _si = el('ovInviteSearch');
+  const _srch = _si ? { focused: document.activeElement === _si, s: _si.selectionStart, e: _si.selectionEnd } : null;
   const mem = groupMembersHtml();
   const body = mem.html;
 
@@ -2880,11 +2884,33 @@ function renderGroup() {
     </span></div>`).join('');
   let invitable = '';
   if (ovInviteOpen) {
-    invitable = ovInvitable.length
-      ? ovInvitable.map((p) => `<div style="display:flex;justify-content:space-between;align-items:center;gap:8px;padding:6px 8px;margin-bottom:4px;background:rgba(255,255,255,0.04);border-radius:8px">
-          <span style="font-size:12px;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${escapeHtml(p.name)} <span style="color:var(--muted)">· ${escapeHtml(p.dino)}</span></span>
-          <button data-inv="${p.steamId}" style="width:auto;padding:5px 10px;font-size:12px">＋ Einladen</button></div>`).join('')
-      : '<div style="color:var(--muted);font-size:12px">Keine einladbaren Spieler (gleiche Diät, online).</div>';
+    // Das Backend (/ovgroup/invitable) liefert bereits NUR berechtigte Spieler: gleiche Diät,
+    // lebend, online, nicht man selbst, nicht schon in der eigenen Gruppe. Hier wird nur noch
+    // nach Namen gefiltert.
+    const q = ovInviteSearch.trim().toLowerCase();
+    const list = q ? ovInvitable.filter((p) => (p.name || '').toLowerCase().includes(q)) : ovInvitable;
+    const rows = list.map((p) => `<tr style="border-top:1px solid var(--border)">
+        <td style="padding:5px 8px;max-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${escapeHtml(p.name)}">${escapeHtml(p.name)}</td>
+        <td style="padding:5px 8px;color:var(--muted);white-space:nowrap">${escapeHtml(p.dino || '')}</td>
+        <td style="padding:4px 6px;text-align:right"><button data-inv="${p.steamId}" style="width:auto;padding:4px 9px;font-size:11px;white-space:nowrap">＋ Einladen</button></td>
+      </tr>`).join('');
+    const empty = ovInvitable.length
+      ? `Kein Treffer für „${escapeHtml(ovInviteSearch)}".`
+      : 'Keine einladbaren Spieler (gleiche Diät, online).';
+    invitable = `
+      <input id="ovInviteSearch" value="${escapeHtml(ovInviteSearch)}" maxlength="32" placeholder="🔍 Spieler suchen…"
+             style="width:100%;margin:6px 0;padding:7px 9px;border-radius:8px;border:1px solid var(--border);background:var(--input-bg);color:#eee;font-size:12px;box-sizing:border-box">
+      <div style="max-height:30vh;overflow:auto;border:1px solid var(--border);border-radius:8px;background:rgba(0,0,0,0.18)">
+        ${list.length ? `<table style="width:100%;border-collapse:collapse;font-size:12px">
+          <thead><tr style="position:sticky;top:0;background:#1c1c22;z-index:1">
+            <th style="text-align:left;padding:6px 8px;color:var(--muted);font-weight:600">Spieler</th>
+            <th style="text-align:left;padding:6px 8px;color:var(--muted);font-weight:600">Dino</th>
+            <th style="width:1%;padding:6px 8px"></th>
+          </tr></thead>
+          <tbody>${rows}</tbody></table>`
+        : `<div style="color:var(--muted);font-size:12px;padding:10px">${empty}</div>`}
+      </div>
+      <div style="color:var(--muted);font-size:11px;margin-top:4px">${list.length} von ${ovInvitable.length} einladbar</div>`;
   }
 
   panel.innerHTML = `<h2>👥 Gruppe <span id="grpCount" style="font-size:13px;color:var(--muted);font-weight:400">${mem.count > 1 ? ` · ${mem.count} Mitglieder` : ''}</span></h2>
@@ -2909,7 +2935,12 @@ function renderGroup() {
     if (cs && ci) cs.onclick = () => { sendGroupChat(ci.value); ci.value = ''; ci.focus(); };
     if (ci) ci.onkeydown = (e) => { if (e.key === 'Enter') { e.preventDefault(); sendGroupChat(ci.value); ci.value = ''; } };
     if (_chat && ci) { ci.value = _chat.val; if (_chat.focused) { ci.focus(); try { ci.setSelectionRange(_chat.s, _chat.e); } catch {} } } }
-  const tgl = el('ovInviteToggle'); if (tgl) tgl.onclick = () => { ovInviteOpen = !ovInviteOpen; if (ovInviteOpen) loadOvInvitable(); else renderGroup(); };
+  const tgl = el('ovInviteToggle'); if (tgl) tgl.onclick = () => { ovInviteOpen = !ovInviteOpen; ovInviteSearch = ''; if (ovInviteOpen) loadOvInvitable(); else renderGroup(); };
+  { const si = el('ovInviteSearch');
+    if (si) {
+      si.oninput = () => { ovInviteSearch = si.value; renderGroup(); };
+      if (_srch && _srch.focused) { si.focus(); try { si.setSelectionRange(_srch.s, _srch.e); } catch {} }
+    } }
   panel.querySelectorAll('[data-acc]').forEach((b) => { b.onclick = () => ovAccept(b.dataset.acc); });
   panel.querySelectorAll('[data-dec]').forEach((b) => { b.onclick = () => ovDecline(b.dataset.dec); }); // Einladung ablehnen [BFT-182]
   panel.querySelectorAll('[data-inv]').forEach((b) => { b.onclick = () => ovInvite(b.dataset.inv); });
