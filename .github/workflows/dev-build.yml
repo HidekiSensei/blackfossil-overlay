@@ -1,7 +1,12 @@
 # Test-Build des Overlays bei jedem Push/Merge auf dev.
 # Kein Publish, kein Auto-Update — nur ein Installer als Artifact zum Testen.
-# Der Code hat api-test.blackfossil.de als Default — main überschreibt das im release.yml
-# via node -e vor dem Build. Kein manuelles Ändern beim Merge nötig.
+# Der Code/package.json hat Test-Defaults (api-test.blackfossil.de, appId
+# "de.blackfossil.overlay.test", productName "BlackFossil Overlay Test") — main
+# überschreibt das im release.yml via app/scripts/patch-prod.js vor dem Build.
+# Kein manuelles Ändern beim Merge nötig.
+# Die abweichende appId/productName ist Absicht: der Test-Installer landet dadurch in
+# einem eigenen Installpfad/Registry-Eintrag und lässt sich parallel zur echten
+# Produktiv-Installation installieren (Windows NSIS + Linux AppImage/Desktop-Eintrag).
 name: Build Test-Installer (dev)
 
 on:
@@ -36,7 +41,7 @@ jobs:
         shell: bash
         run: |
           V=$(node -p "require('./package.json').version")
-          mv "release/BlackFossil-Overlay-Setup.exe" "release/BlackFossil-Overlay-TEST-${V}-${GITHUB_SHA::7}.exe"
+          mv "release/BlackFossil-Overlay-Test-Setup.exe" "release/BlackFossil-Overlay-TEST-${V}-${GITHUB_SHA::7}.exe"
 
       - uses: actions/upload-artifact@v4
         with:
@@ -66,7 +71,7 @@ jobs:
       - name: Versionierter Dateiname (gegen Verwechslung mit dem Public-Release)
         run: |
           V=$(node -p "require('./package.json').version")
-          mv "release/BlackFossil-Overlay-Setup.AppImage" "release/BlackFossil-Overlay-TEST-${V}-${GITHUB_SHA::7}.AppImage"
+          mv "release/BlackFossil-Overlay-Test-Setup.AppImage" "release/BlackFossil-Overlay-TEST-${V}-${GITHUB_SHA::7}.AppImage"
 
       - uses: actions/upload-artifact@v4
         with:

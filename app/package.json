@@ -22,9 +22,9 @@
     "esbuild": "^0.24.2"
   },
   "build": {
-    "appId": "de.blackfossil.overlay",
-    "productName": "BlackFossil Overlay",
-    "artifactName": "BlackFossil-Overlay-Setup.${ext}",
+    "appId": "de.blackfossil.overlay.test",
+    "productName": "BlackFossil Overlay Test",
+    "artifactName": "BlackFossil-Overlay-Test-Setup.${ext}",
     "npmRebuild": false,
     "directories": {
       "output": "release"
@@ -45,7 +45,7 @@
       {
         "name": "BlackFossil",
         "schemes": [
-          "blackfossil"
+          "blackfossil-test"
         ]
       }
     ],

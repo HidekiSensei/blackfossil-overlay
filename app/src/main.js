@@ -5,6 +5,40 @@ const http = require('node:http');
 const { exec, spawn, execSync } = require('node:child_process');
 const { autoUpdater } = require('electron-updater');
 
+// Eigener App-Name für den Test-Build (Produktiv-Build patcht das via
+// app/scripts/patch-prod.js auf 'BlackFossil Overlay' zurück). Electron leitet
+// app.getPath('userData') (Session-/Hotkeys-Datei, Single-Instance-Lock) NUR aus dem
+// Namen ab, nicht aus package.json build.productName/appId — ohne diesen Aufruf würden
+// sich Test- und Prod-Installation denselben userData-Ordner + Single-Instance-Lock
+// teilen, und die zuerst gestartete App würde die zweite beim Start lautlos beenden.
+// Muss vor jedem app.getPath('userData')/requestSingleInstanceLock()-Aufruf stehen.
+app.setName('BlackFossil Overlay Test');
+
+// Einmal-Migration des userData-Ordners — NUR im Prod-Build (patch-prod setzt den Namen auf
+// 'BlackFossil Overlay'). Grund: erst seit dem app.setName()-Aufruf oben ist der Ordner
+// deterministisch der productName. Hieß der bisher installierte Prod-Build seinen Ordner anders
+// (z. B. 'blackfossil-overlay' aus package.json name, wenn electron-builder den productName NICHT
+// als App-Name gesetzt hat), verlöre sonst JEDER Prod-Nutzer beim Update Session + Hotkeys.
+// Deshalb: fehlt im aktuellen Ordner die Session, aus einem früheren Kandidaten erben.
+// Im Test-Build (Name endet auf " Test") bewusst NICHT — sonst erbte er eine prod-signierte
+// Session, die das api-test-Backend ablehnt.
+if (app.getName() === 'BlackFossil Overlay') {
+  try {
+    const cur = app.getPath('userData');
+    if (!fs.existsSync(path.join(cur, 'session.json'))) {
+      const alt = path.join(path.dirname(cur), 'blackfossil-overlay');
+      for (const f of ['session.json', 'hotkeys.json']) {
+        const src = path.join(alt, f);
+        const dst = path.join(cur, f);
+        if (fs.existsSync(src) && !fs.existsSync(dst)) {
+          fs.mkdirSync(cur, { recursive: true });
+          fs.copyFileSync(src, dst);
+        }
+      }
+    }
+  } catch (e) { console.error('userData-Migration fehlgeschlagen:', e?.message || e); }
+}
+
 // ⚡ PERFORMANCE: Overlay auf die dedizierte (High-Performance-)GPU zwingen. Auf Laptops mit zwei
 // GPUs liefe das Overlay sonst oft auf der integrierten GPU, während das Spiel auf der dedizierten
 // läuft → teures Cross-GPU-Compositing (großer FPS-Verlust). Muss VOR app-ready gesetzt werden;
@@ -278,7 +312,7 @@ function startGameWatch() {
 
 // Cutover: Overlay spricht jetzt das Go-Backend an. Unmigrierte Pfade proxyt das Backend
 // transparent zum token-service weiter (Live-Daten), Login/Voice/Positions bedient es nativ.
-const TOKEN_BASE = 'https://api.blackfossil.de';
+const TOKEN_BASE = 'https://api-test.blackfossil.de';
 const SESSION_FILE = path.join(app.getPath('userData'), 'session.json');
 const HOTKEYS_FILE = path.join(app.getPath('userData'), 'hotkeys.json');
 
@@ -327,20 +361,29 @@ let isQuitting = false;
 let tray = null;
 let overlayInteractive = false; // Map/Settings offen → Overlay hat Fokus
 
+// Deep-Link-Scheme — eigener Scheme für den Test-Build, damit der Login sauber trennt.
+// patch-prod.js dreht das für den Prod-Release auf 'blackfossil' zurück (analog zu appId/URL).
+// Der echte Login läuft über diesen Scheme: das Backend redirectet nach dem OAuth auf
+// APP_REDIRECT (Default blackfossil://auth) → das OS öffnet die App, die den Scheme registriert
+// hat. Ohne eigenen Scheme öffnete ein Test-Login ggf. die Prod-App mit einer test-signierten
+// Session, die api.blackfossil.de ablehnt. Dazu MUSS das api-test-Backend
+// APP_REDIRECT=blackfossil-test://auth setzen (internal/config/config.go).
+const SCHEME = 'blackfossil-test';
+
 // ── Single-Instance ─────────────────────────────────────────────────────────
 const gotLock = app.requestSingleInstanceLock();
 if (!gotLock) { app.quit(); }
 else {
   app.on('second-instance', (_e, argv) => {
-    const url = argv.find((a) => a.startsWith('blackfossil://'));
+    const url = argv.find((a) => a.startsWith(SCHEME + '://'));
     if (url) handleDeepLink(url);
   });
 }
 
 if (process.defaultApp && process.argv.length >= 2) {
-  app.setAsDefaultProtocolClient('blackfossil', process.execPath, [path.resolve(process.argv[1])]);
+  app.setAsDefaultProtocolClient(SCHEME, process.execPath, [path.resolve(process.argv[1])]);
 } else {
-  app.setAsDefaultProtocolClient('blackfossil');
+  app.setAsDefaultProtocolClient(SCHEME);
 }
 app.on('open-url', (_e, url) => handleDeepLink(url));
 
@@ -376,7 +419,7 @@ function createTray() {
   const img = appIcon();
   if (!img) return; // Logo noch nicht im Repo → kein Tray-Icon
   tray = new Tray(img.resize({ width: 32, height: 32 }));
-  tray.setToolTip('BlackFossil Overlay');
+  tray.setToolTip('BlackFossil Overlay Test');
   tray.setContextMenu(Menu.buildFromTemplate([
     { label: 'Einstellungen', click: () => { try { overlayWindow?.webContents.send('hotkey', 'settings-toggle'); } catch {} } },
     { type: 'separator' },
@@ -387,7 +430,7 @@ function createTray() {
 // ── Login-Fenster ──────────────────────────────────────────────────────────
 function createLoginWindow() {
   loginWindow = new BrowserWindow({
-    width: 440, height: 580, resizable: false, title: 'BlackFossil Login',
+    width: 440, height: 580, resizable: false, title: 'BlackFossil Login Test',
     backgroundColor: '#0f0a1e', icon: appIcon(),
     webPreferences: { preload: path.join(__dirname, 'preload.js'), contextIsolation: true },
   });
