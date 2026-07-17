@@ -14,6 +14,31 @@ const { autoUpdater } = require('electron-updater');
 // Muss vor jedem app.getPath('userData')/requestSingleInstanceLock()-Aufruf stehen.
 app.setName('BlackFossil Overlay Test');
 
+// Einmal-Migration des userData-Ordners — NUR im Prod-Build (patch-prod setzt den Namen auf
+// 'BlackFossil Overlay'). Grund: erst seit dem app.setName()-Aufruf oben ist der Ordner
+// deterministisch der productName. Hieß der bisher installierte Prod-Build seinen Ordner anders
+// (z. B. 'blackfossil-overlay' aus package.json name, wenn electron-builder den productName NICHT
+// als App-Name gesetzt hat), verlöre sonst JEDER Prod-Nutzer beim Update Session + Hotkeys.
+// Deshalb: fehlt im aktuellen Ordner die Session, aus einem früheren Kandidaten erben.
+// Im Test-Build (Name endet auf " Test") bewusst NICHT — sonst erbte er eine prod-signierte
+// Session, die das api-test-Backend ablehnt.
+if (app.getName() === 'BlackFossil Overlay') {
+  try {
+    const cur = app.getPath('userData');
+    if (!fs.existsSync(path.join(cur, 'session.json'))) {
+      const alt = path.join(path.dirname(cur), 'blackfossil-overlay');
+      for (const f of ['session.json', 'hotkeys.json']) {
+        const src = path.join(alt, f);
+        const dst = path.join(cur, f);
+        if (fs.existsSync(src) && !fs.existsSync(dst)) {
+          fs.mkdirSync(cur, { recursive: true });
+          fs.copyFileSync(src, dst);
+        }
+      }
+    }
+  } catch (e) { console.error('userData-Migration fehlgeschlagen:', e?.message || e); }
+}
+
 // ⚡ PERFORMANCE: Overlay auf die dedizierte (High-Performance-)GPU zwingen. Auf Laptops mit zwei
 // GPUs liefe das Overlay sonst oft auf der integrierten GPU, während das Spiel auf der dedizierten
 // läuft → teures Cross-GPU-Compositing (großer FPS-Verlust). Muss VOR app-ready gesetzt werden;
@@ -336,25 +361,29 @@ let isQuitting = false;
 let tray = null;
 let overlayInteractive = false; // Map/Settings offen → Overlay hat Fokus
 
+// Deep-Link-Scheme — eigener Scheme für den Test-Build, damit der Login sauber trennt.
+// patch-prod.js dreht das für den Prod-Release auf 'blackfossil' zurück (analog zu appId/URL).
+// Der echte Login läuft über diesen Scheme: das Backend redirectet nach dem OAuth auf
+// APP_REDIRECT (Default blackfossil://auth) → das OS öffnet die App, die den Scheme registriert
+// hat. Ohne eigenen Scheme öffnete ein Test-Login ggf. die Prod-App mit einer test-signierten
+// Session, die api.blackfossil.de ablehnt. Dazu MUSS das api-test-Backend
+// APP_REDIRECT=blackfossil-test://auth setzen (internal/config/config.go).
+const SCHEME = 'blackfossil-test';
+
 // ── Single-Instance ─────────────────────────────────────────────────────────
 const gotLock = app.requestSingleInstanceLock();
 if (!gotLock) { app.quit(); }
 else {
   app.on('second-instance', (_e, argv) => {
-    const url = argv.find((a) => a.startsWith('blackfossil://'));
+    const url = argv.find((a) => a.startsWith(SCHEME + '://'));
     if (url) handleDeepLink(url);
   });
 }
 
-// Bewusst UNVERÄNDERT für den Test-Build (im Gegensatz zu appId/productName/API-URL):
-// Test- und Prod-Installation registrieren denselben blackfossil://-Scheme. Sind beide
-// installiert, gewinnt die zuletzt installierte/gestartete für den OS-Deep-Link. Für eine
-// echte Trennung bräuchte es einen eigenen Scheme (z. B. blackfossil-test) UND ein
-// passendes APP_REDIRECT auf der api-test-Backend-Seite (internal/config/config.go).
 if (process.defaultApp && process.argv.length >= 2) {
-  app.setAsDefaultProtocolClient('blackfossil', process.execPath, [path.resolve(process.argv[1])]);
+  app.setAsDefaultProtocolClient(SCHEME, process.execPath, [path.resolve(process.argv[1])]);
 } else {
-  app.setAsDefaultProtocolClient('blackfossil');
+  app.setAsDefaultProtocolClient(SCHEME);
 }
 app.on('open-url', (_e, url) => handleDeepLink(url));
 
