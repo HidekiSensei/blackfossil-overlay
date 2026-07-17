@@ -5,6 +5,15 @@ const http = require('node:http');
 const { exec, spawn, execSync } = require('node:child_process');
 const { autoUpdater } = require('electron-updater');
 
+// Eigener App-Name für den Test-Build (Produktiv-Build patcht das via
+// app/scripts/patch-prod.js auf 'BlackFossil Overlay' zurück). Electron leitet
+// app.getPath('userData') (Session-/Hotkeys-Datei, Single-Instance-Lock) NUR aus dem
+// Namen ab, nicht aus package.json build.productName/appId — ohne diesen Aufruf würden
+// sich Test- und Prod-Installation denselben userData-Ordner + Single-Instance-Lock
+// teilen, und die zuerst gestartete App würde die zweite beim Start lautlos beenden.
+// Muss vor jedem app.getPath('userData')/requestSingleInstanceLock()-Aufruf stehen.
+app.setName('BlackFossil Overlay Test');
+
 // ⚡ PERFORMANCE: Overlay auf die dedizierte (High-Performance-)GPU zwingen. Auf Laptops mit zwei
 // GPUs liefe das Overlay sonst oft auf der integrierten GPU, während das Spiel auf der dedizierten
 // läuft → teures Cross-GPU-Compositing (großer FPS-Verlust). Muss VOR app-ready gesetzt werden;
@@ -278,7 +287,7 @@ function startGameWatch() {
 
 // Cutover: Overlay spricht jetzt das Go-Backend an. Unmigrierte Pfade proxyt das Backend
 // transparent zum token-service weiter (Live-Daten), Login/Voice/Positions bedient es nativ.
-const TOKEN_BASE = 'https://api.blackfossil.de';
+const TOKEN_BASE = 'https://api-test.blackfossil.de';
 const SESSION_FILE = path.join(app.getPath('userData'), 'session.json');
 const HOTKEYS_FILE = path.join(app.getPath('userData'), 'hotkeys.json');
 
