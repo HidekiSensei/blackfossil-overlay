@@ -6,6 +6,27 @@ stages:
   - build
   - publish
 
+build:test-installer-linux:
+  stage: build
+  tags: [linux, build]
+  rules:
+    - if: '$CI_COMMIT_BRANCH == "dev"'
+  script:
+    - cd app
+    - node -v
+    - npm ci
+    - npm run build:renderer
+    - npx electron-builder --linux --publish never
+    - |
+      v=$(node -e "console.log(require('./package.json').version)")
+      appimage=$(ls release/*.AppImage 2>/dev/null | head -1)
+      cp "$appimage" "release/BlackFossil-Overlay-test-$v-x86_64.AppImage"
+      echo "TEST-INSTALLER-LINUX: BlackFossil-Overlay-test-$v-x86_64.AppImage"
+  artifacts:
+    name: blackfossil-overlay-test-installer-linux
+    paths: [app/release/BlackFossil-Overlay-test-*.AppImage]
+    expire_in: 14 days
+
 build:test-installer:
   stage: build
   # windows UND msvc: nur der windows-test-box-Runner hat beide Tags. Ohne "msvc" greift auch der

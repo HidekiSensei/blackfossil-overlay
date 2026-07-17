@@ -59,6 +59,16 @@
         }
       ]
     },
+    "linux": {
+      "target": [
+        {
+          "target": "AppImage",
+          "arch": [
+            "x64"
+          ]
+        }
+      ]
+    },
     "nsis": {
       "oneClick": true,
       "perMachine": false,
