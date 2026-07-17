@@ -337,6 +337,11 @@ else {
   });
 }
 
+// Bewusst UNVERÄNDERT für den Test-Build (im Gegensatz zu appId/productName/API-URL):
+// Test- und Prod-Installation registrieren denselben blackfossil://-Scheme. Sind beide
+// installiert, gewinnt die zuletzt installierte/gestartete für den OS-Deep-Link. Für eine
+// echte Trennung bräuchte es einen eigenen Scheme (z. B. blackfossil-test) UND ein
+// passendes APP_REDIRECT auf der api-test-Backend-Seite (internal/config/config.go).
 if (process.defaultApp && process.argv.length >= 2) {
   app.setAsDefaultProtocolClient('blackfossil', process.execPath, [path.resolve(process.argv[1])]);
 } else {
