@@ -14,7 +14,7 @@ concurrency:
   cancel-in-progress: true   # nur der neueste dev-Stand ist interessant
 
 jobs:
-  build-test:
+  build-test-win:
     runs-on: windows-latest
     defaults:
       run:
@@ -49,7 +49,45 @@ jobs:
 
       - uses: actions/upload-artifact@v4
         with:
-          name: overlay-test-installer
+          name: overlay-test-installer-win
           path: app/release/*.exe
+          if-no-files-found: error
+          retention-days: 14
+
+  build-test-linux:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: app
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - run: npm ci
+      - run: npm run build:renderer
+
+      - name: Installer bauen (KEIN Publish)
+        run: npx electron-builder --linux --publish never
+
+      - name: Kontrolle — dev muss auf api-test zeigen
+        run: |
+          if grep -q "const TOKEN_BASE = 'https://api.blackfossil.de'" src/main.js; then
+            echo "::error::dev-Build zeigt auf die PROD-API. tokenBase in src/main.js + src/renderer/overlay.js auf api-test setzen."
+            exit 1
+          fi
+          echo "tokenBase ok: $(grep -m1 'const TOKEN_BASE' src/main.js)"
+
+      - name: Versionierter Dateiname (gegen Verwechslung mit dem Public-Release)
+        run: |
+          V=$(node -p "require('./package.json').version")
+          mv "release/BlackFossil-Overlay-Setup.AppImage" "release/BlackFossil-Overlay-TEST-${V}-${GITHUB_SHA::7}.AppImage"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: overlay-test-installer-linux
+          path: app/release/*.AppImage
           if-no-files-found: error
           retention-days: 14
