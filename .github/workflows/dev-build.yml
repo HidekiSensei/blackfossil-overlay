@@ -1,7 +1,7 @@
 # Test-Build des Overlays bei jedem Push/Merge auf dev.
 # Kein Publish, kein Auto-Update — nur ein Installer als Artifact zum Testen.
-# Zeigt automatisch auf api-test.blackfossil.de, weil der dev-Branch die Test-URL hält
-# (tokenBase ist pro Branch hartkodiert: dev = api-test, main = Prod).
+# Der Code hat api-test.blackfossil.de als Default — main überschreibt das im release.yml
+# via node -e vor dem Build. Kein manuelles Ändern beim Merge nötig.
 name: Build Test-Installer (dev)
 
 on:
@@ -31,15 +31,6 @@ jobs:
 
       - name: Installer bauen (KEIN Publish)
         run: npx electron-builder --win --publish never
-
-      - name: Kontrolle — dev muss auf api-test zeigen
-        shell: bash
-        run: |
-          if grep -q "const TOKEN_BASE = 'https://api.blackfossil.de'" src/main.js; then
-            echo "::error::dev-Build zeigt auf die PROD-API. tokenBase in src/main.js + src/renderer/overlay.js auf api-test setzen."
-            exit 1
-          fi
-          echo "tokenBase ok: $(grep -m1 'const TOKEN_BASE' src/main.js)"
 
       - name: Versionierter Dateiname (gegen Verwechslung mit dem Public-Release)
         shell: bash
@@ -71,14 +62,6 @@ jobs:
 
       - name: Installer bauen (KEIN Publish)
         run: npx electron-builder --linux --publish never
-
-      - name: Kontrolle — dev muss auf api-test zeigen
-        run: |
-          if grep -q "const TOKEN_BASE = 'https://api.blackfossil.de'" src/main.js; then
-            echo "::error::dev-Build zeigt auf die PROD-API. tokenBase in src/main.js + src/renderer/overlay.js auf api-test setzen."
-            exit 1
-          fi
-          echo "tokenBase ok: $(grep -m1 'const TOKEN_BASE' src/main.js)"
 
       - name: Versionierter Dateiname (gegen Verwechslung mit dem Public-Release)
         run: |
