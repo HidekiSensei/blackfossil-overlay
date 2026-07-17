@@ -19,12 +19,18 @@ patch('app/src/main.js', [
   ['https://api-test.blackfossil.de', 'https://api.blackfossil.de'],
   ["'BlackFossil Overlay Test'", "'BlackFossil Overlay'"],
   ["'BlackFossil Login Test'", "'BlackFossil Login'"],
+  // Deep-Link-Scheme: Test-Build registriert blackfossil-test, Prod blackfossil (nur die
+  // Konstante — der quotierte Vergleich trifft NICHT den Kommentar-Text "blackfossil-test://").
+  ["const SCHEME = 'blackfossil-test'", "const SCHEME = 'blackfossil'"],
 ]);
 
 patch('app/package.json', [
   ['"de.blackfossil.overlay.test"', '"de.blackfossil.overlay"'],
   ['"BlackFossil Overlay Test"', '"BlackFossil Overlay"'],
   ['"BlackFossil-Overlay-Test-Setup.${ext}"', '"BlackFossil-Overlay-Setup.${ext}"'],
+  // protocols.schemes — quotiert, trifft nur die Scheme-Zeile, nicht die appId
+  // (de.blackfossil.overlay.test enthält "blackfossil-test" nicht als Teilstring).
+  ['"blackfossil-test"', '"blackfossil"'],
 ]);
 
-console.log('Produktiv-Werte gesetzt (appId, productName, artifactName, main.js Strings, API-URL).');
+console.log('Produktiv-Werte gesetzt (appId, productName, artifactName, Scheme, main.js Strings, API-URL).');

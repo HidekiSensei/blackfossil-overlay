@@ -45,7 +45,7 @@
       {
         "name": "BlackFossil",
         "schemes": [
-          "blackfossil"
+          "blackfossil-test"
         ]
       }
     ],
