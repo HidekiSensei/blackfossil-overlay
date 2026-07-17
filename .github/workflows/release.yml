@@ -8,8 +8,12 @@
 # Guard: Existiert der Tag zur Version schon (Version nicht gebumpt), wird sauber
 # übersprungen statt zu scheitern — sonst würde jeder main-Push ohne Bump rot.
 #
-# Der Code hat api-test.blackfossil.de als Default. Vor dem Build wird die URL
-# automatisch per node -e auf api.blackfossil.de gesetzt — kein manuelles Ändern.
+# Der Code/package.json hat Test-Defaults (api-test.blackfossil.de, appId/productName
+# mit ".test"/"Test"-Suffix — siehe dev-build.yml). Vor dem Build patcht
+# app/scripts/patch-prod.js beides auf die Produktiv-Werte — kein manuelles Ändern.
+# Grund für die Test-Defaults im Repo: so bleibt ein lokal gebauter oder dev-Branch-
+# Installer immer ein Test-Build (andere appId/productName/Installpfad) und kollidiert
+# nie mit einer echten Produktiv-Installation — beide sind parallel installierbar.
 # Zwei Plattformen, ein Release: Windows (nsis) und Linux (AppImage) laden in DASSELBE
 # GitHub-Release. Die Feeds sind getrennt (latest.yml / latest-linux.yml), die Updater
 # sehen einander nicht. Reihenfolge ist wichtig — siehe die Job-Kommentare unten.
@@ -56,9 +60,9 @@ jobs:
             echo "Release-Version: $V (Tag v$V)"
           fi
 
-      - name: Production-API-URL setzen (main = api.blackfossil.de)
+      - name: Produktiv-Werte setzen (appId, productName, API-URL)
         if: steps.v.outputs.exists == 'false'
-        run: node -e "require('fs').writeFileSync('app/src/main.js',require('fs').readFileSync('app/src/main.js','utf8').replace('https://api-test.blackfossil.de','https://api.blackfossil.de'))"
+        run: node app/scripts/patch-prod.js
 
       - uses: actions/setup-node@v4
         if: steps.v.outputs.exists == 'false'
@@ -117,8 +121,8 @@ jobs:
         working-directory: app
         run: npm run build:renderer
 
-      - name: Production-API-URL setzen (main = api.blackfossil.de)
-        run: node -e "require('fs').writeFileSync('app/src/main.js',require('fs').readFileSync('app/src/main.js','utf8').replace('https://api-test.blackfossil.de','https://api.blackfossil.de'))"
+      - name: Produktiv-Werte setzen (appId, productName, API-URL)
+        run: node app/scripts/patch-prod.js
 
       - name: AppImage bauen & auf GitHub Releases veröffentlichen
         working-directory: app

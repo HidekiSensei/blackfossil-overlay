@@ -376,7 +376,7 @@ function createTray() {
   const img = appIcon();
   if (!img) return; // Logo noch nicht im Repo → kein Tray-Icon
   tray = new Tray(img.resize({ width: 32, height: 32 }));
-  tray.setToolTip('BlackFossil Overlay');
+  tray.setToolTip('BlackFossil Overlay Test');
   tray.setContextMenu(Menu.buildFromTemplate([
     { label: 'Einstellungen', click: () => { try { overlayWindow?.webContents.send('hotkey', 'settings-toggle'); } catch {} } },
     { type: 'separator' },
@@ -387,7 +387,7 @@ function createTray() {
 // ── Login-Fenster ──────────────────────────────────────────────────────────
 function createLoginWindow() {
   loginWindow = new BrowserWindow({
-    width: 440, height: 580, resizable: false, title: 'BlackFossil Login',
+    width: 440, height: 580, resizable: false, title: 'BlackFossil Login Test',
     backgroundColor: '#0f0a1e', icon: appIcon(),
     webPreferences: { preload: path.join(__dirname, 'preload.js'), contextIsolation: true },
   });
