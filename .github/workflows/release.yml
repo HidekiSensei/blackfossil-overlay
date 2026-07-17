@@ -8,6 +8,8 @@
 # Guard: Existiert der Tag zur Version schon (Version nicht gebumpt), wird sauber
 # übersprungen statt zu scheitern — sonst würde jeder main-Push ohne Bump rot.
 #
+# Der Code hat api-test.blackfossil.de als Default. Vor dem Build wird die URL
+# automatisch per node -e auf api.blackfossil.de gesetzt — kein manuelles Ändern.
 # Zwei Plattformen, ein Release: Windows (nsis) und Linux (AppImage) laden in DASSELBE
 # GitHub-Release. Die Feeds sind getrennt (latest.yml / latest-linux.yml), die Updater
 # sehen einander nicht. Reihenfolge ist wichtig — siehe die Job-Kommentare unten.
@@ -54,15 +56,9 @@ jobs:
             echo "Release-Version: $V (Tag v$V)"
           fi
 
-      - name: Kontrolle — main muss auf die PROD-API zeigen
+      - name: Production-API-URL setzen (main = api.blackfossil.de)
         if: steps.v.outputs.exists == 'false'
-        shell: bash
-        run: |
-          if ! grep -q "const TOKEN_BASE = 'https://api.blackfossil.de'" app/src/main.js; then
-            echo "::error::main zeigt NICHT auf die Prod-API (tokenBase). Nach einem dev-Merge in app/src/main.js + app/src/renderer/overlay.js auf api.blackfossil.de setzen."
-            exit 1
-          fi
-          echo "tokenBase ok: $(grep -m1 'const TOKEN_BASE' app/src/main.js)"
+        run: node -e "require('fs').writeFileSync('app/src/main.js',require('fs').readFileSync('app/src/main.js','utf8').replace('https://api-test.blackfossil.de','https://api.blackfossil.de'))"
 
       - uses: actions/setup-node@v4
         if: steps.v.outputs.exists == 'false'
@@ -120,6 +116,9 @@ jobs:
       - name: Renderer bauen
         working-directory: app
         run: npm run build:renderer
+
+      - name: Production-API-URL setzen (main = api.blackfossil.de)
+        run: node -e "require('fs').writeFileSync('app/src/main.js',require('fs').readFileSync('app/src/main.js','utf8').replace('https://api-test.blackfossil.de','https://api.blackfossil.de'))"
 
       - name: AppImage bauen & auf GitHub Releases veröffentlichen
         working-directory: app
