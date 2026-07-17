@@ -7,6 +7,10 @@
 #
 # Guard: Existiert der Tag zur Version schon (Version nicht gebumpt), wird sauber
 # übersprungen statt zu scheitern — sonst würde jeder main-Push ohne Bump rot.
+#
+# Zwei Plattformen, ein Release: Windows (nsis) und Linux (AppImage) laden in DASSELBE
+# GitHub-Release. Die Feeds sind getrennt (latest.yml / latest-linux.yml), die Updater
+# sehen einander nicht. Reihenfolge ist wichtig — siehe die Job-Kommentare unten.
 name: Build & Release (main)
 
 on:
@@ -22,8 +26,14 @@ concurrency:
   cancel-in-progress: false   # ein laufendes Release NIE abbrechen
 
 jobs:
+  # Windows-Build. Setzt ausserdem Version/Tag fest und legt den Tag an — die Folgejobs
+  # uebernehmen beides ueber die Outputs, damit der Guard nur EINMAL ausgewertet wird.
   release:
     runs-on: windows-latest
+    outputs:
+      version: ${{ steps.v.outputs.version }}
+      tag: ${{ steps.v.outputs.tag }}
+      exists: ${{ steps.v.outputs.exists }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -85,13 +95,56 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
+  # Linux-AppImage ins SELBE Release. NACH dem Windows-Job, nicht parallel: sonst wuerden beide
+  # gleichzeitig das Draft-Release anlegen wollen (Race), und den Tag setzt ohnehin nur "release".
+  # AppImage und nicht deb/rpm/pacman — electron-updater 6.8.9 nimmt auf Linux per Default den
+  # AppImageUpdater; die Paket-Updater brauchen root/pkexec zum Installieren (out/main.js:44-74),
+  # was fuer ein vom Spieler gestartetes Overlay unbrauchbar ist.
+  build-linux:
+    needs: release
+    if: needs.release.outputs.exists == 'false'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Dependencies
+        working-directory: app
+        run: npm ci
+
+      - name: Renderer bauen
+        working-directory: app
+        run: npm run build:renderer
+
+      - name: AppImage bauen & auf GitHub Releases veröffentlichen
+        working-directory: app
+        run: npx electron-builder --linux --publish always
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  # Release erst live schalten, wenn BEIDE Artefakte oben liegen. Vorher stand dieser Schritt am
+  # Ende des Windows-Jobs — damit waere das Release "latest" gewesen, waehrend die AppImage noch
+  # fehlt, und der Linux-Updater liefe gegen eine 404 auf latest-linux.yml.
+  publish:
+    needs: [release, build-linux]
+    if: needs.release.outputs.exists == 'false'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0   # volle Historie + Tags für den Changelog
+
       # Changelog aus den Commits seit dem letzten Tag + Release veröffentlichen und als
       # Latest markieren — Letztes ist entscheidend, sonst zieht der Auto-Updater es nicht.
       - name: Changelog + Release veröffentlichen
-        if: steps.v.outputs.exists == 'false'
         shell: bash
         run: |
-          TAG="${{ steps.v.outputs.tag }}"
+          TAG="${{ needs.release.outputs.tag }}"
           PREV=$(git describe --tags --abbrev=0 "${TAG}^" 2>/dev/null || echo "")
           {
             echo "## 📝 Änderungen"

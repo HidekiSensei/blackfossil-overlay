@@ -64,6 +64,17 @@
       "perMachine": false,
       "allowToChangeInstallationDirectory": false
     },
+    "linux": {
+      "target": [
+        {
+          "target": "AppImage",
+          "arch": [
+            "x64"
+          ]
+        }
+      ],
+      "category": "Game"
+    },
     "publish": [
       {
         "provider": "github",
