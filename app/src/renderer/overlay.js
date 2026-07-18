@@ -829,6 +829,7 @@ async function init() {
   el('admUserLoad').onclick = () => admLoadUserInfo();
   el('admLightningBtn').onclick = () => admLightning();
   { const b = el('msgSendBtn'); if (b) b.onclick = () => admSendToast(); }
+  { const b = el('followToggleBtn'); if (b) b.onclick = () => admToggleFollow(); }
   { const b = el('dutyToggleBtn'); if (b) b.onclick = () => toggleDuty(); }
   document.querySelectorAll('#adminTabs [data-atab]').forEach((b) => { b.onclick = () => showAdminTab(b.dataset.atab); });
   { const b = el('dtTabGive'); if (b) b.onclick = () => { dtTab = 'give'; renderDtTab(); }; }
@@ -2376,6 +2377,37 @@ async function admSendToast() {
     const d = await res.json(); if (!res.ok) throw new Error(apiErr(d));
     showToast(`💬 Nachricht an ${escapeHtml(u.name || 'Spieler')} gesendet`, 'success');
     el('msgText').value = ''; el('msgUserSearch').value = '';
+  } catch (e) { showToast(e.message, 'error'); }
+}
+
+// Follow-Overwatch: Toggle. Startet (POST) bzw. stoppt (DELETE) /admin/follow.
+// Der folgende Admin ist server-seitig der Actor (SteamID aus dem JWT) — wir senden
+// nur das Ziel. Auto-Stop im Mod (Ziel disconnect/tot) wird hier nicht gespiegelt.
+let followingSteamId = null;
+function updateFollowBtn(on) {
+  const b = el('followToggleBtn'); if (!b) return;
+  b.textContent = on ? '🎯 Follow stoppen' : '🎯 Follow starten';
+  b.style.background = on ? '#dc2626' : '';
+}
+async function admToggleFollow() {
+  const stop = !!followingSteamId;
+  let target = followingSteamId, name = '';
+  if (!stop) {
+    const u = resolveAdminUser('followUserSearch');
+    if (!u) { showToast('Bitte einen Spieler aus den Vorschlägen wählen', 'error'); return; }
+    target = u.steamId; name = u.name || 'Spieler';
+  }
+  try {
+    const res = await fetch(`${config.tokenBase}/admin/follow`, {
+      method: stop ? 'DELETE' : 'POST',
+      headers: { Authorization: `Bearer ${sessionToken}`, 'Content-Type': 'application/json' },
+      body: stop ? undefined : JSON.stringify({ targetSteamId: target }),
+    });
+    const d = await res.json().catch(() => ({})); if (!res.ok) throw new Error(apiErr(d));
+    followingSteamId = stop ? null : target;
+    updateFollowBtn(!!followingSteamId);
+    showToast(stop ? '🎯 Follow gestoppt' : `🎯 Folge ${escapeHtml(name)}`, 'success');
+    if (!stop) el('followUserSearch').value = '';
   } catch (e) { showToast(e.message, 'error'); }
 }
 
