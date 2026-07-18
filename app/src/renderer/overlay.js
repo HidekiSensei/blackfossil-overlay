@@ -669,7 +669,7 @@ function tickGrowTimer() {
   renderGrowTimer();
 }
 
-let config = { tokenBase: 'https://api.blackfossil.de', hotkeys: {} };
+let config = { hotkeys: {} };
 let room = null;
 let micEnabled = false;
 let settingsOpen = false;
