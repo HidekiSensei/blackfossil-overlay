@@ -826,6 +826,8 @@ async function init() {
   // Admin-Panel (eigenständiges Modal, nur Admins) — Einstieg läuft übers Dock (Admin-Button)
   { const oab = el('openAdminBtn'); if (oab) oab.onclick = () => openAdminPanel(); }
   el('adminCloseBtn').onclick = () => closeAdminPanel();
+  { const b = el('serverCloseBtn'); if (b) b.onclick = () => closeServerPanel(); }
+  document.querySelectorAll('#serverTabs [data-stab]').forEach((b) => { b.onclick = () => showServerTab(b.dataset.stab); });
   el('admUserLoad').onclick = () => admLoadUserInfo();
   el('admLightningBtn').onclick = () => admLightning();
   { const b = el('msgSendBtn'); if (b) b.onclick = () => admSendToast(); }
@@ -1658,6 +1660,7 @@ function tpHoverHitTest(e) {
 
 // ── Admin-Panel (eigenständiges Modal, NUR Admins) ───────────────────────────
 let adminOpen = false;
+let serverOpen = false;
 let adminUserMap = new Map();   // Option-Text → { steamId, discordId, name }
 let adminUsers = [];            // volle User-Liste (für robuste Suche/Filter)
 let admSelectedSteamId = null;
@@ -1775,7 +1778,6 @@ function showAdminTab(t) {
   else if (t === 'pvp') ensurePvpLoaded();
   else if (t === 'account') renderAccount();
   else if (t === 'lootbox') ensureLootboxCfgLoaded();
-  else if (t === 'server') renderServer();
   else if (t === 'warn') renderWarnPane();
   else if (t === 'audit') renderAudit();
   else if (t === 'handbuch') renderHandbuch();
@@ -2212,6 +2214,196 @@ function closeAdminPanel() {
   adminOpen = false;
   el('adminPanel').style.display = 'none';
   updateInteractive();
+}
+
+// ── Server-Panel (nur Admin): Welt / AI / Polymorph / Objekte / Server ───────
+// Alle Aktionen laufen über admin-only Backend-Proxies (/admin/world/*, /admin/players/{id}/
+// polymorph, /admin/mod-ai/*, /admin/ai/*), die 1:1 an die mod-API bzw. den control-server gehen.
+function openServerPanel() {
+  if (!isAdmin) { showToast('Nur für Admins', 'error'); return; }
+  serverOpen = true;
+  el('serverPanel').style.display = 'block';
+  updateInteractive();
+  showServerTab('welt');
+}
+function closeServerPanel() {
+  serverOpen = false;
+  el('serverPanel').style.display = 'none';
+  updateInteractive();
+}
+let serverTab = 'welt';
+function showServerTab(t) {
+  serverTab = t;
+  document.querySelectorAll('#serverTabs [data-stab]').forEach((b) => b.classList.toggle('secondary', b.dataset.stab !== t));
+  document.querySelectorAll('#serverPanel .admin-pane').forEach((p) => { p.hidden = p.dataset.pane !== t; });
+  if (t === 'welt') renderSvWelt();
+  else if (t === 'ai') renderSvAi();
+  else if (t === 'polymorph') renderSvPoly();
+  else if (t === 'objects') renderSvObjects();
+  else if (t === 'server') renderServer();
+  bfScheduleFrameSync && bfScheduleFrameSync();
+}
+// Generischer Server-Panel-API-Call (GET/POST/PATCH/DELETE) → geparste Antwort, wirft bei !ok.
+async function svApi(method, path, body) {
+  const opt = { method, headers: { Authorization: `Bearer ${sessionToken}` } };
+  if (body !== undefined && body !== null) { opt.headers['Content-Type'] = 'application/json'; opt.body = JSON.stringify(body); }
+  const r = await fetch(`${config.tokenBase}${path}`, opt);
+  let d = {}; try { d = await r.json(); } catch {}
+  if (!r.ok) throw new Error(apiErr(d) || `HTTP ${r.status}`);
+  return d;
+}
+function svFmtTod(t) { const h = Math.floor(t), m = Math.round((t - h) * 60); return `${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}`; }
+
+// 🌍 Welt: Zeit / Wetter / Grow-Stop
+async function renderSvWelt() {
+  const box = el('svWeltBody'); if (!box) return;
+  box.innerHTML = '<div class="dt-muted">Lade…</div>';
+  const [time, weather, grow] = await Promise.all([
+    svApi('GET', '/admin/world/time').catch(() => ({})),
+    svApi('GET', '/admin/world/weather').catch(() => ({})),
+    svApi('GET', '/admin/world/growth-stop').catch(() => ({})),
+  ]);
+  const presets = weather.presets || weather.weathers || weather.list || weather.items || ['clear', 'clouds', 'rain', 'storm', 'fog', 'snow', 'auto'];
+  const tod = (typeof time.timeOfDay === 'number') ? time.timeOfDay : 12;
+  box.innerHTML = `
+    <div class="sec-title">🕑 Tageszeit</div>
+    <div style="display:flex;align-items:center;gap:10px;margin:8px 0">
+      <input id="svTod" type="range" min="0" max="24" step="0.25" value="${tod}" style="flex:1;accent-color:var(--accent)">
+      <span id="svTodVal" style="width:52px;text-align:right">${svFmtTod(tod)}</span>
+      <button id="svTodApply" style="width:auto;padding:6px 12px">Setzen</button>
+    </div>
+    <label style="display:flex;align-items:center;gap:8px;font-size:13px;margin-bottom:14px"><input id="svPause" type="checkbox" ${time.paused ? 'checked' : ''}> Zeit einfrieren (Tag/Nacht-Zyklus anhalten)</label>
+    <div class="sec-title">🌦️ Wetter</div>
+    <div style="display:flex;flex-wrap:wrap;gap:6px;margin:8px 0 14px">${presets.map((p) => `<button class="secondary" data-weather="${escapeHtml(String(p))}" style="width:auto;padding:6px 12px">${escapeHtml(String(p))}</button>`).join('')}</div>
+    <div class="sec-title">🌱 Wachstum</div>
+    <label style="display:flex;align-items:center;gap:8px;font-size:13px;margin:8px 0"><input id="svGrow" type="checkbox" ${grow.enabled ? 'checked' : ''}> Grow-Stop (Wachstum aller Dinos einfrieren)</label>`;
+  el('svTod').oninput = () => { el('svTodVal').textContent = svFmtTod(parseFloat(el('svTod').value)); };
+  el('svTodApply').onclick = async () => { try { await svApi('POST', '/admin/world/time', { timeOfDay: parseFloat(el('svTod').value) }); showToast('🕑 Tageszeit gesetzt', 'success'); } catch (e) { showToast(e.message, 'error'); } };
+  el('svPause').onchange = async () => { try { await svApi('POST', '/admin/world/time', { paused: el('svPause').checked }); showToast(el('svPause').checked ? '⏸️ Zeit eingefroren' : '▶️ Zeit läuft', 'success'); } catch (e) { showToast(e.message, 'error'); } };
+  box.querySelectorAll('[data-weather]').forEach((b) => b.onclick = async () => { try { await svApi('POST', '/admin/world/weather', { weather: b.dataset.weather }); showToast('🌦️ Wetter: ' + b.dataset.weather, 'success'); } catch (e) { showToast(e.message, 'error'); } });
+  el('svGrow').onchange = async () => { try { await svApi('POST', '/admin/world/growth-stop', { enabled: el('svGrow').checked }); showToast(el('svGrow').checked ? '🌱 Grow-Stop AN' : '🌱 Grow-Stop AUS', 'success'); } catch (e) { el('svGrow').checked = !el('svGrow').checked; showToast(e.message, 'error'); } };
+}
+
+// 🤖 AI: control-server-Steuerung + mod-eigener Ad-hoc-Spawn
+async function svAiLoadStatus() {
+  const s = el('svAiStatus'); if (!s) return;
+  try { const d = await svApi('GET', '/admin/ai/status'); s.textContent = 'Status: ' + (d.enabled != null ? (d.enabled ? 'aktiv' : 'aus') : JSON.stringify(d).slice(0, 140)); }
+  catch { s.textContent = 'Status: nicht erreichbar'; }
+}
+async function renderSvAi() {
+  const box = el('svAiBody'); if (!box) return;
+  box.innerHTML = `
+    <div class="sec-title">🤖 AI-Steuerung (control-server)</div>
+    <div id="svAiStatus" class="dt-muted" style="margin:6px 0">Status: …</div>
+    <div style="display:flex;flex-wrap:wrap;gap:6px;margin-bottom:14px">
+      <button id="svAiEnable" style="width:auto;padding:6px 12px">▶️ Aktivieren</button>
+      <button id="svAiDisable" class="secondary" style="width:auto;padding:6px 12px">⏸️ Deaktivieren</button>
+      <button id="svAiStart" class="secondary" style="width:auto;padding:6px 12px">Start</button>
+      <button id="svAiStop" class="secondary" style="width:auto;padding:6px 12px">Stop</button>
+      <button id="svAiDespawn" class="secondary" style="width:auto;padding:6px 12px;color:#f59e0b">Despawn all</button>
+      <button id="svAiKill" class="secondary" style="width:auto;padding:6px 12px;color:#ef4444">Kill all</button>
+      <button id="svAiPanic" class="secondary" style="width:auto;padding:6px 12px;color:#ef4444">PANIC</button>
+    </div>
+    <div class="sec-title">🦖 Ad-hoc-Spawn (mod-AI, experimentell)</div>
+    <div class="dt-form" style="margin-top:6px">
+      <label>Spezies (Blueprint, z. B. BP_Allosaurus_C)</label>
+      <input id="svAiClass" class="tm-input" placeholder="BP_Allosaurus_C">
+      <label>Anzahl (1–20)</label>
+      <input id="svAiCount" type="number" min="1" max="20" value="1" class="tm-input">
+    </div>
+    <button id="svAiSpawnMe" style="width:100%;margin-top:8px">An meiner Position spawnen</button>`;
+  svAiLoadStatus();
+  const simple = (id, action, label) => { const b = el(id); if (b) b.onclick = async () => { try { await svApi('POST', `/admin/ai/${action}`, {}); showToast(`🤖 ${label}`, 'success'); svAiLoadStatus(); } catch (e) { showToast(e.message, 'error'); } }; };
+  simple('svAiEnable', 'enable', 'AI aktiviert');
+  simple('svAiDisable', 'disable', 'AI deaktiviert');
+  simple('svAiStart', 'start', 'AI gestartet');
+  simple('svAiStop', 'stop', 'AI gestoppt');
+  const danger = (id, action, label) => { const b = el(id); if (b) b.onclick = () => svArmConfirm(b, label, async () => { try { await svApi('POST', `/admin/ai/${action}`, {}); showToast(`🤖 ${label}`, 'success'); svAiLoadStatus(); } catch (e) { showToast(e.message, 'error'); } }); };
+  danger('svAiDespawn', 'despawnall', 'Despawn all');
+  danger('svAiKill', 'killall', 'Kill all');
+  danger('svAiPanic', 'panic', 'PANIC');
+  el('svAiSpawnMe').onclick = async () => {
+    const cls = (el('svAiClass').value || '').trim(); if (!cls) { showToast('Spezies angeben', 'error'); return; }
+    const count = Math.max(1, Math.min(20, parseInt(el('svAiCount').value) || 1));
+    if (!me || !me.steamId) { showToast('Deine Position unbekannt (im Spiel?)', 'error'); return; }
+    try { await svApi('POST', '/admin/mod-ai/spawn', { class: cls, count, steamId: me.steamId }); showToast(`🦖 ${count}× ${cls} gespawnt`, 'success'); } catch (e) { showToast(e.message, 'error'); }
+  };
+}
+
+// 🦖 Polymorph: Spieler in NPC-Tier verwandeln
+async function renderSvPoly() {
+  const box = el('svPolyBody'); if (!box) return;
+  box.innerHTML = '<div class="dt-muted">Lade…</div>';
+  await loadAdminUsers();
+  box.innerHTML = `
+    <div class="sec-title">🦖 Polymorph <span class="dt-muted">— Spieler per Respawn in ein NPC-Tier verwandeln</span></div>
+    <div class="dt-form" style="margin-top:6px">
+      ${userSearchHTML('svPolyUser', adminUsers, 'Spieler', 'RP/Steam/Discord tippen…')}
+      <label>Ziel-Dino (Blueprint/Kurzname, z. B. Boar, Chicken, Deer)</label>
+      <input id="svPolyClass" class="tm-input" placeholder="Chicken">
+      <div style="display:flex;gap:10px">
+        <div style="flex:1"><label>Scale (optional)</label><input id="svPolyScale" type="number" step="0.5" min="0.1" placeholder="1" class="tm-input"></div>
+        <div style="flex:1"><label>maxHealth (optional)</label><input id="svPolyHp" type="number" step="100" placeholder="—" class="tm-input"></div>
+      </div>
+    </div>
+    <div style="display:flex;flex-wrap:wrap;gap:6px;margin:10px 0 6px">
+      <button class="secondary" data-poly="Chicken|10|10000" style="width:auto;padding:6px 12px">🐔 Boss-Huhn</button>
+      <button class="secondary" data-poly="Boar|3|2000" style="width:auto;padding:6px 12px">🐗 Riesen-Boar</button>
+      <button class="secondary" data-poly="Rabbit|0.3|" style="width:auto;padding:6px 12px">🐇 Mini-Hase</button>
+    </div>
+    <button id="svPolyApply" style="width:100%;margin-top:6px">🦖 Polymorph anwenden</button>`;
+  box.querySelectorAll('[data-poly]').forEach((b) => b.onclick = () => { const [c, s, h] = b.dataset.poly.split('|'); el('svPolyClass').value = c; el('svPolyScale').value = s || ''; el('svPolyHp').value = h || ''; });
+  el('svPolyApply').onclick = async () => {
+    const u = resolveUserInput('svPolyUser', adminUsers);
+    if (!u) { showToast('Spieler aus der Liste wählen', 'error'); return; }
+    const cls = (el('svPolyClass').value || '').trim(); if (!cls) { showToast('Ziel-Dino angeben', 'error'); return; }
+    const body = { dinoClass: cls };
+    const sc = parseFloat(el('svPolyScale').value); if (sc > 0) body.scale = sc;
+    const hp = parseFloat(el('svPolyHp').value); if (hp > 0) body.maxHealth = hp;
+    try { await svApi('POST', `/admin/players/${u.steamId}/polymorph`, body); showToast(`🦖 ${u.ingameName || u.name || 'Spieler'} → ${cls}`, 'success'); } catch (e) { showToast(e.message, 'error'); }
+  };
+}
+
+// 🧱 Objekte: platzieren / auflisten / löschen (mod In-Memory-Registry, überlebt keinen Restart)
+async function renderSvObjects() {
+  const box = el('svObjBody'); if (!box) return;
+  box.innerHTML = '<div class="dt-muted">Lade…</div>';
+  let list = { actors: [] };
+  try { list = await svApi('GET', '/admin/world/objects'); } catch {}
+  const actors = list.actors || [];
+  const rows = actors.map((o) => `<tr><td style="padding:2px 6px">${escapeHtml(o.tag || '')}</td><td style="padding:2px 6px" class="dt-muted">${escapeHtml(o.id || '')}</td><td style="padding:2px 6px" class="dt-muted">${escapeHtml(o.kind || '')}</td><td style="padding:2px 6px">${Math.round(o.x)}, ${Math.round(o.y)}, ${Math.round(o.z)}</td><td style="padding:2px 6px"><button class="secondary" data-obj-del="${escapeHtml(o.id || '')}" style="width:auto;padding:2px 8px">✕</button></td></tr>`).join('') || '<tr><td colspan="5" class="dt-muted" style="padding:6px">Keine Objekte platziert.</td></tr>';
+  box.innerHTML = `
+    <div class="sec-title">🧱 Objekt platzieren <span class="dt-muted">— überlebt KEINEN Server-Restart</span></div>
+    <div class="dt-form" style="margin-top:6px">
+      <label>Modell (BP_… / SM_… / NS_… oder /Game/…-Pfad)</label>
+      <input id="svObjModel" class="tm-input" placeholder="BP_Rock_C">
+      <label>Tag (Gruppenname zum späteren Löschen)</label>
+      <input id="svObjTag" class="tm-input" placeholder="deko1">
+      <label>Scale</label>
+      <input id="svObjScale" type="number" step="0.5" value="1" class="tm-input">
+      <label style="display:flex;align-items:center;gap:8px;margin-top:8px"><input id="svObjAtMe" type="checkbox" checked> An meiner Position platzieren</label>
+    </div>
+    <button id="svObjSpawn" style="width:100%;margin:8px 0 4px">🧱 Platzieren</button>
+    <button id="svObjAssets" class="secondary" style="width:100%;margin-bottom:12px">📋 Spawnbare Assets anzeigen</button>
+    <div id="svObjAssetList"></div>
+    <div class="sec-title" style="margin-top:10px">Platzierte Objekte (${actors.length})</div>
+    <div style="max-height:220px;overflow:auto;margin-top:6px"><table style="width:100%;border-collapse:collapse;font-size:12px"><tbody>${rows}</tbody></table></div>`;
+  el('svObjSpawn').onclick = async () => {
+    const model = (el('svObjModel').value || '').trim(); if (!model) { showToast('Modell angeben', 'error'); return; }
+    const entry = { tag: (el('svObjTag').value || '').trim() || 'obj', model, scale: parseFloat(el('svObjScale').value) || 1 };
+    if (el('svObjAtMe').checked) { if (!me || typeof me.x !== 'number') { showToast('Deine Position unbekannt', 'error'); return; } entry.location = { x: me.x, y: me.y, z: me.z || 0 }; }
+    try { await svApi('POST', '/admin/world/objects', entry); showToast('🧱 Objekt platziert', 'success'); renderSvObjects(); } catch (e) { showToast(e.message, 'error'); }
+  };
+  el('svObjAssets').onclick = async () => {
+    const t = el('svObjAssetList'); t.innerHTML = '<div class="dt-muted">Lade Assets…</div>';
+    try {
+      const a = await svApi('GET', '/admin/world/objects/all');
+      const bp = (a.blueprints && a.blueprints.items) || [];
+      t.innerHTML = `<div class="dt-muted" style="margin:6px 0">Blueprints (${(a.blueprints && a.blueprints.count) || 0}) — Klick übernimmt ins Modell-Feld:</div>` + bp.slice(0, 200).map((m) => `<button class="secondary" data-asset="${escapeHtml(m)}" style="width:auto;padding:2px 8px;margin:2px">${escapeHtml(m)}</button>`).join('');
+      t.querySelectorAll('[data-asset]').forEach((b) => b.onclick = () => { el('svObjModel').value = b.dataset.asset; });
+    } catch (e) { t.innerHTML = `<span style="color:#ef4444">${escapeHtml(e.message)}</span>`; }
+  };
+  box.querySelectorAll('[data-obj-del]').forEach((b) => b.onclick = async () => { try { await svApi('DELETE', `/admin/world/objects/id/${encodeURIComponent(b.dataset.objDel)}`); showToast('🗑️ Objekt gelöscht', 'success'); renderSvObjects(); } catch (e) { showToast(e.message, 'error'); } });
 }
 // Hotkey „admin-menu": Panel umschalten (nur Admins)
 function openAdminMenu() {
@@ -6073,7 +6265,7 @@ function setDockVisible(visible) {
 
 function updateInteractive() {
   updateDockActive(); // Dock-Highlight immer am aktuellen Stand halten
-  const anyPanel = settingsOpen || mapOpen || adminOpen || !!featureOpen;
+  const anyPanel = settingsOpen || mapOpen || adminOpen || serverOpen || !!featureOpen;
   // Dock IMMER einblenden, sobald ein Panel offen ist (auch per Hotkey geöffnet), im „^"-Modus oder im Edit-Mode.
   setDockVisible(overlayMode || anyPanel || editMode);
   // Maus durchlassen nur wenn nichts offen ist (im Edit-Mode immer klickbar)
@@ -6108,7 +6300,7 @@ function bfEnsureRO() {
 function bfLightningTargets() {
   const out = [];
   document.querySelectorAll('.feature-panel').forEach((e) => out.push({ el: e, round: false }));
-  for (const id of ['settings', 'adminPanel', 'bigMap']) { const e = el(id); if (e) out.push({ el: e, round: false }); }
+  for (const id of ['settings', 'adminPanel', 'serverPanel', 'bigMap']) { const e = el(id); if (e) out.push({ el: e, round: false }); }
   const ddBox = document.querySelector('#dinoDetail .box'); if (ddBox) out.push({ el: ddBox, round: false });
   const mm = el('minimap'); if (mm) out.push({ el: mm, round: true });
   return out;
@@ -6168,6 +6360,7 @@ function closeAllPanels() {
   if (mapOpen) toggleMap(false);
   if (settingsOpen) toggleSettings(false);
   if (adminOpen) closeAdminPanel();
+  if (serverOpen) closeServerPanel();
 }
 
 // Dock-Icons (Lucide, stroke = currentColor → erbt Button-Farbe)
@@ -6185,6 +6378,7 @@ const DOCK_ICONS = {
   skin:     dockSvg('<circle cx="13.5" cy="6.5" r=".8" fill="currentColor" stroke="none"/><circle cx="17.5" cy="10.5" r=".8" fill="currentColor" stroke="none"/><circle cx="6.5" cy="12.5" r=".8" fill="currentColor" stroke="none"/><circle cx="8.5" cy="7.5" r=".8" fill="currentColor" stroke="none"/><path d="M12 2C6.5 2 2 6.5 2 12s4.5 10 10 10c.9 0 1.6-.7 1.6-1.7 0-.4-.2-.8-.4-1.1-.3-.3-.4-.7-.4-1.1a1.6 1.6 0 0 1 1.6-1.6H16c3 0 5.5-2.5 5.5-5.5C22 6 17.5 2 12 2z"/>'),
   settings: dockSvg('<circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.6 1.6 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.6 1.6 0 0 0-1.8-.3 1.6 1.6 0 0 0-1 1.5V21a2 2 0 0 1-4 0v-.1a1.6 1.6 0 0 0-1-1.5 1.6 1.6 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.6 1.6 0 0 0 .3-1.8 1.6 1.6 0 0 0-1.5-1H3a2 2 0 0 1 0-4h.1a1.6 1.6 0 0 0 1.5-1 1.6 1.6 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.6 1.6 0 0 0 1.8.3H9a1.6 1.6 0 0 0 1-1.5V3a2 2 0 0 1 4 0v.1a1.6 1.6 0 0 0 1 1.5 1.6 1.6 0 0 0 1.8-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.6 1.6 0 0 0-.3 1.8V9a1.6 1.6 0 0 0 1.5 1H21a2 2 0 0 1 0 4h-.1a1.6 1.6 0 0 0-1.5 1z"/>'),
   admin:    dockSvg('<path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10"/>'),
+  server:   dockSvg('<rect x="2" y="3" width="20" height="6" rx="1"/><rect x="2" y="12" width="20" height="6" rx="1"/><path d="M6 6h.01M6 15h.01"/>'),
   quests:   dockSvg('<path d="M4 22V4a1 1 0 0 1 1-1h12l-2 4 2 4H6"/><line x1="4" y1="22" x2="4" y2="15"/>'),
   notifications: dockSvg('<path d="M6 8a6 6 0 0 1 12 0c0 7 3 9 3 9H3s3-2 3-9"/><path d="M10.3 21a1.94 1.94 0 0 0 3.4 0"/>'),
   close:    dockSvg('<line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/>'),
@@ -6194,6 +6388,7 @@ const DOCK_ICONS = {
 function activeNav() {
   if (settingsOpen) return 'settings';
   if (mapOpen) return 'map';
+  if (serverOpen) return 'server';
   if (adminOpen) return 'admin';
   if (featureOpen === 'skinEditor') return 'skin';
   if (featureOpen === 'dinoInfo') return 'dino';
@@ -6208,11 +6403,13 @@ function updateDockActive() {
 // Klick aufs bereits aktive Icon schließt es wieder (zurück zum reinen Dock).
 function navTo(target) {
   if (target === 'admin' && !isStaff) { showToast('Nur für Staff (Supporter/Moderator+)', 'error'); return; }
+  if (target === 'server' && !isAdmin) { showToast('Nur für Admins', 'error'); return; }
   const wasActive = activeNav() === target;
   closeAllPanels();
   if (!wasActive) {
     if (target === 'map') toggleMap(true);
     else if (target === 'settings') toggleSettings(true);
+    else if (target === 'server') openServerPanel();
     else if (target === 'admin') openAdminPanel();
     else if (target === 'skin') toggleFeature('skinEditor');
     else if (target === 'dino') toggleFeature('dinoInfo');
@@ -6435,6 +6632,7 @@ async function connectWithSession(session) {
     isStaff = isIngame || isTeam;        // sieht das Admin/Support-Panel (Support-Tools)
     { const ab = el('openAdminBtn'); if (ab) ab.style.display = isStaff ? 'block' : 'none'; }
     { const da = el('dockAdmin'); if (da) da.style.display = isStaff ? 'flex' : 'none'; }
+    { const ds = el('dockServer'); if (ds) ds.style.display = isAdmin ? 'flex' : 'none'; }
     // Tickets/Events/Overlay-Gruppe laden + periodisch (Benachrichtigungen)
     loadMyTickets(); loadMyEvents(); loadOvGroup();
     if (!loadMyTickets._t) loadMyTickets._t = setInterval(loadMyTickets, 20000);
