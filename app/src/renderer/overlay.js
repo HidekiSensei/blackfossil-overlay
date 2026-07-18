@@ -547,9 +547,22 @@ let compassHd = null;   // gleitend interpolierte Anzeige-Blickrichtung (60fps) 
 let compassRAF = 0;
 // 60fps-Render-Loop: gleitet die angezeigte Blickrichtung weich zur echten (die alle 100ms per Poll
 // kommt) — so dreht sich der Kompass flüssig statt in 10fps-Stufen. Läuft rein clientseitig.
+// Kompass an/aus (Settings-Toggle, persistent) + Auto-Aus im Fly-/Admin-Modus (keine Blickrichtung).
+let compassHidden = localStorage.getItem('bf-hide-compass') === '1';
+let compassHideState = null;
+function compassSetHidden(h) { if (h === compassHideState) return; compassHideState = h; const w = el('compassWrap'); if (w) w.style.display = h ? 'none' : ''; }
+function applyCompassToggle() {
+  const b = el('compassToggleBtn');
+  if (b) { b.textContent = compassHidden ? '🧭 Kompass: Aus' : '🧭 Kompass: An'; b.classList.toggle('secondary', compassHidden); }
+  compassHideState = null; // beim nächsten Frame neu anwenden
+}
+function toggleCompass() { compassHidden = !compassHidden; localStorage.setItem('bf-hide-compass', compassHidden ? '1' : '0'); applyCompassToggle(); }
 function compassLoop() {
   compassRAF = requestAnimationFrame(compassLoop);
   const online = me && typeof me.heading === 'number';
+  const hide = compassHidden || (me && me.isFlying); // Fly-Mode: keine Blickrichtung → Kompass aus
+  compassSetHidden(hide);
+  if (hide) { compassHd = null; return; }
   if (!online) { compassHd = null; renderCompass(); return; }
   if (compassHd == null) {
     compassHd = me.heading;
@@ -2686,6 +2699,7 @@ async function admLoadUserInfo() {
 let dutyOn = false;
 function updateDutyBtn(on) {
   dutyOn = !!on;
+  document.body.classList.toggle('on-duty', dutyOn); // Lebensanzeige aus + weitere Dienst-Modus-Styles
   const g = el('dutyGlow'); if (g) g.classList.toggle('on', dutyOn); // pinker Rand-Glow
   updateWindowBounds(); // Fenster im Dienst-Modus auf Vollbild halten → Glow rundum sichtbar
   const b = el('dutyToggleBtn');
@@ -7375,6 +7389,7 @@ function setupEditMode() {
   const fxBtn = el('fxToggleBtn'); if (fxBtn) fxBtn.onclick = toggleFx;
   applyFx();
   const miniBtn = el('miniToggleBtn'); if (miniBtn) miniBtn.onclick = toggleMinimap;
+  const compassBtn = el('compassToggleBtn'); if (compassBtn) compassBtn.onclick = toggleCompass;
   const blurBtn = el('blurToggleBtn'); if (blurBtn) blurBtn.onclick = toggleBlur;
   applyBlur();
   const lsBtn = el('lowSpecBtn'); if (lsBtn) lsBtn.onclick = toggleLowSpec;
@@ -7386,6 +7401,7 @@ function setupEditMode() {
   updateWindowBounds();                        // Anfangszustand ans Fenster melden
   setInterval(updateWindowBounds, 1500);       // transiente HUD-Änderungen (Toasts/Banner) nachziehen
   applyMiniToggle();
+  applyCompassToggle();
   renderThemePicker();
   syncLightningFrames();   // Minimap-Blitzrahmen direkt anzeigen
 }

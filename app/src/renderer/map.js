@@ -468,7 +468,13 @@ function headingMapAngle(p) {
 function arrowAngle(p) { return (typeof p.heading === 'number') ? headingMapAngle(p) : ((typeof p.dirAngle === 'number') ? p.dirAngle : -Math.PI / 2); }
 function drawGroupMember(ctx, px, py, p, scale) {
   const col = groupColorFor(p.steamId);
-  drawArrow(ctx, px, py, arrowAngle(p), 6.5 * scale, col);
+  if (p.isFlying) { // Fly-/Admin-Modus: Punkt statt Pfeil (keine Blickrichtung)
+    ctx.beginPath(); ctx.arc(px, py, 4 * scale, 0, Math.PI * 2);
+    ctx.fillStyle = col; ctx.fill();
+    ctx.lineWidth = Math.max(0.5, 1.2 * scale); ctx.strokeStyle = 'rgba(0,0,0,0.8)'; ctx.stroke();
+  } else {
+    drawArrow(ctx, px, py, arrowAngle(p), 6.5 * scale, col);
+  }
   if (p.name) {
     ctx.font = `bold ${11 * scale}px system-ui`; ctx.textAlign = 'center'; ctx.textBaseline = 'bottom';
     ctx.strokeStyle = 'rgba(0,0,0,0.75)'; ctx.lineWidth = 3 * scale; ctx.strokeText(p.name, px, py - 9 * scale);
@@ -485,6 +491,13 @@ function drawGroupMember(ctx, px, py, p, scale) {
 function drawPlayer(ctx, px, py, p, scale) {
   const sz = 9 * SELF_SIZE * scale;
   ctx.save(); ctx.shadowColor = SELF_COLOR; ctx.shadowBlur = 7 * scale;   // Glow → klar erkennbar
+  if (p.isFlying) {
+    // Fly-/Admin-Modus: keine Blickrichtung → Punkt statt Pfeil.
+    ctx.beginPath(); ctx.arc(px, py, sz * 0.5, 0, Math.PI * 2);
+    ctx.fillStyle = SELF_COLOR; ctx.fill();
+    ctx.lineWidth = Math.max(0.5, sz * 0.14); ctx.strokeStyle = 'rgba(0,0,0,0.8)'; ctx.stroke();
+    ctx.restore(); return;
+  }
   // Basis-Punkt unter dem Pfeil → immer als eigene Position erkennbar, auch bei viel Zoom.
   ctx.beginPath(); ctx.arc(px, py, sz * 0.34, 0, Math.PI * 2);
   ctx.fillStyle = SELF_COLOR; ctx.fill();
