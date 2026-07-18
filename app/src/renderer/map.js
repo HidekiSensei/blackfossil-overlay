@@ -212,22 +212,45 @@ export function drawFullMap(view, players, waypoints = [], teleports = [], hover
 }
 
 // ── Heatmap (Aktivitäts-Dichte, keine exakten Positionen) ───────────────────
+// Zeigt NUR Ansammlungen: ein Blob leuchtet erst, wenn ein Dino Teil einer
+// räumlichen Gruppe von mind. HEAT_MIN_CLUSTER Dinos ist — dichter = heller
+// (additives Überlagern + Dichte-Faktor). Teamler (p.team) sind komplett
+// ausgenommen; sie sollen die Heatmap nicht anschlagen lassen.
+const HEAT_MIN_CLUSTER = 4; // Mindest-Gruppengröße, ab der ein Blob überhaupt leuchtet
 export function drawHeatmap(view, players, me) {
   const { ctx, w, h } = view;
   if (mapReady) { ctx.drawImage(mapImg, 0, 0, w, h); ctx.fillStyle = 'rgba(8,5,18,0.45)'; ctx.fillRect(0, 0, w, h); }
   else { ctx.fillStyle = '#15102a'; ctx.fillRect(0, 0, w, h); }
 
-  // Dichte-Blobs additiv übereinanderlegen
+  const radius = w * 0.05;
+  const CR = radius * 1.15, cr2 = CR * CR; // „beieinander" ≈ ein Blob-Radius (in Pixeln)
+  // Kandidaten: lebende Nicht-Team-Dinos, Pixelposition einmal vorberechnen.
+  const pts = [];
+  for (const p of players) {
+    if (p.isDead || p.team) continue;
+    const { nx, ny } = worldToNorm(p.x, p.y);
+    pts.push({ px: nx * w, py: ny * h });
+  }
+
+  // Dichte-Blobs additiv übereinanderlegen — aber nur für Dinos in einer ≥4er-Ansammlung.
   ctx.save();
   ctx.globalCompositeOperation = 'lighter';
-  const radius = w * 0.05;
-  for (const p of players) {
-    if (p.isDead) continue;
-    const { nx, ny } = worldToNorm(p.x, p.y);
-    const px = nx * w, py = ny * h;
+  let shown = 0;
+  for (let i = 0; i < pts.length; i++) {
+    let count = 0; // Nachbarn inkl. sich selbst im Cluster-Radius
+    for (let j = 0; j < pts.length; j++) {
+      const dx = pts[i].px - pts[j].px, dy = pts[i].py - pts[j].py;
+      if (dx * dx + dy * dy <= cr2) count++;
+    }
+    if (count < HEAT_MIN_CLUSTER) continue; // Einzelne/kleine Gruppen bleiben unsichtbar
+    shown++;
+    // Dichter = heller: Peak-Alpha von 0,45 (4) bis 0,70 (≥12) skalieren.
+    const dens = Math.min(1, (count - HEAT_MIN_CLUSTER) / 8);
+    const a0 = 0.45 + 0.25 * dens, a1 = 0.18 + 0.12 * dens;
+    const px = pts[i].px, py = pts[i].py;
     const g = ctx.createRadialGradient(px, py, 0, px, py, radius);
-    g.addColorStop(0, 'rgba(255,80,0,0.55)');
-    g.addColorStop(0.5, 'rgba(255,180,0,0.22)');
+    g.addColorStop(0, `rgba(255,80,0,${a0})`);
+    g.addColorStop(0.5, `rgba(255,180,0,${a1})`);
     g.addColorStop(1, 'rgba(255,255,0,0)');
     ctx.fillStyle = g;
     ctx.beginPath(); ctx.arc(px, py, radius, 0, Math.PI * 2); ctx.fill();
@@ -242,7 +265,7 @@ export function drawHeatmap(view, players, me) {
   }
 
   ctx.fillStyle = '#fbbf24'; ctx.font = 'bold 13px system-ui'; ctx.textAlign = 'left';
-  ctx.fillText(`🔥 Heatmap · ${players.filter(p => !p.isDead).length} aktiv`, 14, 24);
+  ctx.fillText(`🔥 Heatmap · ${shown} in Gruppen (ab ${HEAT_MIN_CLUSTER})`, 14, 24);
 }
 
 // ── Minimap (zentriert, Auto-Zoom auf den Sprechradius) ───────────────────────
