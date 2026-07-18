@@ -547,9 +547,22 @@ let compassHd = null;   // gleitend interpolierte Anzeige-Blickrichtung (60fps) 
 let compassRAF = 0;
 // 60fps-Render-Loop: gleitet die angezeigte Blickrichtung weich zur echten (die alle 100ms per Poll
 // kommt) — so dreht sich der Kompass flüssig statt in 10fps-Stufen. Läuft rein clientseitig.
+// Kompass an/aus (Settings-Toggle, persistent) + Auto-Aus im Fly-/Admin-Modus (keine Blickrichtung).
+let compassHidden = localStorage.getItem('bf-hide-compass') === '1';
+let compassHideState = null;
+function compassSetHidden(h) { if (h === compassHideState) return; compassHideState = h; const w = el('compassWrap'); if (w) w.style.display = h ? 'none' : ''; }
+function applyCompassToggle() {
+  const b = el('compassToggleBtn');
+  if (b) { b.textContent = compassHidden ? '🧭 Kompass: Aus' : '🧭 Kompass: An'; b.classList.toggle('secondary', compassHidden); }
+  compassHideState = null; // beim nächsten Frame neu anwenden
+}
+function toggleCompass() { compassHidden = !compassHidden; localStorage.setItem('bf-hide-compass', compassHidden ? '1' : '0'); applyCompassToggle(); }
 function compassLoop() {
   compassRAF = requestAnimationFrame(compassLoop);
   const online = me && typeof me.heading === 'number';
+  const hide = compassHidden || (me && me.isFlying); // Fly-Mode: keine Blickrichtung → Kompass aus
+  compassSetHidden(hide);
+  if (hide) { compassHd = null; return; }
   if (!online) { compassHd = null; renderCompass(); return; }
   if (compassHd == null) {
     compassHd = me.heading;
@@ -1191,6 +1204,7 @@ function audibleVol(steamId) {
   return vol * g * factor;
 }
 const OBSIDIAN_HEX = '#c4b5fd'; // Obsidian-Tier-Textfarbe (vgl. .tier-Obsidian in overlay.html)
+const DUTY_RED = '#ff3b3b';    // Teamler im Dienst-Modus → rot (klar als Admin/Dienst erkennbar)
 function updateSpeakingBox(speakers) {
   const box = el('speakingBox'); if (!box) return;
   const now = Date.now();
@@ -1208,13 +1222,14 @@ function updateSpeakingBox(speakers) {
   box.style.display = '';
   // Farb-/Namensregel für Teamler (sonst stechen sie durch ihre Rollenfarbe sofort heraus):
   // • Im Dienst-Modus (pinker Admin-Skin) → Klarname (Backend liefert bei onDuty schon den echten
-  //   Namen) in der Team-Rollenfarbe → klar als Admin erkennbar.
+  //   Namen) in ROT → klar als Admin/Dienst erkennbar.
   // • Außer Dienst → RP-Name (sonst echter Name) in Obsidian-Lila → wirkt wie ein normaler
   //   Top-Abonnent, die auffällige Team-Rollenfarbe wird verborgen.
   // • Alle anderen → Name in ihrer Discord-Rollenfarbe wie gehabt.
   box.innerHTML = `🔊 ${items.map(({ nm, color, team, onDuty }) => {
     let hex = (color && color > 0) ? '#' + (color >>> 0).toString(16).padStart(6, '0') : null;
-    if (team && !onDuty) hex = OBSIDIAN_HEX;                  // außer Dienst: Rollenfarbe durch Obsidian ersetzen
+    if (team && onDuty) hex = DUTY_RED;                      // im Dienst: rot (Admin/Dienst)
+    else if (team && !onDuty) hex = OBSIDIAN_HEX;            // außer Dienst: Rollenfarbe durch Obsidian ersetzen
     return hex ? `<span style="color:${hex}">${escapeHtml(nm)}</span>` : escapeHtml(nm);
   }).join(', ')}`;
 }
@@ -2770,6 +2785,7 @@ async function admLoadUserInfo() {
 let dutyOn = false;
 function updateDutyBtn(on) {
   dutyOn = !!on;
+  document.body.classList.toggle('on-duty', dutyOn); // Lebensanzeige aus + weitere Dienst-Modus-Styles
   const g = el('dutyGlow'); if (g) g.classList.toggle('on', dutyOn); // pinker Rand-Glow
   updateWindowBounds(); // Fenster im Dienst-Modus auf Vollbild halten → Glow rundum sichtbar
   const b = el('dutyToggleBtn');
@@ -7466,6 +7482,7 @@ function setupEditMode() {
   const fxBtn = el('fxToggleBtn'); if (fxBtn) fxBtn.onclick = toggleFx;
   applyFx();
   const miniBtn = el('miniToggleBtn'); if (miniBtn) miniBtn.onclick = toggleMinimap;
+  const compassBtn = el('compassToggleBtn'); if (compassBtn) compassBtn.onclick = toggleCompass;
   const blurBtn = el('blurToggleBtn'); if (blurBtn) blurBtn.onclick = toggleBlur;
   applyBlur();
   const lsBtn = el('lowSpecBtn'); if (lsBtn) lsBtn.onclick = toggleLowSpec;
@@ -7477,6 +7494,7 @@ function setupEditMode() {
   updateWindowBounds();                        // Anfangszustand ans Fenster melden
   setInterval(updateWindowBounds, 1500);       // transiente HUD-Änderungen (Toasts/Banner) nachziehen
   applyMiniToggle();
+  applyCompassToggle();
   renderThemePicker();
   syncLightningFrames();   // Minimap-Blitzrahmen direkt anzeigen
 }

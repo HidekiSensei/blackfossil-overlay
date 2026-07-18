@@ -494,6 +494,8 @@
     body.bf-hide-hudHeart #hudHeart,
     body.bf-hide-minimapWrap #minimapWrap,
     body.bf-hide-hudInfo #hudInfo { display: none !important; }
+    /* Dienst-/Admin-Modus: Lebensanzeige ausblenden */
+    body.on-duty #hudHeart { display: none !important; }
     /* … im Edit-Mode bleiben sie (gedimmt) sichtbar, damit man sie wieder einblenden kann */
     body.bf-edit .bf-ghost { opacity: .32 !important; filter: grayscale(.55); }
     /* Auge-Umschalter oben links am Element */
@@ -1261,6 +1263,7 @@
           <button id="blurToggleBtn" style="width:100%;margin-top:4px">🌫️ Weichzeichner: An</button>
           <button id="fxToggleBtn" style="width:100%;margin-top:6px">⚡ Effekte: An</button>
           <button id="miniToggleBtn" style="width:100%;margin-top:6px">🗺️ Minimap: An</button>
+          <button id="compassToggleBtn" style="width:100%;margin-top:6px">🧭 Kompass: An</button>
           <div style="font-size:11px;color:var(--muted);margin-top:8px">🌫️ Weichzeichner (Blur) = größter FPS-Kostenpunkt. ⚡ Effekte = Animationen/Leuchten. Beim <em>Spielen</em> (Overlay-Dock zu) sind viele Effekte ohnehin automatisch aus.</div>
           <div class="set-label" style="margin-top:14px">Experimentell</div>
           <button id="shrinkToggleBtn" style="width:100%;margin-top:4px">🪟 Fenster-Shrink: Aus</button>
