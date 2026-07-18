@@ -794,6 +794,7 @@ async function init() {
   await loadMapImage('assets/map.jpg');
   await loadServerCalibration();
   await loadServerZones();
+  loadFreeGenderSwap();
   // Zonen periodisch nachladen, damit von Admins neu gezeichnete Zonen OHNE Neustart
   // bei allen erscheinen. NICHT während man selbst editiert (sonst würden ungespeicherte
   // Punkte vom Server-Stand überschrieben).
@@ -841,16 +842,6 @@ async function init() {
   el('giftSubmit').onclick = () => admGift();
   el('adminCalibBtn').onclick = () => adminCalibrate();
   el('tpCreateBtn').onclick = () => createTp();
-
-  // AI-Dinos (Team)
-  populateAiSpecies();
-  el('aiSpawnMapBtn').onclick = () => toggleAiSpawnMode();
-  el('aiStartBtn').onclick = () => aiControl('start', 'Auto-Spawn gestartet');
-  el('aiStopBtn').onclick = () => aiControl('stop', 'Auto-Spawn gestoppt');
-  el('aiDespawnBtn').onclick = () => aiControl('despawnall', 'Despawn ausgelöst');
-  el('aiKillBtn').onclick = () => aiControl('killall', 'Kill ausgelöst');
-  el('aiPanicBtn').onclick = () => aiControl('panic', 'PANIC ausgeführt');
-  el('aiDisableBtn').onclick = () => aiControl('disable', 'DLL deaktiviert (nach Neustart)');
   el('tpConfirmYes').onclick = () => useTp();
   el('tpConfirmNo').onclick = () => { el('tpConfirm').style.display = 'none'; tpConfirmTarget = null; };
   el('centerBtn').onclick = () => centerOnMe();
@@ -1760,17 +1751,33 @@ function openAdminPanel() {
   updateInteractive();
   ensureGiftTypeOptions();
   loadAdminUsers();
-  loadDutyState();
+  loadDutyState();                        // async → setzt dutyOn + zieht das Gate nach
   if (isIngame) loadAdminRoles();         // Gift-Rollen-Dropdown — nur Moderator+ (Beschenken)
-  if (isAdmin) loadDinoLimits();
-  if (isIngame) { loadTeleports(); renderAdminTpList(); }
-  showAdminTab('tools');
+  applyModerationGate();                  // Tabs je nach Dienst-Modus/Admin ein-/ausblenden
+}
+// Moderation-Panel: für Moderatoren/Supporter sind alle Tabs (außer Handbuch) NUR sichtbar, wenn
+// der Dienst-Modus an ist. Admins sehen immer alles. Handbuch ist immer da.
+function applyModerationGate() {
+  if (!adminOpen) return;
+  const active = isAdmin || dutyOn;
+  document.querySelectorAll('#adminTabs [data-atab]').forEach((b) => {
+    const t = b.dataset.atab;
+    if (t === 'handbuch') { b.style.display = ''; return; } // Handbuch immer
+    let vis = active;
+    if (b.classList.contains('admin-only') && !isAdmin) vis = false; // account/lootbox bleiben admin-only
+    b.style.display = vis ? '' : 'none';
+  });
+  const cur = document.querySelector(`#adminTabs [data-atab="${adminTab}"]`);
+  if (!cur || cur.style.display === 'none') showAdminTab(active ? 'tools' : 'handbuch');
 }
 // Admin-Panel-Tabs (Tools / Dino-Token / künftige Staff-Chunks)
 let adminTab = 'tools';
 function showAdminTab(t) {
   const btn = document.querySelector(`#adminTabs [data-atab="${t}"]`);
-  if (btn && btn.style.display === 'none') t = 'tools';   // gesperrten Tab → zurück auf Tools
+  if (btn && btn.style.display === 'none') { // gesperrter Tab → auf Tools, sonst Handbuch (immer da)
+    const toolsBtn = document.querySelector('#adminTabs [data-atab="tools"]');
+    t = (toolsBtn && toolsBtn.style.display !== 'none') ? 'tools' : 'handbuch';
+  }
   adminTab = t;
   document.querySelectorAll('#adminTabs [data-atab]').forEach((b) => b.classList.toggle('secondary', b.dataset.atab !== t));
   document.querySelectorAll('#adminPanel .admin-pane').forEach((p) => { p.hidden = p.dataset.pane !== t; });
@@ -1789,6 +1796,8 @@ function showAdminTab(t) {
 // selbst auf einen echten Menschen mit Rang aus ADMIN_RANKS — hier ist nur UI. Die Filterleiste
 // wird EINMAL gebaut und danach nie neu gezeichnet (sonst verlöre man beim Nachladen Fokus und
 // Eingaben); neu gerendert wird ausschliesslich die Tabelle + der Fuss.
+// Sensible Aktionen, die im Filter-Dropdown nur Admins sehen (Moderatoren nicht).
+const PA_ADMIN_ACTIONS = new Set(['duty_on', 'duty_off']);
 const PA_COLS = [ // key = Sort-Whitelist des Backends; null = nicht sortierbar
   { key: 'time', label: 'Zeit', w: '86px' },
   { key: 'name', label: 'Spieler' },
@@ -1876,7 +1885,7 @@ function paRenderTable() {
       const td = 'padding:5px 8px;vertical-align:top';
       return `<tr style="border-top:1px solid var(--border)">
         <td style="${td};white-space:nowrap" title="${escapeHtml(t.toLocaleString('de-DE'))}">${zeit}<div style="font-size:10px;opacity:.6">${datum}</div></td>
-        <td style="${td};max-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${escapeHtml(it.playerName || '')}">${escapeHtml(it.playerName || '—')}</td>
+        <td style="${td};max-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="Steam: ${escapeHtml(it.playerName || '')}${it.discordName ? ' · Discord: ' + escapeHtml(it.discordName) : ''}">${escapeHtml(it.playerName || '—')}${it.discordName ? `<div style="font-size:10px;color:var(--muted);overflow:hidden;text-overflow:ellipsis">🎮 ${escapeHtml(it.discordName)}</div>` : ''}</td>
         <td style="${td};font-family:monospace;font-size:11px;white-space:nowrap">${escapeHtml(it.steamId || '')}</td>
         <td style="${td};white-space:nowrap"><span style="background:rgba(255,255,255,.07);padding:2px 6px;border-radius:6px">${escapeHtml(it.action || '')}</span></td>
         <td style="${td};white-space:nowrap">${escapeHtml(it.dinoClass || '—')}</td>
@@ -1913,6 +1922,8 @@ async function renderAudit() {
     const r = await fetch(`${config.tokenBase}/admin/player-audit/actions`, { headers: { Authorization: `Bearer ${sessionToken}` } });
     if (r.ok) { const d = await r.json(); actions = d.actions || []; vias = d.via || []; }
   } catch {}
+  // Sensible Aktionen nur für Admins im Filter zeigen (Moderatoren sehen sie nicht).
+  if (!isAdmin) actions = actions.filter((a) => !PA_ADMIN_ACTIONS.has(a));
 
   const lab = 'font-size:11px;color:var(--muted);display:block;margin-bottom:2px';
   const inp = 'width:100%;box-sizing:border-box;padding:7px 8px;border-radius:8px;border:1px solid var(--border);background:var(--input-bg);color:#eee;font-size:12px';
@@ -1922,7 +1933,7 @@ async function renderAudit() {
     <div style="display:flex;flex-wrap:wrap;gap:8px;align-items:flex-end;margin-bottom:6px">
       <div style="flex:1;min-width:120px"><label style="${lab}">Spieler-Name</label><input id="paName" style="${inp}" placeholder="Teil des Namens"></div>
       <div style="flex:1;min-width:130px"><label style="${lab}">SteamID</label><input id="paSteam" style="${inp}" placeholder="7656…"></div>
-      <div style="flex:1;min-width:110px"><label style="${lab}">Dino</label><input id="paDino" style="${inp}" placeholder="z. B. Allosaurus"></div>
+      <div style="flex:1;min-width:110px"><label style="${lab}">Dino</label><input id="paDino" style="${inp}" placeholder="Teil, z. B. Allo"></div>
       <div style="min-width:110px"><label style="${lab}">Via</label><select id="paVia" style="${inp}"><option value="">alle</option>${vias.map((v) => `<option value="${escapeHtml(v)}">${(PA_VIA[v] || ['', v])[1]}</option>`).join('')}</select></div>
       <div style="min-width:150px"><label style="${lab}">Aktion <span style="opacity:.7">(Strg/Cmd = mehrere)</span></label>
         <select id="paAction" multiple size="4" style="${inp};height:auto">${actions.map((a) => `<option value="${escapeHtml(a)}">${escapeHtml(a)}</option>`).join('')}</select></div>
@@ -2240,6 +2251,7 @@ function showServerTab(t) {
   else if (t === 'ai') renderSvAi();
   else if (t === 'polymorph') renderSvPoly();
   else if (t === 'objects') renderSvObjects();
+  else if (t === 'karte') { loadTeleports(); renderAdminTpList(); }
   else if (t === 'server') { renderServer(); svRenderClassLimits(); }
   bfScheduleFrameSync && bfScheduleFrameSync();
 }
@@ -2282,10 +2294,11 @@ function svFmtTod(t) { const h = Math.floor(t), m = Math.round((t - h) * 60); re
 async function renderSvWelt() {
   const box = el('svWeltBody'); if (!box) return;
   box.innerHTML = '<div class="dt-muted">Lade…</div>';
-  const [time, weather, grow] = await Promise.all([
+  const [time, weather, grow, fgs] = await Promise.all([
     svApi('GET', '/admin/world/time').catch(() => ({})),
     svApi('GET', '/admin/world/weather').catch(() => ({})),
     svApi('GET', '/admin/world/growth-stop').catch(() => ({})),
+    svApi('GET', '/free-gender-swap').catch(() => ({})),
   ]);
   const presets = weather.presets || weather.weathers || weather.list || weather.items || ['clear', 'clouds', 'rain', 'storm', 'fog', 'snow', 'auto'];
   const tod = (typeof time.timeOfDay === 'number') ? time.timeOfDay : 12;
@@ -2300,12 +2313,14 @@ async function renderSvWelt() {
     <div class="sec-title">🌦️ Wetter</div>
     <div style="display:flex;flex-wrap:wrap;gap:6px;margin:8px 0 14px">${presets.map((p) => `<button class="secondary" data-weather="${escapeHtml(String(p))}" style="width:auto;padding:6px 12px">${escapeHtml(String(p))}</button>`).join('')}</div>
     <div class="sec-title">🌱 Wachstum</div>
-    <label style="display:flex;align-items:center;gap:8px;font-size:13px;margin:8px 0"><input id="svGrow" type="checkbox" ${grow.enabled ? 'checked' : ''}> Grow-Stop (Wachstum aller Dinos einfrieren)</label>`;
+    <label style="display:flex;align-items:center;gap:8px;font-size:13px;margin:8px 0"><input id="svGrow" type="checkbox" ${grow.enabled ? 'checked' : ''}> Grow-Stop (Wachstum aller Dinos einfrieren)</label>
+    <label style="display:flex;align-items:center;gap:8px;font-size:13px;margin:8px 0"><input id="svFreeGender" type="checkbox" ${fgs.enabled ? 'checked' : ''}> Event: Free Gender Swap (ALLE Spieler dürfen kostenlos das Geschlecht wechseln)</label>`;
   el('svTod').oninput = () => { el('svTodVal').textContent = svFmtTod(parseFloat(el('svTod').value)); };
   el('svTodApply').onclick = async () => { try { await svApi('POST', '/admin/world/time', { timeOfDay: parseFloat(el('svTod').value) }); showToast('🕑 Tageszeit gesetzt', 'success'); } catch (e) { showToast(e.message, 'error'); } };
   el('svPause').onchange = async () => { try { await svApi('POST', '/admin/world/time', { paused: el('svPause').checked }); showToast(el('svPause').checked ? '⏸️ Zeit eingefroren' : '▶️ Zeit läuft', 'success'); } catch (e) { showToast(e.message, 'error'); } };
   box.querySelectorAll('[data-weather]').forEach((b) => b.onclick = async () => { try { await svApi('POST', '/admin/world/weather', { weather: b.dataset.weather }); showToast('🌦️ Wetter: ' + b.dataset.weather, 'success'); } catch (e) { showToast(e.message, 'error'); } });
   el('svGrow').onchange = async () => { try { await svApi('POST', '/admin/world/growth-stop', { enabled: el('svGrow').checked }); showToast(el('svGrow').checked ? '🌱 Grow-Stop AN' : '🌱 Grow-Stop AUS', 'success'); } catch (e) { el('svGrow').checked = !el('svGrow').checked; showToast(e.message, 'error'); } };
+  el('svFreeGender').onchange = async () => { try { await svApi('POST', '/free-gender-swap', { enabled: el('svFreeGender').checked }); freeGenderSwap = el('svFreeGender').checked; showToast(el('svFreeGender').checked ? '⚧️ Free Gender Swap AN — alle kostenlos' : '⚧️ Free Gender Swap AUS', 'success'); } catch (e) { el('svFreeGender').checked = !el('svFreeGender').checked; showToast(e.message, 'error'); } };
 }
 
 // 🤖 AI: mod-eigenes /ai/encounters-Framework — Master + read-only Liste + Detail-Editor
@@ -2668,10 +2683,15 @@ async function admLoadUserInfo() {
 }
 
 // ── Dienst-Modus (Staff): Vitals einfrieren + Admin-Skin ──────────────────────
+let dutyOn = false;
 function updateDutyBtn(on) {
-  const b = el('dutyToggleBtn'); if (!b) return;
-  b.textContent = on ? '🩷 Dienst-Modus AUSschalten (Skin zurück)' : '🩷 Dienst-Modus einschalten';
-  b.style.background = on ? '#db2777' : '';
+  dutyOn = !!on;
+  const b = el('dutyToggleBtn');
+  if (b) {
+    b.textContent = on ? '🩷 Dienst-Modus AUSschalten (Skin zurück)' : '🩷 Dienst-Modus einschalten';
+    b.style.background = on ? '#db2777' : '';
+  }
+  applyModerationGate(); // Tabs nachziehen (no-op wenn Panel zu)
 }
 async function loadDutyState() {
   const blk = el('dutyBlock');
@@ -2828,7 +2848,7 @@ async function deleteTp(t) {
 }
 
 async function adminCalibrate() {
-  closeAdminPanel(); // Kalibrierung läuft auf der Karte → Modal schließen
+  closeAllPanels(); // Kalibrierung läuft auf der Karte → offenes Modal (Administration/Moderation) schließen
   const ok = await startAutoCalibration();
   if (!ok) return;
   try {
@@ -3080,6 +3100,15 @@ async function loadServerZones() {
 }
 
 // Zentrale Kalibrierung vom Server laden (alle Clients beim Start)
+// Free-Gender-Swap-Event: server-weites Flag (Administration→Welt). Aktiv → alle dürfen kostenlos
+// das Geschlecht wechseln (Skin-Editor überspringt dann die Rang-Grenze).
+let freeGenderSwap = false;
+async function loadFreeGenderSwap() {
+  try {
+    const res = await fetch(`${config.tokenBase}/free-gender-swap`, { headers: { Authorization: `Bearer ${sessionToken}` } });
+    if (res.ok) { const d = await res.json(); freeGenderSwap = !!d.enabled; }
+  } catch {}
+}
 async function loadServerCalibration() {
   try {
     // WICHTIG: GET /calibration braucht Auth (RequireActor). Ohne Header → 401 → globale
@@ -5283,6 +5312,7 @@ async function renderSkinEditor() {
   panel.innerHTML = '<h2>🎨 Skin Editor</h2><p>Lade aktuellen Dino…</p>';
   let me = null;
   try { me = await (await fetch(`${config.tokenBase}/me`, { headers: { Authorization: `Bearer ${sessionToken}` } })).json(); } catch {}
+  await loadFreeGenderSwap(); // aktuellen Event-Stand holen → Geschlechts-Buttons entsprechend
   if (!me || !me.online) {
     panel.innerHTML = '<h2>🎨 Skin Editor</h2><p>Du musst im Spiel sein (auf einem Dino), um den Skin zu ändern.</p><button class="closeFeature secondary" style="width:100%">Schließen</button>';
     panel.querySelector('.closeFeature').onclick = closeAllFeatures; return;
@@ -5294,7 +5324,7 @@ async function renderSkinEditor() {
   skinPays = !mySkinFree;                    // Free (Fossil) = gratis Live-Vorschau + „Bestätigen" zahlt; ab Knochen/Beta-Tester live & gratis
   skinConfirmed = false; skinPreviewed = false;   // neue Editier-Sitzung: nichts bestätigt/vorschau
   const obsidian = myAboIdx() >= 3;
-  const canGender = myAboIdx() >= 2;         // Geschlechtswechsel erst ab Bernstein
+  const canGender = freeGenderSwap || myAboIdx() >= 2; // Event aktiv → für alle frei, sonst ab Bernstein
   const genderTip = canGender ? 'Geschlecht wechseln (Respawn)' : '🔒 Geschlechtswechsel ist ab Rang Bernstein freigeschaltet';
   // Aktuellen Rollplay-Namen aus den Live-Positionen vorbelegen (globales `players`, NICHT das
   // hier lokal geshadowte `me`). realName ist nur gesetzt, wenn ein RP-Name aktiv ist → dann ist
@@ -5385,7 +5415,7 @@ async function saveRpName() {
 // selbes Wachstum, neues Geschlecht), danach Skin erneut anwenden (Farben behalten).
 async function changeGender(gender, panel) {
   if (!skinState || skinState.gender === gender) return;
-  if (myAboIdx() < 2) { showToast('🔒 Geschlechtswechsel gibt es ab Rang Bernstein.', 'error'); return; }
+  if (!freeGenderSwap && myAboIdx() < 2) { showToast('🔒 Geschlechtswechsel gibt es ab Rang Bernstein.', 'error'); return; }
   setSkinLive('… Geschlecht wird gewechselt (Respawn)', '#f59e0b');
   try {
     const r = await fetch(`${config.tokenBase}/me/gender`, { method: 'POST', headers: { Authorization: `Bearer ${sessionToken}`, 'Content-Type': 'application/json' }, body: JSON.stringify({ gender }) });
