@@ -1881,6 +1881,7 @@ function showAdminTab(t) {
   else if (t === 'lootbox') ensureLootboxCfgLoaded();
   else if (t === 'warn') renderWarnPane();
   else if (t === 'audit') renderAudit();
+  else if (t === 'teamaudit') renderTeamAudit();
   else if (t === 'handbuch') renderHandbuch();
   bfScheduleFrameSync && bfScheduleFrameSync();
 }
@@ -2074,6 +2075,132 @@ async function renderAudit() {
 
   paState.built = true;
   paLoad(true);
+}
+
+// ── Team-Audit: Staff-Aktions-Log (dieselben Daten wie der Discord-Audit-Channel) ────────────
+// Backend /admin/staff-audit filtert + paginiert serverseitig und gated selbst auf Staff. Nur UI.
+const TA_SRC = { overlay: ['🎮', 'Overlay'], discord: ['💬', 'Discord'] };
+let taState = { built: false, items: [], total: 0, limit: 100, offset: 0, loading: false, fromMs: 0, toMs: 0 };
+function taQuery() {
+  const p = new URLSearchParams();
+  for (const [id, key] of [['taActor', 'actor'], ['taAction', 'action'], ['taSource', 'source']]) {
+    const v = (el(id)?.value || '').trim();
+    if (v) p.set(key, v);
+  }
+  for (const [id, key] of [['taFrom', 'from'], ['taTo', 'to']]) {
+    const ms = Date.parse((el(id)?.value || '').trim());
+    if (!isNaN(ms)) p.set(key, String(ms));
+  }
+  p.set('limit', String(taState.limit)); p.set('offset', String(taState.offset));
+  return p.toString();
+}
+async function taLoad(resetOffset) {
+  if (resetOffset) taState.offset = 0;
+  taState.loading = true; taRenderTable();
+  try {
+    const r = await fetch(`${config.tokenBase}/admin/staff-audit?${taQuery()}`, { headers: { Authorization: `Bearer ${sessionToken}` } });
+    if (!r.ok) throw new Error(r.status === 403 ? 'Nicht berechtigt — nur Staff.' : `Fehler ${r.status}`);
+    const d = await r.json();
+    taState.items = d.items || []; taState.total = d.total || 0;
+    taState.limit = d.limit || taState.limit; taState.offset = d.offset || 0;
+    taState.fromMs = d.fromMs || 0; taState.toMs = d.toMs || 0;
+  } catch (e) {
+    taState.items = []; taState.total = 0;
+    showToast(e.message, 'error');
+  }
+  taState.loading = false;
+  taRenderTable();
+}
+function taRenderTable() {
+  const box = el('taTableWrap'); if (!box) return;
+  if (taState.loading) {
+    box.innerHTML = '<div class="dt-muted" style="padding:12px">Lade…</div>';
+  } else if (!taState.items.length) {
+    box.innerHTML = '<div class="dt-muted" style="padding:12px">Keine Einträge für diese Filter.</div>';
+  } else {
+    const td = 'padding:5px 8px;vertical-align:top';
+    const rows = taState.items.map((it) => {
+      const t = new Date(it.createdAtMs);
+      const zeit = t.toLocaleTimeString('de-DE', { hour12: false });
+      const datum = t.toLocaleDateString('de-DE', { day: '2-digit', month: '2-digit' });
+      const [ico, lbl] = TA_SRC[it.source] || ['•', it.source || ''];
+      const who = it.actorName || it.actorDiscord || it.actorSteam || '—';
+      const whoTip = [it.actorSteam && 'Steam: ' + it.actorSteam, it.actorDiscord && 'Discord-ID: ' + it.actorDiscord].filter(Boolean).join(' · ');
+      const det = paDetails(it.details);
+      return `<tr style="border-top:1px solid var(--border)">
+        <td style="${td};white-space:nowrap" title="${escapeHtml(t.toLocaleString('de-DE'))}">${zeit}<div style="font-size:10px;opacity:.6">${datum}</div></td>
+        <td style="${td};max-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${escapeHtml(whoTip)}">${escapeHtml(who)}</td>
+        <td style="${td}"><span style="background:rgba(255,255,255,.07);padding:2px 6px;border-radius:6px;font-family:monospace;font-size:11px">${escapeHtml(it.action || '')}</span>${it.method && it.method !== 'POST' ? `<span style="font-size:10px;opacity:.6;margin-left:4px">${escapeHtml(it.method)}</span>` : ''}</td>
+        <td style="${td};white-space:nowrap" title="${escapeHtml(it.source || '')}">${ico} ${escapeHtml(lbl)}</td>
+        <td style="${td};max-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:11px;opacity:.85" title="${escapeHtml(det)}">${escapeHtml(det)}</td>
+      </tr>`;
+    }).join('');
+    const th = (l, w) => `<th style="padding:6px 8px;text-align:left;color:var(--muted);font-weight:600;white-space:nowrap${w ? `;width:${w}` : ''}">${l}</th>`;
+    box.innerHTML = `<table style="width:100%;border-collapse:collapse;font-size:12px">
+      <thead><tr style="position:sticky;top:0;background:#1c1c22;z-index:1">${th('Zeit', '86px')}${th('Wer', '150px')}${th('Aktion', '200px')}${th('Quelle', '96px')}${th('Details')}</tr></thead>
+      <tbody>${rows}</tbody></table>`;
+  }
+  const foot = el('taFoot'); if (!foot) return;
+  const von = taState.offset + 1, bis = taState.offset + taState.items.length;
+  const zeitraum = taState.fromMs && taState.toMs
+    ? `${new Date(taState.fromMs).toLocaleString('de-DE')} – ${new Date(taState.toMs).toLocaleString('de-DE')}` : '';
+  foot.innerHTML = `<span>${taState.total ? `${von}–${bis} von ${taState.total}` : '0 Treffer'}${zeitraum ? ` · Zeitraum: ${escapeHtml(zeitraum)}` : ''}</span>
+    <span style="display:flex;gap:6px">
+      <button id="taPrev" class="secondary" style="width:auto;padding:3px 9px;font-size:11px" ${taState.offset <= 0 ? 'disabled' : ''}>← Zurück</button>
+      <button id="taNext" class="secondary" style="width:auto;padding:3px 9px;font-size:11px" ${bis >= taState.total ? 'disabled' : ''}>Weiter →</button>
+    </span>`;
+  const pv = el('taPrev'), nx = el('taNext');
+  if (pv) pv.onclick = () => { taState.offset = Math.max(0, taState.offset - taState.limit); taLoad(false); };
+  if (nx) nx.onclick = () => { taState.offset += taState.limit; taLoad(false); };
+}
+function renderTeamAudit() {
+  const box = el('taBody'); if (!box) return;
+  if (taState.built) { taLoad(true); return; }
+  const lab = 'font-size:11px;color:var(--muted);display:block;margin-bottom:2px';
+  const inp = 'width:100%;box-sizing:border-box;padding:7px 8px;border-radius:8px;border:1px solid var(--border);background:var(--input-bg);color:#eee;font-size:12px';
+  box.innerHTML = `
+    <div style="font-weight:600;font-size:14px">🛡️ Team-Audit <span style="font-weight:400;font-size:11px;color:var(--muted)">— jede verändernde Staff-Aktion (Overlay + Discord)</span></div>
+    <div style="font-size:11px;color:var(--muted);margin:2px 0 8px">Dieselben Einträge wie im Discord-Audit-Channel.</div>
+    <div style="display:flex;flex-wrap:wrap;gap:8px;align-items:flex-end;margin-bottom:6px">
+      <div style="flex:1;min-width:130px"><label style="${lab}">Wer (Name)</label><input id="taActor" style="${inp}" placeholder="Teil des Namens"></div>
+      <div style="flex:1;min-width:140px"><label style="${lab}">Aktion</label><input id="taAction" style="${inp}" placeholder="z. B. gift, ban"></div>
+      <div style="min-width:120px"><label style="${lab}">Quelle</label><select id="taSource" style="${inp}"><option value="">alle</option><option value="overlay">🎮 Overlay</option><option value="discord">💬 Discord</option></select></div>
+      <div style="min-width:158px"><label style="${lab}">Von</label><input id="taFrom" type="datetime-local" style="${inp}"></div>
+      <div style="min-width:158px"><label style="${lab}">Bis</label><input id="taTo" type="datetime-local" style="${inp}"></div>
+    </div>
+    <div style="display:flex;flex-wrap:wrap;gap:6px;align-items:center;margin-bottom:8px">
+      <span style="font-size:11px;color:var(--muted)">Schnell:</span>
+      <button class="secondary" data-tarange="24" style="width:auto;padding:4px 9px;font-size:11px">24 h</button>
+      <button class="secondary" data-tarange="168" style="width:auto;padding:4px 9px;font-size:11px">7 Tage</button>
+      <button class="secondary" data-tarange="720" style="width:auto;padding:4px 9px;font-size:11px">30 Tage</button>
+      <span style="flex:1"></span>
+      <button id="taApply" style="width:auto;padding:5px 12px;font-size:12px">🔍 Filtern</button>
+      <button id="taReset" class="secondary" style="width:auto;padding:5px 12px;font-size:12px">Zurücksetzen</button>
+    </div>
+    <div id="taTableWrap" style="max-height:46vh;overflow:auto;border:1px solid var(--border);border-radius:8px;background:rgba(0,0,0,.18)"></div>
+    <div id="taFoot" style="display:flex;justify-content:space-between;align-items:center;gap:8px;margin-top:6px;font-size:11px;color:var(--muted)"></div>`;
+
+  el('taApply').onclick = () => taLoad(true);
+  el('taReset').onclick = () => {
+    ['taActor', 'taAction', 'taFrom', 'taTo'].forEach((id) => { const e = el(id); if (e) e.value = ''; });
+    el('taSource').value = '';
+    taLoad(true);
+  };
+  box.querySelectorAll('[data-tarange]').forEach((b) => {
+    b.onclick = () => {
+      const now = Date.now();
+      el('taTo').value = paToLocalInput(now);
+      el('taFrom').value = paToLocalInput(now - Number(b.dataset.tarange) * 3600_000);
+      taLoad(true);
+    };
+  });
+  ['taActor', 'taAction'].forEach((id) => {
+    const e = el(id); if (e) e.onkeydown = (ev) => { if (ev.key === 'Enter') { ev.preventDefault(); taLoad(true); } };
+  });
+  ['taSource', 'taFrom', 'taTo'].forEach((id) => { const e = el(id); if (e) e.onchange = () => taLoad(true); });
+
+  taState.built = true;
+  taLoad(true);
 }
 
 // ── Verwarnungen (Staff) ─────────────────────────────────────────────────────
