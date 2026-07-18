@@ -1274,12 +1274,13 @@
   <!-- Admin-Panel (eigenständiges Modal, NUR Admins — kein Support) -->
   <div id="serverPanel">
     <button id="serverCloseBtn" class="secondary" style="position:absolute;top:16px;right:18px;flex:none;width:auto;padding:6px 12px">✕</button>
-    <h2>🖥️ Server-Steuerung <span style="font-weight:400;font-size:12px;color:var(--muted)">— nur Admin</span></h2>
+    <h2>🖥️ Administration <span style="font-weight:400;font-size:12px;color:var(--muted)">— nur Admin</span></h2>
     <div class="admin-tabs" id="serverTabs">
       <button data-stab="welt">🌍 Welt</button>
       <button data-stab="ai" class="secondary">🤖 AI</button>
       <button data-stab="polymorph" class="secondary">🦖 Polymorph</button>
       <button data-stab="objects" class="secondary">🧱 Objekte</button>
+      <button data-stab="karte" class="secondary">🗺️ Karte</button>
       <button data-stab="server" class="secondary">📢 Server</button>
     </div>
     <div class="admin-panes">
@@ -1287,13 +1288,38 @@
       <div class="admin-pane" data-pane="ai" hidden><div id="svAiBody"><div class="dt-muted">Lade…</div></div></div>
       <div class="admin-pane" data-pane="polymorph" hidden><div id="svPolyBody"><div class="dt-muted">Lade…</div></div></div>
       <div class="admin-pane" data-pane="objects" hidden><div id="svObjBody"><div class="dt-muted">Lade…</div></div></div>
+      <div class="admin-pane" data-pane="karte" hidden>
+        <div class="sec-title">🔧 Karten-Kalibrierung</div>
+        <div class="set-block" style="margin:8px 0 14px">
+          <button id="adminCalibBtn" style="width:100%">🔧 Karte kalibrieren (global)</button>
+        </div>
+        <div class="sec-title">📍 Teleport-Punkte</div>
+        <div class="set-block" style="margin-top:8px">
+          <div class="set-label">TP-Punkt an aktueller Position</div>
+          <input id="tpName" placeholder="Name" maxlength="40" class="bf-select" style="cursor:text;margin-bottom:6px">
+          <div style="display:flex;gap:6px;margin-bottom:8px">
+            <input id="tpPrice" type="number" min="0" placeholder="Preis" class="bf-select" style="flex:1">
+            <input id="tpCooldown" type="number" min="0" placeholder="Cooldown (Min)" class="bf-select" style="flex:1">
+          </div>
+          <label style="display:flex;align-items:center;gap:8px;margin-bottom:8px;font-size:13px;cursor:pointer;user-select:none">
+            <input id="tpWater" type="checkbox" style="width:auto;cursor:pointer"> 💧 Wasser-Teleport (im Overlay hervorgehoben)
+          </label>
+          <button id="tpCreateBtn" style="width:100%">＋ Erstellen</button>
+          <div id="adminTpList" style="max-height:200px;overflow:auto;margin-top:8px;font-size:12px"></div>
+        </div>
+      </div>
       <div class="admin-pane" data-pane="server" hidden><div id="svBody"><div class="dt-muted">Lade…</div></div><div id="svClassBody" style="margin-top:18px"></div></div>
     </div>
   </div>
 
   <div id="adminPanel">
     <button id="adminCloseBtn" class="secondary" style="position:absolute;top:16px;right:18px;flex:none;width:auto;padding:6px 12px">✕</button>
-    <h2>🛡️ Admin / Support</h2>
+    <h2>🛡️ Moderation</h2>
+    <div class="set-block" id="dutyBlock" style="display:none;margin-bottom:12px;border:1px solid rgba(236,72,153,0.4);border-radius:10px;padding:12px;background:rgba(236,72,153,0.08)">
+      <div class="col-head" style="margin:0 0 4px">🩷 Dienst-Modus</div>
+      <div style="font-size:11px;color:var(--muted);margin-bottom:9px">Als Moderator/Supporter musst du den Dienst-Modus einschalten, um die Werkzeuge zu nutzen. Friert deine Vitals ein (kein Verhungern) und legt den Admin-Skin an. Erneut klicken = aus. Du musst lebend auf einem Dino sein.</div>
+      <button id="dutyToggleBtn" style="width:100%">🩷 Dienst-Modus einschalten</button>
+    </div>
     <div class="admin-tabs" id="adminTabs">
       <button data-atab="tools">🛠️ Tools</button>
       <button data-atab="dtoken" class="secondary">🦕 Dino-Token</button>
@@ -1306,11 +1332,6 @@
     </div>
     <div class="admin-panes">
     <div class="admin-pane" data-pane="tools">
-    <div class="set-block" id="dutyBlock" style="display:none;margin-bottom:12px;border:1px solid rgba(236,72,153,0.4);border-radius:10px;padding:12px;background:rgba(236,72,153,0.08)">
-      <div class="col-head" style="margin:0 0 4px">🩷 Dienst-Modus</div>
-      <div style="font-size:11px;color:var(--muted);margin-bottom:9px">Friert deine Vitals ein (Leben/Blut/Hunger/Durst/Nutrients/Wachstum → kein Verhungern) und legt den Admin-Skin an. Erneut klicken = aus (Original-Skin zurück). Du musst lebend auf einem Dino sein.</div>
-      <button id="dutyToggleBtn" style="width:100%">🩷 Dienst-Modus einschalten</button>
-    </div>
     <div class="settings-cols">
 
       <!-- Spalte 1: Spieler-Verwaltung -->
@@ -1369,60 +1390,6 @@
         </div>
         <button id="giftSubmit" style="width:100%;margin-top:14px;background:#16a34a">🎁 Vergeben</button>
         <div id="giftResult" style="font-size:11px;color:var(--muted);margin-top:8px"></div>
-      </div>
-
-      <!-- Spalte 3: Karte, TP & AI -->
-      <div class="settings-col ingame-only">
-        <div class="col-head">🗺️ Karte, TP & AI</div>
-        <div class="set-block admin-only">
-          <button id="adminCalibBtn" style="width:100%">🔧 Karte kalibrieren (global)</button>
-        </div>
-        <div class="set-block admin-only">
-          <div class="set-label">📍 TP-Punkt an aktueller Position</div>
-          <input id="tpName" placeholder="Name" maxlength="40" class="bf-select" style="cursor:text;margin-bottom:6px">
-          <div style="display:flex;gap:6px;margin-bottom:8px">
-            <input id="tpPrice" type="number" min="0" placeholder="Preis" class="bf-select" style="flex:1">
-            <input id="tpCooldown" type="number" min="0" placeholder="Cooldown (Min)" class="bf-select" style="flex:1">
-          </div>
-          <label style="display:flex;align-items:center;gap:8px;margin-bottom:8px;font-size:13px;cursor:pointer;user-select:none">
-            <input id="tpWater" type="checkbox" style="width:auto;cursor:pointer"> 💧 Wasser-Teleport (im Overlay hervorgehoben)
-          </label>
-          <button id="tpCreateBtn" style="width:100%">＋ Erstellen</button>
-          <div id="adminTpList" style="max-height:120px;overflow:auto;margin-top:8px;font-size:12px"></div>
-        </div>
-        <div class="set-block">
-          <div class="set-label">🦖 AI-Dinos</div>
-          <div style="display:flex;gap:6px;margin-bottom:8px">
-            <select id="aiSpecies" class="bf-select" style="flex:2"></select>
-            <input id="aiCount" type="number" min="1" max="50" value="1" class="bf-select" style="flex:1">
-          </div>
-          <button id="aiSpawnMapBtn" style="width:100%;margin-bottom:8px">🗺️ Auf Karte klicken zum Spawnen</button>
-          <div style="display:flex;gap:6px;margin-bottom:6px">
-            <button id="aiStartBtn" style="flex:1;background:#16a34a">▶️ Start</button>
-            <button id="aiStopBtn" class="secondary" style="flex:1">⏹️ Stop</button>
-          </div>
-          <!-- Gefährliche AI-Aktionen: nur Admins (Owner/Admin), nicht Moderatoren -->
-          <div class="admin-only">
-            <div style="display:flex;gap:6px;margin-bottom:6px">
-              <button id="aiDespawnBtn" class="secondary" style="flex:1">🧹 Despawn</button>
-              <button id="aiKillBtn" style="flex:1;background:#b91c1c">💀 Kill</button>
-            </div>
-            <div style="display:flex;gap:6px">
-              <button id="aiPanicBtn" style="flex:1;background:#dc2626">🆘 PANIC</button>
-              <button id="aiDisableBtn" class="secondary" style="flex:1">🛑 DLL aus</button>
-            </div>
-          </div>
-          <div id="aiStatus" style="margin-top:8px;font-size:11px;color:var(--muted)"></div>
-        </div>
-      </div>
-
-      <!-- Spalte 4: Dino-Limits (nur Admin) -->
-      <div class="settings-col admin-only">
-        <div class="col-head">🦖 Dino-Limits</div>
-        <div style="font-size:11px;color:var(--muted);margin-bottom:8px">Max. erlaubte Anzahl pro Spezies. 0 = unbegrenzt. Sichtbar für alle (Overlay-Lexikon + Discord).</div>
-        <div id="dinoLimitList" style="max-height:46vh;overflow:auto;padding-right:4px"></div>
-        <button id="dinoLimitSave" style="width:100%;margin-top:10px;background:#16a34a">💾 Limits speichern</button>
-        <div id="dinoLimitResult" style="font-size:11px;color:var(--muted);margin-top:8px"></div>
       </div>
 
     </div>
@@ -1539,8 +1506,8 @@
       <button class="dock-btn" data-act="map" aria-label="Karte"><span>Karte</span></button>
       <button class="dock-btn" data-act="skin" aria-label="Skin"><span>Skin</span></button>
       <button class="dock-btn" data-act="settings" aria-label="Einstellungen"><span>Settings</span></button>
-      <button class="dock-btn" id="dockAdmin" data-act="admin" aria-label="Admin" style="display:none"><span>Admin</span></button>
-      <button class="dock-btn" id="dockServer" data-act="server" aria-label="Server" style="display:none"><span>Server</span></button>
+      <button class="dock-btn" id="dockAdmin" data-act="admin" aria-label="Moderation" style="display:none"><span>Moderation</span></button>
+      <button class="dock-btn" id="dockServer" data-act="server" aria-label="Administration" style="display:none"><span>Administration</span></button>
       <div class="dock-sep"></div>
       <button class="dock-btn dock-close" id="dockClose" aria-label="Schließen & weiterspielen"><span>Schließen</span></button>
     </div>
