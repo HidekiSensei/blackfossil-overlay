@@ -2240,8 +2240,32 @@ function showServerTab(t) {
   else if (t === 'ai') renderSvAi();
   else if (t === 'polymorph') renderSvPoly();
   else if (t === 'objects') renderSvObjects();
-  else if (t === 'server') renderServer();
+  else if (t === 'server') { renderServer(); svRenderClassLimits(); }
   bfScheduleFrameSync && bfScheduleFrameSync();
+}
+// Class-Limits im Server-Tab (dieselben /dino-limits-Endpoints wie das Admin-Panel; das Admin-Panel
+// bleibt unangetastet — hier eine eigene Ansicht in #svClassBody).
+async function svRenderClassLimits() {
+  const box = el('svClassBody'); if (!box) return;
+  box.innerHTML = '<div class="sec-title">🦖 Class-Limits</div><div class="dt-muted">Lade…</div>';
+  await fetchDinoLimits();
+  box.innerHTML = `
+    <div class="sec-title">🦖 Class-Limits <span class="dt-muted">— Spezies-Obergrenzen (über Limit → jüngster Dino wird nach 90 s eingeparkt)</span></div>
+    <div id="svClassList" style="max-height:300px;overflow:auto;margin:8px 0">${dinoLimitSpecies.map((sp) => `<div class="dlimit-row"><span>${escapeHtml(sp)}</span><input type="number" min="0" data-sp="${escapeHtml(sp)}" value="${dinoLimits[sp] || 0}" class="bf-select"></div>`).join('')}</div>
+    <button id="svClassSave" style="width:100%">💾 Class-Limits speichern</button>
+    <div id="svClassResult" class="dt-muted" style="margin-top:6px"></div>`;
+  el('svClassSave').onclick = async () => {
+    const limits = {};
+    box.querySelectorAll('#svClassList input[data-sp]').forEach((inp) => { const v = parseInt(inp.value, 10); if (v > 0) limits[inp.dataset.sp] = v; });
+    const res = el('svClassResult'); if (res) res.textContent = 'Speichere…';
+    try {
+      const r = await fetch(`${config.tokenBase}/admin/dino-limits`, { method: 'POST', headers: { Authorization: `Bearer ${sessionToken}`, 'Content-Type': 'application/json' }, body: JSON.stringify({ limits }) });
+      const d = await r.json(); if (!r.ok) throw new Error(apiErr(d));
+      dinoLimits = d.limits || {};
+      if (res) res.textContent = '✅ Gespeichert.';
+      showToast('🦖 Class-Limits gespeichert', 'success');
+    } catch (e) { if (res) res.textContent = '⚠️ ' + e.message; showToast(e.message, 'error'); }
+  };
 }
 // Generischer Server-Panel-API-Call (GET/POST/PATCH/DELETE) → geparste Antwort, wirft bei !ok.
 async function svApi(method, path, body) {
@@ -2284,49 +2308,75 @@ async function renderSvWelt() {
   el('svGrow').onchange = async () => { try { await svApi('POST', '/admin/world/growth-stop', { enabled: el('svGrow').checked }); showToast(el('svGrow').checked ? '🌱 Grow-Stop AN' : '🌱 Grow-Stop AUS', 'success'); } catch (e) { el('svGrow').checked = !el('svGrow').checked; showToast(e.message, 'error'); } };
 }
 
-// 🤖 AI: control-server-Steuerung + mod-eigener Ad-hoc-Spawn
-async function svAiLoadStatus() {
-  const s = el('svAiStatus'); if (!s) return;
-  try { const d = await svApi('GET', '/admin/ai/status'); s.textContent = 'Status: ' + (d.enabled != null ? (d.enabled ? 'aktiv' : 'aus') : JSON.stringify(d).slice(0, 140)); }
-  catch { s.textContent = 'Status: nicht erreichbar'; }
-}
+// 🤖 AI: mod-eigenes /ai/encounters-Framework — Master-Schalter + Liste + anlegen/editieren/löschen
+const SV_ARCHETYPES = ['territorial_guard', 'pack_hunter', 'herd', 'ambush', 'skittish_prey', 'scavenger', 'nomad', 'apex_solo'];
 async function renderSvAi() {
   const box = el('svAiBody'); if (!box) return;
+  box.innerHTML = '<div class="dt-muted">Lade…</div>';
+  const [st, list] = await Promise.all([
+    svApi('GET', '/admin/mod-ai/encounters/status').catch(() => ({})),
+    svApi('GET', '/admin/mod-ai/encounters').catch(() => ({ encounters: [] })),
+  ]);
+  const enabled = !!(st.ai_encounters_enabled != null ? st.ai_encounters_enabled : st.enabled);
+  const encs = list.encounters || [];
+  const archOpts = (sel) => SV_ARCHETYPES.map((a) => `<option value="${a}"${a === sel ? ' selected' : ''}>${a}</option>`).join('');
+  const rows = encs.map((e) => `
+    <div class="dt-form" data-eid="${escapeHtml(e.id)}" style="border:1px solid var(--border);border-radius:8px;padding:8px;margin-bottom:8px">
+      <div style="display:flex;gap:8px;align-items:center">
+        <input class="tm-input enc-name" style="flex:1" value="${escapeHtml(e.name || e.id)}" placeholder="Name">
+        <label style="font-size:12px;display:flex;align-items:center;gap:4px"><input type="checkbox" class="enc-enabled" ${e.enabled !== false ? 'checked' : ''}> aktiv</label>
+      </div>
+      <div style="display:flex;gap:8px;margin-top:6px">
+        <input class="tm-input enc-species" style="flex:2" value="${escapeHtml(e.species || '')}" placeholder="Spezies (BP_…)">
+        <select class="bf-select enc-arch" style="flex:1">${archOpts(e.archetype)}</select>
+        <input type="number" min="1" max="20" class="tm-input enc-count" style="width:64px" value="${e.count || 1}">
+      </div>
+      <div style="display:flex;gap:6px;margin-top:6px">
+        <button class="enc-save" style="flex:1">💾 Speichern</button>
+        <button class="secondary enc-del" style="width:auto;padding:6px 12px">🗑️</button>
+      </div>
+    </div>`).join('') || '<div class="dt-muted">Keine Encounters angelegt.</div>';
   box.innerHTML = `
-    <div class="sec-title">🤖 AI-Steuerung (control-server)</div>
-    <div id="svAiStatus" class="dt-muted" style="margin:6px 0">Status: …</div>
-    <div style="display:flex;flex-wrap:wrap;gap:6px;margin-bottom:14px">
-      <button id="svAiEnable" style="width:auto;padding:6px 12px">▶️ Aktivieren</button>
-      <button id="svAiDisable" class="secondary" style="width:auto;padding:6px 12px">⏸️ Deaktivieren</button>
-      <button id="svAiStart" class="secondary" style="width:auto;padding:6px 12px">Start</button>
-      <button id="svAiStop" class="secondary" style="width:auto;padding:6px 12px">Stop</button>
-      <button id="svAiDespawn" class="secondary" style="width:auto;padding:6px 12px;color:#f59e0b">Despawn all</button>
-      <button id="svAiKill" class="secondary" style="width:auto;padding:6px 12px;color:#ef4444">Kill all</button>
-      <button id="svAiPanic" class="secondary" style="width:auto;padding:6px 12px;color:#ef4444">PANIC</button>
-    </div>
-    <div class="sec-title">🦖 Ad-hoc-Spawn (mod-AI, experimentell)</div>
+    <div class="sec-title">🤖 AI-Encounters</div>
+    <label style="display:flex;align-items:center;gap:8px;font-size:13px;margin:8px 0 14px"><input id="svAiMaster" type="checkbox" ${enabled ? 'checked' : ''}> Encounter-System aktiv (Master-Schalter)</label>
+    <div class="sec-title">Encounters (${encs.length})</div>
+    <div id="svEncList" style="margin:6px 0 14px">${rows}</div>
+    <div class="sec-title">➕ Neuer Encounter</div>
     <div class="dt-form" style="margin-top:6px">
-      <label>Spezies (Blueprint, z. B. BP_Allosaurus_C)</label>
-      <input id="svAiClass" class="tm-input" placeholder="BP_Allosaurus_C">
-      <label>Anzahl (1–20)</label>
-      <input id="svAiCount" type="number" min="1" max="20" value="1" class="tm-input">
+      <label>Name</label><input id="svEncName" class="tm-input" placeholder="Rex-Wache Nord">
+      <label>Spezies (Blueprint, z. B. BP_Allosaurus_C)</label><input id="svEncSpecies" class="tm-input" placeholder="BP_Allosaurus_C">
+      <div style="display:flex;gap:10px">
+        <div style="flex:1"><label>Archetyp</label><select id="svEncArch" class="bf-select">${archOpts('territorial_guard')}</select></div>
+        <div style="flex:1"><label>Anzahl (1–20)</label><input id="svEncCount" type="number" min="1" max="20" value="1" class="tm-input"></div>
+      </div>
+      <label style="display:flex;align-items:center;gap:8px;margin-top:6px"><input id="svEncAtMe" type="checkbox" checked> Spawnpunkt = meine Position</label>
     </div>
-    <button id="svAiSpawnMe" style="width:100%;margin-top:8px">An meiner Position spawnen</button>`;
-  svAiLoadStatus();
-  const simple = (id, action, label) => { const b = el(id); if (b) b.onclick = async () => { try { await svApi('POST', `/admin/ai/${action}`, {}); showToast(`🤖 ${label}`, 'success'); svAiLoadStatus(); } catch (e) { showToast(e.message, 'error'); } }; };
-  simple('svAiEnable', 'enable', 'AI aktiviert');
-  simple('svAiDisable', 'disable', 'AI deaktiviert');
-  simple('svAiStart', 'start', 'AI gestartet');
-  simple('svAiStop', 'stop', 'AI gestoppt');
-  const danger = (id, action, label) => { const b = el(id); if (b) b.onclick = () => svArmConfirm(b, label, async () => { try { await svApi('POST', `/admin/ai/${action}`, {}); showToast(`🤖 ${label}`, 'success'); svAiLoadStatus(); } catch (e) { showToast(e.message, 'error'); } }); };
-  danger('svAiDespawn', 'despawnall', 'Despawn all');
-  danger('svAiKill', 'killall', 'Kill all');
-  danger('svAiPanic', 'panic', 'PANIC');
-  el('svAiSpawnMe').onclick = async () => {
-    const cls = (el('svAiClass').value || '').trim(); if (!cls) { showToast('Spezies angeben', 'error'); return; }
-    const count = Math.max(1, Math.min(20, parseInt(el('svAiCount').value) || 1));
-    if (!me || !me.steamId) { showToast('Deine Position unbekannt (im Spiel?)', 'error'); return; }
-    try { await svApi('POST', '/admin/mod-ai/spawn', { class: cls, count, steamId: me.steamId }); showToast(`🦖 ${count}× ${cls} gespawnt`, 'success'); } catch (e) { showToast(e.message, 'error'); }
+    <button id="svEncCreate" style="width:100%;margin-top:8px">➕ Encounter anlegen</button>`;
+  el('svAiMaster').onchange = async () => {
+    try { await svApi('PATCH', '/admin/mod-ai/encounters/status', { ai_encounters_enabled: el('svAiMaster').checked }); showToast(el('svAiMaster').checked ? '🤖 AI-Encounters AN' : '🤖 AI-Encounters AUS', 'success'); }
+    catch (e) { el('svAiMaster').checked = !el('svAiMaster').checked; showToast(e.message, 'error'); }
+  };
+  box.querySelectorAll('#svEncList [data-eid]').forEach((row) => {
+    const id = row.dataset.eid;
+    row.querySelector('.enc-save').onclick = async () => {
+      const body = {
+        name: row.querySelector('.enc-name').value.trim(),
+        species: row.querySelector('.enc-species').value.trim(),
+        archetype: row.querySelector('.enc-arch').value,
+        count: Math.max(1, Math.min(20, parseInt(row.querySelector('.enc-count').value) || 1)),
+        enabled: row.querySelector('.enc-enabled').checked,
+      };
+      try { await svApi('PATCH', `/admin/mod-ai/encounters/${encodeURIComponent(id)}`, body); showToast('💾 Encounter gespeichert', 'success'); renderSvAi(); } catch (e) { showToast(e.message, 'error'); }
+    };
+    row.querySelector('.enc-del').onclick = () => svArmConfirm(row.querySelector('.enc-del'), 'Encounter löschen', async () => {
+      try { await svApi('DELETE', `/admin/mod-ai/encounters/${encodeURIComponent(id)}`); showToast('🗑️ Encounter gelöscht', 'success'); renderSvAi(); } catch (e) { showToast(e.message, 'error'); }
+    });
+  });
+  el('svEncCreate').onclick = async () => {
+    const species = el('svEncSpecies').value.trim(); if (!species) { showToast('Spezies angeben', 'error'); return; }
+    const body = { name: el('svEncName').value.trim() || species, species, archetype: el('svEncArch').value, count: Math.max(1, Math.min(20, parseInt(el('svEncCount').value) || 1)), enabled: true };
+    if (el('svEncAtMe').checked && me && typeof me.x === 'number') body.spawn = { x: me.x, y: me.y, z: me.z || 0 };
+    try { await svApi('POST', '/admin/mod-ai/encounters', body); showToast('➕ Encounter angelegt', 'success'); renderSvAi(); } catch (e) { showToast(e.message, 'error'); }
   };
 }
 
@@ -2342,13 +2392,13 @@ async function renderSvPoly() {
       <label>Ziel-Dino (Blueprint/Kurzname, z. B. Boar, Chicken, Deer)</label>
       <input id="svPolyClass" class="tm-input" placeholder="Chicken">
       <div style="display:flex;gap:10px">
-        <div style="flex:1"><label>Scale (optional)</label><input id="svPolyScale" type="number" step="0.5" min="0.1" placeholder="1" class="tm-input"></div>
+        <div style="flex:1"><label>Scale</label><input id="svPolyScale" type="number" step="0.1" min="0.1" value="1" class="tm-input"><div class="dt-muted" style="margin-top:3px">grösser 1 ist noch nicht funktional</div></div>
         <div style="flex:1"><label>maxHealth (optional)</label><input id="svPolyHp" type="number" step="100" placeholder="—" class="tm-input"></div>
       </div>
     </div>
     <div style="display:flex;flex-wrap:wrap;gap:6px;margin:10px 0 6px">
-      <button class="secondary" data-poly="Chicken|10|10000" style="width:auto;padding:6px 12px">🐔 Boss-Huhn</button>
-      <button class="secondary" data-poly="Boar|3|2000" style="width:auto;padding:6px 12px">🐗 Riesen-Boar</button>
+      <button class="secondary" data-poly="Chicken|1|10000" style="width:auto;padding:6px 12px">🐔 Kampf-Huhn</button>
+      <button class="secondary" data-poly="Boar|1|2000" style="width:auto;padding:6px 12px">🐗 Panzer-Boar</button>
       <button class="secondary" data-poly="Rabbit|0.3|" style="width:auto;padding:6px 12px">🐇 Mini-Hase</button>
     </div>
     <button id="svPolyApply" style="width:100%;margin-top:6px">🦖 Polymorph anwenden</button>`;
