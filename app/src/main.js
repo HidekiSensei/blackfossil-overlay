@@ -5,6 +5,16 @@ const http = require('node:http');
 const { exec, spawn, execSync } = require('node:child_process');
 const { autoUpdater } = require('electron-updater');
 
+// ── Robustheit: kaputte stdout/stderr-Pipe (EPIPE) darf das Overlay nicht crashen ──
+// Startet das AppImage aus einem Launcher/Terminal, das sich später schließt, bricht die
+// Lese-Seite der stdout-Pipe weg. Der nächste Schreibvorgang (z. B. electron-updater beim
+// Update-Check) lässt den Stream asynchron ein 'error'-Event mit code EPIPE emittieren; ohne
+// Listener wird daraus eine uncaughtException und Electron zeigt den Crash-Dialog. Ein
+// No-Op-Listener neutralisiert genau diesen Fall, ohne andere Fehler zu verschlucken.
+for (const stream of [process.stdout, process.stderr]) {
+  stream.on('error', (err) => { if (err && err.code === 'EPIPE') return; });
+}
+
 // Eigener App-Name für den Test-Build (Produktiv-Build patcht das via
 // app/scripts/patch-prod.js auf 'BlackFossil Overlay' zurück). Electron leitet
 // app.getPath('userData') (Session-/Hotkeys-Datei, Single-Instance-Lock) NUR aus dem
@@ -53,6 +63,10 @@ function setupAutoUpdate() {
   if (!app.isPackaged) return; // im Dev nicht prüfen
   autoUpdater.autoDownload = false;
   autoUpdater.autoInstallOnAppQuit = true; // Fallback: spätestens beim Beenden
+  // Default-Logger von electron-updater ist `console` → schreibt beim Update-Check auf stdout und
+  // war die konkrete Crash-Quelle (EPIPE, siehe oben). Update-Status geht ohnehin über die
+  // autoUpdater-Events an den Renderer; hier reicht ein No-Op, damit der Updater nicht auf stdout schreibt.
+  autoUpdater.logger = { info() {}, warn() {}, error() {}, debug() {} };
   const send = (ch, v) => { try { overlayWindow?.webContents.send(ch, v); } catch {} };
   let updateRetries = 0;
   autoUpdater.on('update-available', (i) => { updateRetries = 0; send('update-available', i?.version); });
