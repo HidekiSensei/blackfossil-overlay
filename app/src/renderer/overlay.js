@@ -4982,10 +4982,9 @@ async function renderSkinEditor() {
   const genderTip = canGender ? 'Geschlecht wechseln (Respawn)' : '🔒 Geschlechtswechsel ist ab Rang Bernstein freigeschaltet';
   // Aktuellen Rollplay-Namen aus den Live-Positionen vorbelegen (globales `players`, NICHT das
   // hier lokal geshadowte `me`). realName ist nur gesetzt, wenn ein RP-Name aktiv ist → dann ist
-  // name der RP-Name und rpRole die Rolle.
+  // name der RP-Name.
   const selfPos = (typeof players !== 'undefined' && Array.isArray(players)) ? players.find((p) => p.isYou) : null;
   const rpPrefillName = (selfPos && selfPos.realName) ? (selfPos.name || '') : '';
-  const rpPrefillRole = (selfPos && selfPos.rpRole) ? selfPos.rpRole : '';
 
   const swatches = SKIN_GROUPS.map(([k, l]) => `<label style="display:flex;justify-content:space-between;align-items:center;gap:8px;padding:6px 8px;background:rgba(255,255,255,0.04);border-radius:8px;font-size:13px;cursor:pointer"><span style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${l}</span><input type="color" data-col="${k}" value="${linToHex(skinState.colors[k])}" style="width:40px;height:26px;border:0;background:none;cursor:pointer;flex:none"></label>`).join('');
   const liveMsg = skinPays
@@ -4995,10 +4994,9 @@ async function renderSkinEditor() {
     <div id="skLive" style="font-size:12px;color:${skinPays ? '#f59e0b' : '#22c55e'};margin:2px 0 14px">${liveMsg}</div>
     <div class="sec-title">🎭 Rollplay-Name</div>
     <div style="font-size:11px;color:var(--muted);margin:2px 0 8px">Andere Spieler sehen diesen Namen statt deines Steam-Namens. Leer speichern = zurücksetzen.</div>
-    <input id="rpName" maxlength="24" placeholder="Rollplay-Name…" value="${escapeHtml(rpPrefillName)}" style="width:100%;box-sizing:border-box;padding:8px;border-radius:6px;border:1px solid var(--border);background:var(--input-bg);color:#eee;margin-bottom:6px">
-    <input id="rpRole" maxlength="32" placeholder="Rolle (optional, z. B. Häuptling)…" value="${escapeHtml(rpPrefillRole)}" style="width:100%;box-sizing:border-box;padding:8px;border-radius:6px;border:1px solid var(--border);background:var(--input-bg);color:#eee;margin-bottom:6px">
     <div style="display:flex;gap:6px;margin-bottom:14px">
-      <button id="rpSave" style="flex:1">💾 Rollplay speichern</button>
+      <input id="rpName" maxlength="24" placeholder="Rollplay-Name…" value="${escapeHtml(rpPrefillName)}" style="flex:1;min-width:0;padding:8px;border-radius:6px;border:1px solid var(--border);background:var(--input-bg);color:#eee">
+      <button id="rpSave" style="width:auto;padding:8px 12px">💾 Speichern</button>
       <button id="rpClear" class="secondary" style="width:auto;padding:8px 12px">Zurücksetzen</button>
     </div>
     <div class="sec-title">Geschlecht ${canGender ? '' : '<span style="color:var(--muted);font-weight:400;font-size:11px">🔒 ab Bernstein</span>'}</div>
@@ -5033,7 +5031,7 @@ async function renderSkinEditor() {
     <button class="closeFeature secondary" style="width:100%;margin-top:12px">Schließen</button>`;
   panel.querySelector('.closeFeature').onclick = closeAllFeatures;
   el('rpSave').onclick = () => saveRpName();
-  el('rpClear').onclick = () => { el('rpName').value = ''; el('rpRole').value = ''; saveRpName(); };
+  el('rpClear').onclick = () => { el('rpName').value = ''; saveRpName(); };
   el('skTplSave').onclick = () => saveSkinTemplate();
   el('skShare').onclick = () => copySkinCode();
   el('skImportBtn').onclick = () => importSkinCode(el('skImport').value);
@@ -5055,13 +5053,12 @@ async function renderSkinEditor() {
 // angezeigten Namen für alle Spieler; Staff/Mods sehen zusätzlich den echten Namen.
 async function saveRpName() {
   const name = (el('rpName')?.value || '').trim();
-  const role = (el('rpRole')?.value || '').trim();
   const btn = el('rpSave'); if (btn) btn.disabled = true;
   try {
     const r = await fetch(`${config.tokenBase}/me/rpname`, {
       method: 'POST',
       headers: { Authorization: `Bearer ${sessionToken}`, 'Content-Type': 'application/json' },
-      body: JSON.stringify({ name, role }),
+      body: JSON.stringify({ name }),
     });
     const d = await r.json(); if (!r.ok) throw new Error(apiErr(d));
     showToast(d.set ? `🎭 Rollplay-Name: ${d.name}` : '🎭 Rollplay-Name zurückgesetzt', 'success');
