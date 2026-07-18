@@ -1680,6 +1680,11 @@ function userLabel(u) {
 function userNames(u) {
   return [u.rpName, u.ingameName, u.discordName, u.name].filter(Boolean).map((s) => s.toLowerCase());
 }
+// warnItemUser bringt ein /admin/players/search-Item (playerName = Ingame) auf die gemeinsame
+// User-Form, damit userLabel/matchUser (RP/Steam/Discord) auch auf die Verwarnungs-Suche passen.
+function warnItemUser(p) {
+  return { steamId: p.steamId, discordId: p.discordId, rpName: p.rpName, ingameName: p.playerName, discordName: p.discordName, name: p.discordName || p.playerName };
+}
 
 // matchUser löst den getippten/eingefügten Wert robust zum User auf: SteamID/DiscordID exakt
 // (Copy-Paste!), kombiniertes Label bzw. einer der drei Namen exakt (case-insensitive),
@@ -1962,7 +1967,7 @@ function renderWarnPane() {
       <div style="flex:1"><label style="font-size:11px;color:var(--muted)">Discord-ID</label><input id="wnDiscord" placeholder="z. B. 4785…" style="${inp}"></div>
       <div style="flex:1"><label style="font-size:11px;color:var(--muted)">Steam-ID</label><input id="wnSteam" placeholder="7656…" style="${inp}"></div>
     </div>
-    <label style="font-size:11px;color:var(--muted);margin-top:8px;display:block">oder Ingame-Name <span style="opacity:.7">(wird automatisch zu Steam aufgelöst)</span></label>
+    <label style="font-size:11px;color:var(--muted);margin-top:8px;display:block">oder Name <span style="opacity:.7">(RP-, Ingame- oder Discord-Name — wird automatisch zu Steam aufgelöst)</span></label>
     <input id="wnIngame" list="wnIngameList" autocomplete="off" placeholder="z. B. Complex-Slayer" style="${inp}">
     <datalist id="wnIngameList"></datalist>
     <label style="font-size:11px;color:var(--muted);margin-top:8px;display:block">Regel-Paragraph *</label>
@@ -1978,7 +1983,7 @@ function renderWarnPane() {
     </div>
     <div id="wnResults" style="margin-top:10px"></div>`;
 
-  // Ingame-Name → Live-Vorschläge aus der Spielersuche (debounced).
+  // Server-Spielersuche (RP/Ingame/Discord) → Live-Vorschläge im Label "RP (Steam, Discord)".
   let wnIngTimer = null;
   el('wnIngame').oninput = () => {
     const q = el('wnIngame').value.trim();
@@ -1988,7 +1993,7 @@ function renderWarnPane() {
       try {
         const d = await fetch(`${config.tokenBase}/admin/players/search?q=${encodeURIComponent(q)}`, { headers: { Authorization: `Bearer ${sessionToken}` } }).then((r) => r.json());
         const dl = el('wnIngameList'); if (!dl) return;
-        dl.innerHTML = (d.items || []).slice(0, 15).map((p) => `<option value="${escapeHtml(p.playerName)}">`).join('');
+        dl.innerHTML = (d.items || []).slice(0, 15).map((p) => `<option value="${escapeHtml(userLabel(warnItemUser(p)))}">`).join('');
       } catch {}
     }, 300);
   };
@@ -2000,16 +2005,15 @@ function renderWarnPane() {
     const ruleParagraph = el('wnPara').value.trim();
     const reason = el('wnReason').value.trim();
     if (!ruleParagraph || !reason) { showToast('Paragraph und Grund sind Pflicht', 'error'); return; }
-    // Ingame-Name → Steam auflösen (nur wenn keine ID direkt angegeben).
+    // Name (RP/Ingame/Discord) → Steam auflösen (nur wenn keine ID direkt angegeben).
     if (!discordId && !steamId && ingame) {
       try {
         const d = await fetch(`${config.tokenBase}/admin/players/search?q=${encodeURIComponent(ingame)}`, { headers: { Authorization: `Bearer ${sessionToken}` } }).then((r) => r.json());
         const items = d.items || [];
-        const exact = items.filter((p) => (p.playerName || '').toLowerCase() === ingame.toLowerCase());
-        const pick = exact.length === 1 ? exact[0] : (items.length === 1 ? items[0] : null);
-        if (!pick) { showToast(items.length ? 'Mehrere Treffer — bitte genauer tippen oder SteamID nutzen' : 'Ingame-Name nicht gefunden (war der Spieler online?)', 'error'); return; }
+        const pick = matchUser(ingame, items.map(warnItemUser));
+        if (!pick) { showToast(items.length ? 'Mehrere Treffer — bitte genauer tippen oder SteamID nutzen' : 'Name nicht gefunden (war der Spieler online?)', 'error'); return; }
         steamId = pick.steamId;
-      } catch { showToast('Ingame-Name konnte nicht aufgelöst werden', 'error'); return; }
+      } catch { showToast('Name konnte nicht aufgelöst werden', 'error'); return; }
     }
     if (!discordId && !steamId) { showToast('Discord-/Steam-ID oder Ingame-Name nötig', 'error'); return; }
     await apiAction('/admin/warnings', { discordId, steamId, reason, ruleParagraph }, '⚠️ Verwarnung erfasst', () => {
