@@ -2686,6 +2686,8 @@ async function admLoadUserInfo() {
 let dutyOn = false;
 function updateDutyBtn(on) {
   dutyOn = !!on;
+  const g = el('dutyGlow'); if (g) g.classList.toggle('on', dutyOn); // pinker Rand-Glow
+  updateWindowBounds(); // Fenster im Dienst-Modus auf Vollbild halten → Glow rundum sichtbar
   const b = el('dutyToggleBtn');
   if (b) {
     b.textContent = on ? '🩷 Dienst-Modus AUSschalten (Skin zurück)' : '🩷 Dienst-Modus einschalten';
@@ -6780,6 +6782,7 @@ async function connectWithSession(session) {
     { const ab = el('openAdminBtn'); if (ab) ab.style.display = isStaff ? 'block' : 'none'; }
     { const da = el('dockAdmin'); if (da) da.style.display = isStaff ? 'flex' : 'none'; }
     { const ds = el('dockServer'); if (ds) ds.style.display = isAdmin ? 'flex' : 'none'; }
+    if (isStaff) loadDutyState(); // Dienst-Status beim Start holen → Rand-Glow ohne Panel-Öffnen
     // Tickets/Events/Overlay-Gruppe laden + periodisch (Benachrichtigungen)
     loadMyTickets(); loadMyEvents(); loadOvGroup();
     if (!loadMyTickets._t) loadMyTickets._t = setInterval(loadMyTickets, 20000);
@@ -7144,7 +7147,7 @@ function updateWindowBounds() {
   if (!window.bf || !window.bf.setOverlayBounds) return;
   if (shrinkTimer) { clearTimeout(shrinkTimer); shrinkTimer = null; }
   const interactive = overlayMode || settingsOpen || mapOpen || adminOpen || !!featureOpen || editMode;
-  if (!windowShrink || interactive) {
+  if (!windowShrink || interactive || dutyOn) { // dutyOn → Vollbild halten, damit der Rand-Glow rundum passt
     if (lastSentH !== 0) { lastSentH = 0; window.bf.setOverlayBounds({ full: true }); }   // Vollbild (sofort)
     return;
   }
