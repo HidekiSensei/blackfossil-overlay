@@ -2308,8 +2308,11 @@ async function renderSvWelt() {
   el('svGrow').onchange = async () => { try { await svApi('POST', '/admin/world/growth-stop', { enabled: el('svGrow').checked }); showToast(el('svGrow').checked ? '🌱 Grow-Stop AN' : '🌱 Grow-Stop AUS', 'success'); } catch (e) { el('svGrow').checked = !el('svGrow').checked; showToast(e.message, 'error'); } };
 }
 
-// 🤖 AI: mod-eigenes /ai/encounters-Framework — Master-Schalter + Liste + anlegen/editieren/löschen
+// 🤖 AI: mod-eigenes /ai/encounters-Framework — Master + read-only Liste + Detail-Editor
 const SV_ARCHETYPES = ['territorial_guard', 'pack_hunter', 'herd', 'ambush', 'skittish_prey', 'scavenger', 'nomad', 'apex_solo'];
+const svArchOpts = (sel) => SV_ARCHETYPES.map((a) => `<option value="${a}"${a === sel ? ' selected' : ''}>${a}</option>`).join('');
+let svEncEditId = null, svEncDraft = null;
+
 async function renderSvAi() {
   const box = el('svAiBody'); if (!box) return;
   box.innerHTML = '<div class="dt-muted">Lade…</div>';
@@ -2319,34 +2322,25 @@ async function renderSvAi() {
   ]);
   const enabled = !!(st.ai_encounters_enabled != null ? st.ai_encounters_enabled : st.enabled);
   const encs = list.encounters || [];
-  const archOpts = (sel) => SV_ARCHETYPES.map((a) => `<option value="${a}"${a === sel ? ' selected' : ''}>${a}</option>`).join('');
+  const statusDot = (e) => e.enabled !== false ? '<span style="color:#22c55e">● aktiv</span>' : '<span style="color:var(--muted)">○ aus</span>';
   const rows = encs.map((e) => `
-    <div class="dt-form" data-eid="${escapeHtml(e.id)}" style="border:1px solid var(--border);border-radius:8px;padding:8px;margin-bottom:8px">
-      <div style="display:flex;gap:8px;align-items:center">
-        <input class="tm-input enc-name" style="flex:1" value="${escapeHtml(e.name || e.id)}" placeholder="Name">
-        <label style="font-size:12px;display:flex;align-items:center;gap:4px"><input type="checkbox" class="enc-enabled" ${e.enabled !== false ? 'checked' : ''}> aktiv</label>
-      </div>
-      <div style="display:flex;gap:8px;margin-top:6px">
-        <input class="tm-input enc-species" style="flex:2" value="${escapeHtml(e.species || '')}" placeholder="Spezies (BP_…)">
-        <select class="bf-select enc-arch" style="flex:1">${archOpts(e.archetype)}</select>
-        <input type="number" min="1" max="20" class="tm-input enc-count" style="width:64px" value="${e.count || 1}">
-      </div>
-      <div style="display:flex;gap:6px;margin-top:6px">
-        <button class="enc-save" style="flex:1">💾 Speichern</button>
-        <button class="secondary enc-del" style="width:auto;padding:6px 12px">🗑️</button>
-      </div>
+    <div style="display:flex;align-items:center;gap:10px;border:1px solid var(--border);border-radius:8px;padding:6px 10px;margin-bottom:6px">
+      <div style="flex:1;min-width:0"><b>${escapeHtml(e.name || e.id)}</b><div class="dt-muted" style="font-size:12px">${escapeHtml(e.archetype || '')} · ${escapeHtml(e.species || '')} · ×${e.count || 1}</div></div>
+      <div style="font-size:12px;white-space:nowrap">${statusDot(e)}</div>
+      <button class="secondary sv-enc-edit" data-eid="${escapeHtml(e.id)}" style="width:auto;padding:4px 12px">✏️ Bearbeiten</button>
     </div>`).join('') || '<div class="dt-muted">Keine Encounters angelegt.</div>';
   box.innerHTML = `
     <div class="sec-title">🤖 AI-Encounters</div>
     <label style="display:flex;align-items:center;gap:8px;font-size:13px;margin:8px 0 14px"><input id="svAiMaster" type="checkbox" ${enabled ? 'checked' : ''}> Encounter-System aktiv (Master-Schalter)</label>
     <div class="sec-title">Encounters (${encs.length})</div>
-    <div id="svEncList" style="margin:6px 0 14px">${rows}</div>
-    <div class="sec-title">➕ Neuer Encounter</div>
+    <div id="svEncList" style="margin:6px 0 6px">${rows}</div>
+    <div id="svEncEditor"></div>
+    <div class="sec-title" style="margin-top:12px">➕ Neuer Encounter</div>
     <div class="dt-form" style="margin-top:6px">
       <label>Name</label><input id="svEncName" class="tm-input" placeholder="Rex-Wache Nord">
       <label>Spezies (Blueprint, z. B. BP_Allosaurus_C)</label><input id="svEncSpecies" class="tm-input" placeholder="BP_Allosaurus_C">
       <div style="display:flex;gap:10px">
-        <div style="flex:1"><label>Archetyp</label><select id="svEncArch" class="bf-select">${archOpts('territorial_guard')}</select></div>
+        <div style="flex:1"><label>Archetyp</label><select id="svEncArch" class="bf-select">${svArchOpts('territorial_guard')}</select></div>
         <div style="flex:1"><label>Anzahl (1–20)</label><input id="svEncCount" type="number" min="1" max="20" value="1" class="tm-input"></div>
       </div>
       <label style="display:flex;align-items:center;gap:8px;margin-top:6px"><input id="svEncAtMe" type="checkbox" checked> Spawnpunkt = meine Position</label>
@@ -2356,27 +2350,100 @@ async function renderSvAi() {
     try { await svApi('PATCH', '/admin/mod-ai/encounters/status', { ai_encounters_enabled: el('svAiMaster').checked }); showToast(el('svAiMaster').checked ? '🤖 AI-Encounters AN' : '🤖 AI-Encounters AUS', 'success'); }
     catch (e) { el('svAiMaster').checked = !el('svAiMaster').checked; showToast(e.message, 'error'); }
   };
-  box.querySelectorAll('#svEncList [data-eid]').forEach((row) => {
-    const id = row.dataset.eid;
-    row.querySelector('.enc-save').onclick = async () => {
-      const body = {
-        name: row.querySelector('.enc-name').value.trim(),
-        species: row.querySelector('.enc-species').value.trim(),
-        archetype: row.querySelector('.enc-arch').value,
-        count: Math.max(1, Math.min(20, parseInt(row.querySelector('.enc-count').value) || 1)),
-        enabled: row.querySelector('.enc-enabled').checked,
-      };
-      try { await svApi('PATCH', `/admin/mod-ai/encounters/${encodeURIComponent(id)}`, body); showToast('💾 Encounter gespeichert', 'success'); renderSvAi(); } catch (e) { showToast(e.message, 'error'); }
-    };
-    row.querySelector('.enc-del').onclick = () => svArmConfirm(row.querySelector('.enc-del'), 'Encounter löschen', async () => {
-      try { await svApi('DELETE', `/admin/mod-ai/encounters/${encodeURIComponent(id)}`); showToast('🗑️ Encounter gelöscht', 'success'); renderSvAi(); } catch (e) { showToast(e.message, 'error'); }
-    });
+  box.querySelectorAll('.sv-enc-edit').forEach((b) => b.onclick = () => {
+    const e = encs.find((x) => x.id === b.dataset.eid); if (!e) return;
+    svEncEditId = e.id; svEncDraft = JSON.parse(JSON.stringify(e));
+    renderEncEditor();
+    const ed = el('svEncEditor'); if (ed) ed.scrollIntoView({ block: 'nearest' });
   });
   el('svEncCreate').onclick = async () => {
     const species = el('svEncSpecies').value.trim(); if (!species) { showToast('Spezies angeben', 'error'); return; }
     const body = { name: el('svEncName').value.trim() || species, species, archetype: el('svEncArch').value, count: Math.max(1, Math.min(20, parseInt(el('svEncCount').value) || 1)), enabled: true };
     if (el('svEncAtMe').checked && me && typeof me.x === 'number') body.spawn = { x: me.x, y: me.y, z: me.z || 0 };
     try { await svApi('POST', '/admin/mod-ai/encounters', body); showToast('➕ Encounter angelegt', 'success'); renderSvAi(); } catch (e) { showToast(e.message, 'error'); }
+  };
+  renderEncEditor(); // Editor nach Refetch synchron halten (offen nur, wenn svEncDraft gesetzt)
+}
+
+// Liest die aktuellen Editor-Feldwerte in svEncDraft zurück (vor jedem Teil-Re-Render der Patrouille).
+function svEncSyncDraft() {
+  const box = el('svEncEditor'); if (!box || !svEncDraft) return;
+  const q = (c) => box.querySelector(c);
+  if (q('.ee-name')) svEncDraft.name = q('.ee-name').value.trim();
+  if (q('.ee-species')) svEncDraft.species = q('.ee-species').value.trim();
+  if (q('.ee-arch')) svEncDraft.archetype = q('.ee-arch').value;
+  if (q('.ee-count')) svEncDraft.count = Math.max(1, Math.min(20, parseInt(q('.ee-count').value) || 1));
+  if (q('.ee-enabled')) svEncDraft.enabled = q('.ee-enabled').checked;
+  if (q('.ee-respawn')) { const v = parseInt(q('.ee-respawn').value); svEncDraft.respawnDelaySec = (v >= 0 && !isNaN(v)) ? v : undefined; }
+  const sx = q('.ee-sx'), sy = q('.ee-sy'), sz = q('.ee-sz');
+  if (sx && sy && sz) svEncDraft.spawn = { x: parseFloat(sx.value) || 0, y: parseFloat(sy.value) || 0, z: parseFloat(sz.value) || 0 };
+  const pts = [];
+  box.querySelectorAll('.ee-pt').forEach((r) => pts.push({ x: parseFloat(r.querySelector('.pt-x').value) || 0, y: parseFloat(r.querySelector('.pt-y').value) || 0, z: parseFloat(r.querySelector('.pt-z').value) || 0 }));
+  svEncDraft.patrol = pts;
+}
+
+// Detail-Editor eines Encounters (Koordinaten + Patrouillen-Pfad). Rendert nur aus svEncDraft,
+// ohne Refetch — Patrouillen-Änderungen re-rendern nur diesen Block.
+function renderEncEditor() {
+  const box = el('svEncEditor'); if (!box) return;
+  if (!svEncDraft) { box.innerHTML = ''; return; }
+  const d = svEncDraft, sp = d.spawn || {}, patrol = d.patrol || [];
+  box.innerHTML = `
+    <div style="border:1px solid var(--accent);border-radius:8px;padding:10px;margin:8px 0">
+      <div class="sec-title">✏️ Bearbeiten: ${escapeHtml(d.id)}</div>
+      <div class="dt-form">
+        <div style="display:flex;gap:8px;align-items:center">
+          <input class="tm-input ee-name" style="flex:1" value="${escapeHtml(d.name || '')}" placeholder="Name">
+          <label style="font-size:12px;display:flex;align-items:center;gap:4px"><input type="checkbox" class="ee-enabled" ${d.enabled !== false ? 'checked' : ''}> aktiv</label>
+        </div>
+        <div style="display:flex;gap:8px;margin-top:6px">
+          <input class="tm-input ee-species" style="flex:2" value="${escapeHtml(d.species || '')}" placeholder="Spezies (BP_…)">
+          <select class="bf-select ee-arch" style="flex:1">${svArchOpts(d.archetype)}</select>
+          <input type="number" min="1" max="20" class="tm-input ee-count" style="width:64px" value="${d.count || 1}">
+        </div>
+        <label style="margin-top:8px">Spawn-Koordinaten (x / y / z)</label>
+        <div style="display:flex;gap:6px;align-items:center">
+          <input type="number" class="tm-input ee-sx" style="flex:1" value="${sp.x || 0}" placeholder="x">
+          <input type="number" class="tm-input ee-sy" style="flex:1" value="${sp.y || 0}" placeholder="y">
+          <input type="number" class="tm-input ee-sz" style="flex:1" value="${sp.z || 0}" placeholder="z">
+          <button class="secondary ee-spawn-me" style="width:auto;padding:6px 10px">📍 hier</button>
+        </div>
+        <label style="margin-top:8px">Patrouillen-Pfad (${patrol.length} Punkte)</label>
+        <div class="ee-patrol">${patrol.map((p, i) => `
+          <div class="ee-pt" style="display:flex;gap:6px;align-items:center;margin-bottom:4px">
+            <span class="dt-muted" style="width:18px;text-align:right">${i + 1}</span>
+            <input type="number" class="tm-input pt-x" style="flex:1" value="${p.x || 0}" placeholder="x">
+            <input type="number" class="tm-input pt-y" style="flex:1" value="${p.y || 0}" placeholder="y">
+            <input type="number" class="tm-input pt-z" style="flex:1" value="${p.z || 0}" placeholder="z">
+            <button class="secondary ee-pt-del" data-i="${i}" style="width:auto;padding:4px 8px">✕</button>
+          </div>`).join('')}</div>
+        <div style="display:flex;gap:6px;margin-top:4px">
+          <button class="secondary ee-pt-add" style="flex:1">➕ Punkt</button>
+          <button class="secondary ee-pt-addme" style="flex:1">📍 Punkt an meiner Position</button>
+        </div>
+        <label style="margin-top:8px">Respawn-Delay (Sek, optional)</label>
+        <input type="number" min="0" class="tm-input ee-respawn" value="${d.respawnDelaySec != null ? d.respawnDelaySec : ''}" placeholder="—">
+      </div>
+      <div style="display:flex;gap:6px;margin-top:10px">
+        <button class="ee-save" style="flex:1">💾 Speichern</button>
+        <button class="secondary ee-cancel" style="width:auto;padding:6px 12px">Abbrechen</button>
+        <button class="secondary ee-del" style="width:auto;padding:6px 12px;color:#ef4444">🗑️ Löschen</button>
+      </div>
+    </div>`;
+  box.querySelector('.ee-spawn-me').onclick = () => { svEncSyncDraft(); if (me && typeof me.x === 'number') svEncDraft.spawn = { x: me.x, y: me.y, z: me.z || 0 }; else showToast('Position unbekannt', 'error'); renderEncEditor(); };
+  box.querySelector('.ee-pt-add').onclick = () => { svEncSyncDraft(); (svEncDraft.patrol = svEncDraft.patrol || []).push({ x: 0, y: 0, z: 0 }); renderEncEditor(); };
+  box.querySelector('.ee-pt-addme').onclick = () => { svEncSyncDraft(); if (me && typeof me.x === 'number') (svEncDraft.patrol = svEncDraft.patrol || []).push({ x: me.x, y: me.y, z: me.z || 0 }); else showToast('Position unbekannt', 'error'); renderEncEditor(); };
+  box.querySelectorAll('.ee-pt-del').forEach((b) => b.onclick = () => { svEncSyncDraft(); svEncDraft.patrol.splice(parseInt(b.dataset.i), 1); renderEncEditor(); });
+  box.querySelector('.ee-cancel').onclick = () => { svEncEditId = null; svEncDraft = null; renderEncEditor(); };
+  box.querySelector('.ee-del').onclick = () => svArmConfirm(box.querySelector('.ee-del'), 'Encounter löschen', async () => {
+    try { await svApi('DELETE', `/admin/mod-ai/encounters/${encodeURIComponent(svEncEditId)}`); showToast('🗑️ Encounter gelöscht', 'success'); svEncEditId = null; svEncDraft = null; renderSvAi(); } catch (e) { showToast(e.message, 'error'); }
+  });
+  box.querySelector('.ee-save').onclick = async () => {
+    svEncSyncDraft();
+    if (!svEncDraft.species) { showToast('Spezies angeben', 'error'); return; }
+    const body = { name: svEncDraft.name, species: svEncDraft.species, archetype: svEncDraft.archetype, count: svEncDraft.count, enabled: svEncDraft.enabled, spawn: svEncDraft.spawn, patrol: svEncDraft.patrol };
+    if (svEncDraft.respawnDelaySec != null) body.respawnDelaySec = svEncDraft.respawnDelaySec;
+    try { await svApi('PATCH', `/admin/mod-ai/encounters/${encodeURIComponent(svEncEditId)}`, body); showToast('💾 Encounter gespeichert', 'success'); svEncEditId = null; svEncDraft = null; renderSvAi(); } catch (e) { showToast(e.message, 'error'); }
   };
 }
 
