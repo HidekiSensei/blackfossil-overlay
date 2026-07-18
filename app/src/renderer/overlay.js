@@ -1118,6 +1118,7 @@ function audibleVol(steamId) {
   const factor = (deafened || amDead) ? 0 : masterGain;
   return vol * g * factor;
 }
+const OBSIDIAN_HEX = '#c4b5fd'; // Obsidian-Tier-Textfarbe (vgl. .tier-Obsidian in overlay.html)
 function updateSpeakingBox(speakers) {
   const box = el('speakingBox'); if (!box) return;
   const now = Date.now();
@@ -1128,14 +1129,20 @@ function updateSpeakingBox(speakers) {
     if (now - ts > 1500) { _speakSeen.delete(id); continue; }
     if (audibleVol(id) <= 0) continue;                        // nur wen man WIRKLICH hört (Reichweite/deafened/stumm)
     const pl = players.find((x) => x.steamId === id);
-    const nm = pl && (pl.name || pl.playerName);
-    if (nm) items.push({ nm, color: pl.roleColor });          // roleColor = Discord-Rollenfarbe (Integer) oder null
+    const nm = pl && (pl.name || pl.playerName);              // name = RP-Name falls gesetzt; bei onDuty erzwingt das Backend den echten Namen
+    if (nm) items.push({ nm, color: pl.roleColor, team: !!pl.team, onDuty: !!pl.onDuty });
   }
   if (!items.length) { box.style.display = 'none'; return; }
   box.style.display = '';
-  // Namen in der Discord-Rollenfarbe (Spender/Abonnenten/Team erkennbar); ohne Farbe = Standard.
-  box.innerHTML = `🔊 ${items.map(({ nm, color }) => {
-    const hex = (color && color > 0) ? '#' + (color >>> 0).toString(16).padStart(6, '0') : null;
+  // Farb-/Namensregel für Teamler (sonst stechen sie durch ihre Rollenfarbe sofort heraus):
+  // • Im Dienst-Modus (pinker Admin-Skin) → Klarname (Backend liefert bei onDuty schon den echten
+  //   Namen) in der Team-Rollenfarbe → klar als Admin erkennbar.
+  // • Außer Dienst → RP-Name (sonst echter Name) in Obsidian-Lila → wirkt wie ein normaler
+  //   Top-Abonnent, die auffällige Team-Rollenfarbe wird verborgen.
+  // • Alle anderen → Name in ihrer Discord-Rollenfarbe wie gehabt.
+  box.innerHTML = `🔊 ${items.map(({ nm, color, team, onDuty }) => {
+    let hex = (color && color > 0) ? '#' + (color >>> 0).toString(16).padStart(6, '0') : null;
+    if (team && !onDuty) hex = OBSIDIAN_HEX;                  // außer Dienst: Rollenfarbe durch Obsidian ersetzen
     return hex ? `<span style="color:${hex}">${escapeHtml(nm)}</span>` : escapeHtml(nm);
   }).join(', ')}`;
 }
