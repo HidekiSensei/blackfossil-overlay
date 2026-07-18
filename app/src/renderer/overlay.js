@@ -1651,7 +1651,64 @@ function tpHoverHitTest(e) {
 // ── Admin-Panel (eigenständiges Modal, NUR Admins) ───────────────────────────
 let adminOpen = false;
 let adminUserMap = new Map();   // Option-Text → { steamId, discordId, name }
+let adminUsers = [];            // volle User-Liste (für robuste Suche/Filter)
 let admSelectedSteamId = null;
+
+// ── User-Suchfelder: robust + skalierend ─────────────────────────────────────
+// Alle User-Picker (Admin-Panel + Dino-Token/Prime via userSearchHTML) teilen dieses Verhalten.
+// Ein natives <datalist> mit ~1000 Optionen zeigt in Chromium NICHT zuverlässig alle Vorschläge
+// (deshalb wurden User "nicht gefunden", obwohl sie in der Liste standen). Lösung: das Datalist
+// wird beim Tippen dynamisch mit nur den Top-Treffern befüllt — mit wenigen Optionen klappt es.
+// USER_POOLS: input-id → User-Array, das dieses Feld durchsucht.
+const USER_POOLS = {};
+
+// matchUser löst den getippten/eingefügten Wert robust zum User auf: SteamID/DiscordID exakt
+// (Copy-Paste!), Name exakt (case-insensitive), Dedup-Suffix "Name (…1234)", sonst eindeutiger
+// Teilstring. Ersetzt den früheren exakten Map-Lookup, an dem Tippfehler/Teilnamen scheiterten.
+function matchUser(v, users) {
+  v = (v || '').trim();
+  users = users || [];
+  if (!v) return null;
+  const lv = v.toLowerCase();
+  let m = users.find((u) => u.steamId === v || u.discordId === v);
+  if (m) return m;
+  const exact = users.filter((u) => (u.name || '').toLowerCase() === lv);
+  if (exact.length === 1) return exact[0];
+  const suf = v.match(/\(…(\w{4})\)\s*$/);
+  if (suf) {
+    m = users.find((u) => (u.steamId || u.discordId || '').slice(-4) === suf[1] && lv.startsWith((u.name || '').toLowerCase()));
+    if (m) return m;
+  }
+  const sub = users.filter((u) => (u.name || '').toLowerCase().includes(lv) || (u.steamId || '').includes(v));
+  if (sub.length === 1) return sub[0];
+  return exact[0] || null; // mehrere Namensgleiche → erster; sonst nichts
+}
+
+// filterDatalist befüllt das zum Input gehörende <datalist> mit den Top-Treffern zur aktuellen
+// Eingabe (Name/SteamID/DiscordID, Teilstring, case-insensitive), gedeckelt auf 50.
+function filterDatalist(inp) {
+  const listId = inp.getAttribute('list');
+  if (!listId) return;
+  const dl = document.getElementById(listId);
+  if (!dl) return;
+  const users = USER_POOLS[inp.id] || adminUsers || [];
+  const q = (inp.value || '').trim().toLowerCase();
+  const hits = (q
+    ? users.filter((u) => (u.name || '').toLowerCase().includes(q) || (u.steamId || '').includes(q) || (u.discordId || '').includes(q))
+    : users
+  ).slice(0, 50);
+  const seen = new Set();
+  dl.innerHTML = hits.map((u) => {
+    let key = u.name || u.steamId || '';
+    if (seen.has(key)) key = `${u.name} (…${(u.steamId || u.discordId || '').slice(-4)})`;
+    seen.add(key);
+    return `<option value="${escapeHtml(key)}"></option>`;
+  }).join('');
+}
+
+// Delegiert: jedes User-Suchfeld (in USER_POOLS registriert) filtert beim Tippen UND beim Fokus.
+document.addEventListener('input', (e) => { const t = e.target; if (t && t.id && USER_POOLS[t.id]) filterDatalist(t); });
+document.addEventListener('focusin', (e) => { const t = e.target; if (t && t.id && USER_POOLS[t.id]) filterDatalist(t); });
 
 function openAdminPanel() {
   if (!isStaff) { showToast('Nur für Staff (Supporter/Moderator+)', 'error'); return; }
@@ -2169,19 +2226,13 @@ async function loadAdminUsers() {
     const res = await fetch(`${config.tokenBase}/admin/users`, { headers: { Authorization: `Bearer ${sessionToken}` } });
     if (!res.ok) return;
     const d = await res.json();
-    adminUserMap = new Map();
-    const dl = el('admUserList');
-    dl.innerHTML = '';
-    const seen = new Set();
-    for (const u of (d.users || [])) {
-      let key = u.name;
-      if (seen.has(key)) key = `${u.name} (…${u.steamId.slice(-4)})`;
-      seen.add(key);
-      adminUserMap.set(key, u);
-      const opt = document.createElement('option');
-      opt.value = key;
-      dl.appendChild(opt);
-    }
+    adminUsers = d.users || [];
+    // Die drei Admin-Suchfelder teilen sich admUserList und durchsuchen die volle User-Liste.
+    // Das Datalist wird NICHT mehr mit allen ~1000 Optionen vorbefüllt (Chromium zeigt die dann
+    // nicht zuverlässig) — filterDatalist füllt es beim Tippen/Fokus mit den Top-Treffern.
+    for (const id of ['admUserSearch', 'msgUserSearch', 'giftUserSearch']) USER_POOLS[id] = adminUsers;
+    adminUserMap = new Map(); // nur noch Back-Compat; Auflösung läuft über matchUser
+    for (const u of adminUsers) adminUserMap.set(u.name, u);
   } catch {}
 }
 
@@ -2226,37 +2277,23 @@ function updateGiftTarget() {
 }
 
 function resolveAdminUser(inputId) {
-  const v = (el(inputId).value || '').trim();
-  return adminUserMap.get(v) || null;
+  return matchUser(el(inputId)?.value, USER_POOLS[inputId] || adminUsers);
 }
 
 // ── Wiederverwendbar: Discord-User-Suchfeld (Name selbst tippen + Vorschläge unten) ──
 // Ersetzt <select>-Dropdowns überall im Admin-Overlay durch ein Text-Input mit Datalist.
 function userSearchHTML(inputId, users, label, placeholder) {
   const listId = inputId + '_dl';
-  const seen = new Set(); const opts = [];
-  for (const u of (users || [])) {
-    let key = u.name || '';
-    if (seen.has(key)) key = `${u.name} (…${(u.steamId || u.discordId || '').slice(-4)})`;
-    seen.add(key);
-    opts.push(`<option value="${escapeHtml(key)}">`);
-  }
+  // User-Pool für dieses Feld registrieren; filterDatalist (delegierter input/focusin-Handler)
+  // befüllt das Datalist beim Tippen mit den Top-Treffern. Kein Vorabdump aller Optionen mehr.
+  USER_POOLS[inputId] = users || [];
   return `<label>${escapeHtml(label || 'Spieler')}</label>` +
-    `<input id="${inputId}" list="${listId}" class="tm-input" placeholder="${escapeHtml(placeholder || 'Discord-Name tippen…')}" autocomplete="off">` +
-    `<datalist id="${listId}">${opts.join('')}</datalist>`;
+    `<input id="${inputId}" list="${listId}" class="tm-input" placeholder="${escapeHtml(placeholder || 'Discord-Name/SteamID tippen…')}" autocomplete="off">` +
+    `<datalist id="${listId}"></datalist>`;
 }
-// Löst den getippten Namen zurück zum User-Objekt (mit gleichem Dedup-Suffix wie oben).
+// Löst den getippten Wert robust zum User auf (Name-Teilstring/Case/SteamID) — siehe matchUser.
 function resolveUserInput(inputId, users) {
-  const v = (el(inputId)?.value || '').trim().toLowerCase();
-  if (!v) return null;
-  const seen = new Set();
-  for (const u of (users || [])) {
-    let key = u.name || '';
-    if (seen.has(key)) key = `${u.name} (…${(u.steamId || u.discordId || '').slice(-4)})`;
-    seen.add(key);
-    if (key.toLowerCase() === v) return u;
-  }
-  return (users || []).find((u) => (u.name || '').toLowerCase() === v) || null;
+  return matchUser(el(inputId)?.value, users || USER_POOLS[inputId]);
 }
 
 async function admLoadUserInfo() {
