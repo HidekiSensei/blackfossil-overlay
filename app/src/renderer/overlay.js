@@ -677,6 +677,10 @@ let deafened = false;                                   // eingehenden Ton stumm
 let amDead = false;                                     // tot / kein Dino → Voice komplett aus (weder hören noch senden)
 let micDeviceId = localStorage.getItem('bf-mic-dev') || '';   // gewähltes Mikrofon
 let spkDeviceId = localStorage.getItem('bf-spk-dev') || '';   // gewähltes Ausgabegerät
+// 🧭 Räumlicher Ton (3D-Panning + Unterwasser-Muffling), Default AUS. Bei AUS läuft exakt der bisherige
+// Pfad (webAudioMix + setVolume). Bei AN baut das Overlay je Sprecher einen eigenen WebAudio-Graph
+// (source→panner→lowpass→gain). Wird beim Verbinden gelesen (webAudioMix wird dann abgeschaltet).
+let voiceSpatial = localStorage.getItem('bf-voice-spatial') === '1';
 let aiSpawnMode = false;                                // Karten-Klick-Spawn aktiv
 let mapOpen = false;
 
@@ -879,6 +883,7 @@ async function init() {
   el('deafenBtn').onclick = () => toggleDeafen();
   el('micDevSel').onchange = (e) => setMicDevice(e.target.value);
   el('spkDevSel').onchange = (e) => setSpkDevice(e.target.value);
+  { const sc = el('spatialChk'); if (sc) { sc.checked = voiceSpatial; sc.onchange = (e) => setVoiceSpatial(e.target.checked); } }
   enumAudioDevices();
   if (navigator.mediaDevices) navigator.mediaDevices.addEventListener('devicechange', enumAudioDevices);
 
@@ -1086,6 +1091,7 @@ function updateGoldenHud() {
 // R = Reichweite des Sprechers (m). Rw = R*100 Welt-Einheiten. vol = clamp(2*(1 - d/Rw)).
 function updateProximityVolumes() {
   if (!room) return;
+  if (voiceSpatial) { updateSpatial(); return; } // 3D-Pfad steuert Gain/Panner/Lowpass selbst
   for (const p of room.remoteParticipants.values()) {
     const pos = players.find((pl) => pl.steamId === p.identity);
     let vol = 1;
@@ -1100,6 +1106,79 @@ function updateProximityVolumes() {
     const factor = (deafened || amDead) ? 0 : masterGain;   // tot → du hörst niemanden
     try { p.setVolume(vol * g * factor); } catch {}
   }
+}
+
+// ── 🧭 Räumlicher Ton (Beta, opt-in) ─────────────────────────────────────────
+// Je Sprecher ein eigener WebAudio-Graph: MediaElement → PannerNode (Richtung aus z+heading) →
+// BiquadFilter (Lowpass = Unterwasser-Muffling des SPRECHERS) → GainNode (Proximity/Deafen). Wird nur
+// benutzt, wenn voiceSpatial an ist (dann connectet der Raum mit webAudioMix:false).
+let spatialCtx = null;                 // gemeinsamer AudioContext für alle Remote-Sprecher
+const spatialNodes = new Map();        // identity → { el, src, panner, lowpass, gain }
+const SPATIAL_SCALE = 0.001;           // Welt-Einheiten → Audio-Meter (nur Richtung zählt, Rolloff=0)
+const UNDERWATER_HZ = 700;             // Lowpass-Grenzfrequenz unter Wasser (dumpf)
+const OPEN_HZ = 20000;                 // offen (keine Dämpfung)
+function ensureSpatialCtx() {
+  if (!spatialCtx) { try { spatialCtx = new (window.AudioContext || window.webkitAudioContext)(); } catch {} }
+  if (spatialCtx && spatialCtx.state === 'suspended') spatialCtx.resume().catch(() => {});
+  return spatialCtx;
+}
+function spatialAttach(track, identity) {
+  const ctx = ensureSpatialCtx(); if (!ctx) return;
+  const el = track.attach(); el.autoplay = true; el.muted = false;
+  if (spkDeviceId && el.setSinkId) el.setSinkId(spkDeviceId).catch(() => {});
+  document.body.appendChild(el);
+  let src; try { src = ctx.createMediaElementSource(el); } catch { return; } // Element-Audio in den Graph umleiten
+  const panner = ctx.createPanner();
+  panner.panningModel = 'HRTF'; panner.distanceModel = 'linear';
+  panner.refDistance = 1; panner.maxDistance = 100000; panner.rolloffFactor = 0; // Distanz-Gain macht der GainNode
+  const lowpass = ctx.createBiquadFilter(); lowpass.type = 'lowpass'; lowpass.frequency.value = OPEN_HZ;
+  const gain = ctx.createGain(); gain.gain.value = 0;
+  src.connect(panner); panner.connect(lowpass); lowpass.connect(gain); gain.connect(ctx.destination);
+  spatialNodes.set(identity, { el, src, panner, lowpass, gain });
+}
+function spatialDetach(identity, track) {
+  const n = spatialNodes.get(identity);
+  if (n) { try { n.src.disconnect(); n.panner.disconnect(); n.lowpass.disconnect(); n.gain.disconnect(); } catch {} spatialNodes.delete(identity); }
+  if (track) track.detach().forEach((e) => e.remove());
+}
+function updateSpatial() {
+  const ctx = spatialCtx; if (!ctx) return;
+  const now = ctx.currentTime;
+  // Blickrichtung von „mir" (Grad → Forward/Right-Basis wie in map.js: worldVec = (cos(h-90), sin(h-90))).
+  const hr = ((me && me.heading != null ? me.heading : 0) - 90) * Math.PI / 180;
+  const fx = Math.cos(hr), fy = Math.sin(hr);   // Forward (Welt)
+  const rx = fy, ry = -fx;                       // Right = Forward um -90° gedreht
+  for (const [identity, n] of spatialNodes) {
+    const pos = players.find((pl) => pl.steamId === identity);
+    // Richtung relativ zu meiner Blickrichtung (WebAudio: +x rechts, -z vorn, +y oben).
+    let px = 0, pz = -1;
+    if (me && pos) {
+      const dx = pos.x - me.x, dy = pos.y - me.y;
+      const fwd = dx * fx + dy * fy, right = dx * rx + dy * ry;
+      px = right * SPATIAL_SCALE; pz = -fwd * SPATIAL_SCALE;
+    }
+    try { n.panner.positionX.setValueAtTime(px, now); n.panner.positionY.setValueAtTime(0, now); n.panner.positionZ.setValueAtTime(pz, now); }
+    catch { n.panner.setPosition(px, 0, pz); }
+    // Unterwasser-Muffling des Sprechers (weicher Übergang, kein Klick).
+    const targetHz = (pos && pos.isUnderwater) ? UNDERWATER_HZ : OPEN_HZ;
+    try { n.lowpass.frequency.setTargetAtTime(targetHz, now, 0.08); } catch { n.lowpass.frequency.value = targetHz; }
+    // Proximity-Gain: gleiche Rechnung wie updateProximityVolumes.
+    let vol = 1;
+    if (me && pos) {
+      const Rw = (remoteRanges[identity] ?? DEFAULT_RANGE) * UNITS_PER_M;
+      const d = Math.hypot(pos.x - me.x, pos.y - me.y);
+      vol = Math.max(0, Math.min(1, 2 * (1 - d / Rw)));
+    }
+    const g = userGain[identity] ?? 1;
+    const factor = (deafened || amDead) ? 0 : masterGain;
+    try { n.gain.gain.setTargetAtTime(vol * g * factor, now, 0.05); } catch { n.gain.gain.value = vol * g * factor; }
+  }
+}
+// Räumlichen Ton umschalten. webAudioMix wird beim Verbinden gesetzt → für den Wechsel neu verbinden.
+function setVoiceSpatial(on) {
+  voiceSpatial = !!on;
+  try { localStorage.setItem('bf-voice-spatial', voiceSpatial ? '1' : '0'); } catch {}
+  if (voiceConnected) showToast('🧭 Räumlicher Ton ' + (voiceSpatial ? 'an' : 'aus') + ' — zum Übernehmen Voice kurz trennen & neu verbinden.', 'info');
 }
 
 // ── Info-Box: Namen der Spieler, die man gerade hört (active speakers) ───────
@@ -6788,7 +6867,9 @@ async function connect({ token, url }) {
   // adaptiveStream/dynacast: nur für Video sinnvoll; für reines Audio aus (vermeidet
   //   pausierte Subscriptions → Cutouts).
   room = new Room({
-    adaptiveStream: false, dynacast: false, webAudioMix: true,
+    // webAudioMix AUS, wenn räumlicher Ton an ist → das Overlay baut den WebAudio-Graph selbst
+    // (Panner/Lowpass/Gain je Sprecher) statt LiveKits internem Mix + setVolume.
+    adaptiveStream: false, dynacast: false, webAudioMix: !voiceSpatial,
     // 🎧 Bandbreite senken (Voice-Server-Fanout war ~5 Mbit/s/User → Jitter/„roboterhaft"):
     //  • red:false  — keine redundanten Audio-Kopien (halbiert die Audio-Bitrate; Paketverlust ist
     //                 ohnehin minimal, RED bringt hier kaum was).
@@ -6817,21 +6898,26 @@ async function connect({ token, url }) {
         if (msg.t === 'range' && participant) { remoteRanges[participant.identity] = msg.r; updateProximityVolumes(); }
       } catch {}
     })
-    .on(RoomEvent.TrackSubscribed, (track) => {
+    .on(RoomEvent.TrackSubscribed, (track, _pub, participant) => {
       if (track.kind === Track.Kind.Audio) {
-        // Mit webAudioMix mutet LiveKit das Element selbst und spielt über den
-        // AudioContext. Deafen/Lautstärke laufen daher über setVolume (s.u.),
-        // nicht über a.muted.
-        const a = track.attach(); a.autoplay = true;
-        if (spkDeviceId && a.setSinkId) a.setSinkId(spkDeviceId).catch(() => {});
-        document.body.appendChild(a);
+        if (voiceSpatial) {
+          spatialAttach(track, participant && participant.identity); // eigener 3D-Graph
+        } else {
+          // Mit webAudioMix mutet LiveKit das Element selbst und spielt über den
+          // AudioContext. Deafen/Lautstärke laufen daher über setVolume (s.u.),
+          // nicht über a.muted.
+          const a = track.attach(); a.autoplay = true;
+          if (spkDeviceId && a.setSinkId) a.setSinkId(spkDeviceId).catch(() => {});
+          document.body.appendChild(a);
+        }
         updateProximityVolumes();
       }
     })
-    .on(RoomEvent.TrackUnsubscribed, (track) => {
+    .on(RoomEvent.TrackUnsubscribed, (track, _pub, participant) => {
       // Audio-Elemente beim Verlassen wieder aus dem DOM nehmen (sonst Memory-Leak)
       if (track.kind === Track.Kind.Audio) {
-        track.detach().forEach((el) => el.remove());
+        if (voiceSpatial) spatialDetach(participant && participant.identity, track);
+        else track.detach().forEach((el) => el.remove());
         updateProximityVolumes();
       }
     });
