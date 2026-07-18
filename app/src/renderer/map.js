@@ -450,6 +450,13 @@ function drawGroupMember(ctx, px, py, p, scale) {
     ctx.font = `bold ${11 * scale}px system-ui`; ctx.textAlign = 'center'; ctx.textBaseline = 'bottom';
     ctx.strokeStyle = 'rgba(0,0,0,0.75)'; ctx.lineWidth = 3 * scale; ctx.strokeText(p.name, px, py - 9 * scale);
     ctx.fillStyle = col; ctx.fillText(p.name, px, py - 9 * scale);
+    // Staff sieht bei gesetztem Rollplay-Namen zusätzlich den echten Namen (Backend liefert
+    // realName nur an Staff/den Spieler selbst) — kleiner & gedämpft unter dem RP-Namen.
+    if (p.realName && p.realName !== p.name) {
+      ctx.font = `${9 * scale}px system-ui`;
+      ctx.strokeText(p.realName, px, py + 2 * scale);
+      ctx.fillStyle = 'rgba(255,255,255,0.65)'; ctx.fillText(p.realName, px, py + 2 * scale);
+    }
   }
 }
 function drawPlayer(ctx, px, py, p, scale) {
