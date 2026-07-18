@@ -1662,9 +1662,28 @@ let admSelectedSteamId = null;
 // USER_POOLS: input-id → User-Array, das dieses Feld durchsucht.
 const USER_POOLS = {};
 
+// userLabel baut den Dropdown-Anzeigetext "RP (Steam, Discord)". Fehlende Teile fallen graziös
+// weg: ohne RP-Name → "Steam (Discord)", ohne Steam → "RP (Discord)" usw. So sieht Staff alle
+// gesetzten Namen auf einen Blick, und die Substring-Suche (das Label enthält alle drei) trifft
+// jeden der drei Namen.
+function userLabel(u) {
+  const rp = (u.rpName || '').trim();
+  const steam = (u.ingameName || '').trim();
+  const disc = (u.discordName || u.name || '').trim();
+  const primary = rp || steam || disc || u.steamId || '';
+  const extras = [];
+  if (rp) { if (steam) extras.push(steam); if (disc && disc !== steam) extras.push(disc); }
+  else if (steam) { if (disc && disc !== steam) extras.push(disc); }
+  return extras.length ? `${primary} (${extras.join(', ')})` : primary;
+}
+// userNames = alle gesetzten Namen eines Users (RP/Steam/Discord/Legacy) klein geschrieben.
+function userNames(u) {
+  return [u.rpName, u.ingameName, u.discordName, u.name].filter(Boolean).map((s) => s.toLowerCase());
+}
+
 // matchUser löst den getippten/eingefügten Wert robust zum User auf: SteamID/DiscordID exakt
-// (Copy-Paste!), Name exakt (case-insensitive), Dedup-Suffix "Name (…1234)", sonst eindeutiger
-// Teilstring. Ersetzt den früheren exakten Map-Lookup, an dem Tippfehler/Teilnamen scheiterten.
+// (Copy-Paste!), kombiniertes Label bzw. einer der drei Namen exakt (case-insensitive),
+// Dedup-Suffix "… (…1234)", sonst eindeutiger Teilstring über RP/Steam/Discord.
 function matchUser(v, users) {
   v = (v || '').trim();
   users = users || [];
@@ -1672,16 +1691,18 @@ function matchUser(v, users) {
   const lv = v.toLowerCase();
   let m = users.find((u) => u.steamId === v || u.discordId === v);
   if (m) return m;
-  const exact = users.filter((u) => (u.name || '').toLowerCase() === lv);
+  const label = users.filter((u) => userLabel(u).toLowerCase() === lv);
+  if (label.length === 1) return label[0];
+  const exact = users.filter((u) => userNames(u).includes(lv));
   if (exact.length === 1) return exact[0];
   const suf = v.match(/\(…(\w{4})\)\s*$/);
   if (suf) {
-    m = users.find((u) => (u.steamId || u.discordId || '').slice(-4) === suf[1] && lv.startsWith((u.name || '').toLowerCase()));
+    m = users.find((u) => (u.steamId || u.discordId || '').slice(-4) === suf[1] && lv.startsWith(userLabel(u).toLowerCase()));
     if (m) return m;
   }
-  const sub = users.filter((u) => (u.name || '').toLowerCase().includes(lv) || (u.steamId || '').includes(v));
+  const sub = users.filter((u) => userLabel(u).toLowerCase().includes(lv) || (u.steamId || '').includes(v));
   if (sub.length === 1) return sub[0];
-  return exact[0] || null; // mehrere Namensgleiche → erster; sonst nichts
+  return (label[0] || exact[0]) || null; // mehrdeutig → erster Kandidat; sonst nichts
 }
 
 // filterDatalist befüllt das zum Input gehörende <datalist> mit den Top-Treffern zur aktuellen
@@ -1693,14 +1714,16 @@ function filterDatalist(inp) {
   if (!dl) return;
   const users = USER_POOLS[inp.id] || adminUsers || [];
   const q = (inp.value || '').trim().toLowerCase();
+  // Substring über alle drei Namen: das Label enthält RP+Steam+Discord, deshalb reicht ein
+  // includes() auf dem Label (+ SteamID/DiscordID fürs Copy-Paste).
   const hits = (q
-    ? users.filter((u) => (u.name || '').toLowerCase().includes(q) || (u.steamId || '').includes(q) || (u.discordId || '').includes(q))
+    ? users.filter((u) => userLabel(u).toLowerCase().includes(q) || (u.steamId || '').includes(q) || (u.discordId || '').includes(q))
     : users
   ).slice(0, 50);
   const seen = new Set();
   dl.innerHTML = hits.map((u) => {
-    let key = u.name || u.steamId || '';
-    if (seen.has(key)) key = `${u.name} (…${(u.steamId || u.discordId || '').slice(-4)})`;
+    let key = userLabel(u);
+    if (seen.has(key)) key = `${key} (…${(u.steamId || u.discordId || '').slice(-4)})`;
     seen.add(key);
     return `<option value="${escapeHtml(key)}"></option>`;
   }).join('');
@@ -4921,6 +4944,12 @@ async function renderSkinEditor() {
   const obsidian = myAboIdx() >= 3;
   const canGender = myAboIdx() >= 2;         // Geschlechtswechsel erst ab Bernstein
   const genderTip = canGender ? 'Geschlecht wechseln (Respawn)' : '🔒 Geschlechtswechsel ist ab Rang Bernstein freigeschaltet';
+  // Aktuellen Rollplay-Namen aus den Live-Positionen vorbelegen (globales `players`, NICHT das
+  // hier lokal geshadowte `me`). realName ist nur gesetzt, wenn ein RP-Name aktiv ist → dann ist
+  // name der RP-Name und rpRole die Rolle.
+  const selfPos = (typeof players !== 'undefined' && Array.isArray(players)) ? players.find((p) => p.isYou) : null;
+  const rpPrefillName = (selfPos && selfPos.realName) ? (selfPos.name || '') : '';
+  const rpPrefillRole = (selfPos && selfPos.rpRole) ? selfPos.rpRole : '';
 
   const swatches = SKIN_GROUPS.map(([k, l]) => `<label style="display:flex;justify-content:space-between;align-items:center;gap:8px;padding:6px 8px;background:rgba(255,255,255,0.04);border-radius:8px;font-size:13px;cursor:pointer"><span style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${l}</span><input type="color" data-col="${k}" value="${linToHex(skinState.colors[k])}" style="width:40px;height:26px;border:0;background:none;cursor:pointer;flex:none"></label>`).join('');
   const liveMsg = skinPays
@@ -4928,6 +4957,14 @@ async function renderSkinEditor() {
     : '🟢 Änderungen werden live im Spiel übernommen';
   panel.innerHTML = `<h2>🎨 Skin Editor — ${me.dino}</h2>
     <div id="skLive" style="font-size:12px;color:${skinPays ? '#f59e0b' : '#22c55e'};margin:2px 0 14px">${liveMsg}</div>
+    <div class="sec-title">🎭 Rollplay-Name</div>
+    <div style="font-size:11px;color:var(--muted);margin:2px 0 8px">Andere Spieler sehen diesen Namen statt deines Steam-Namens. Leer speichern = zurücksetzen.</div>
+    <input id="rpName" maxlength="24" placeholder="Rollplay-Name…" value="${escapeHtml(rpPrefillName)}" style="width:100%;box-sizing:border-box;padding:8px;border-radius:6px;border:1px solid var(--border);background:var(--input-bg);color:#eee;margin-bottom:6px">
+    <input id="rpRole" maxlength="32" placeholder="Rolle (optional, z. B. Häuptling)…" value="${escapeHtml(rpPrefillRole)}" style="width:100%;box-sizing:border-box;padding:8px;border-radius:6px;border:1px solid var(--border);background:var(--input-bg);color:#eee;margin-bottom:6px">
+    <div style="display:flex;gap:6px;margin-bottom:14px">
+      <button id="rpSave" style="flex:1">💾 Rollplay speichern</button>
+      <button id="rpClear" class="secondary" style="width:auto;padding:8px 12px">Zurücksetzen</button>
+    </div>
     <div class="sec-title">Geschlecht ${canGender ? '' : '<span style="color:var(--muted);font-weight:400;font-size:11px">🔒 ab Bernstein</span>'}</div>
     <div style="display:flex;gap:6px;margin:8px 0 14px">
       <button data-gender="Female" title="${genderTip}" style="flex:1${canGender ? '' : ';opacity:.5'}" class="${skinState.gender === 'Female' ? '' : 'secondary'}">♀ Female</button>
@@ -4959,6 +4996,8 @@ async function renderSkinEditor() {
     <div id="skTplList"></div>
     <button class="closeFeature secondary" style="width:100%;margin-top:12px">Schließen</button>`;
   panel.querySelector('.closeFeature').onclick = closeAllFeatures;
+  el('rpSave').onclick = () => saveRpName();
+  el('rpClear').onclick = () => { el('rpName').value = ''; el('rpRole').value = ''; saveRpName(); };
   el('skTplSave').onclick = () => saveSkinTemplate();
   el('skShare').onclick = () => copySkinCode();
   el('skImportBtn').onclick = () => importSkinCode(el('skImport').value);
@@ -4975,6 +5014,23 @@ async function renderSkinEditor() {
   const zin = el('skZombie');
   if (obsidian) zin.oninput = () => { el('skZombieVal').textContent = Math.round(zin.value * 100) + '%'; clearTimeout(zombieTimer); zombieTimer = setTimeout(() => setZombie(parseFloat(zin.value)), 500); };
   else zin.onclick = () => showToast('🧟 Der Zombie-Look ist exklusiv für Obsidian.', 'error');
+}
+// Rollplay-Namen setzen/löschen (leerer Name = zurücksetzen). Das Backend ersetzt damit den
+// angezeigten Namen für alle Spieler; Staff/Mods sehen zusätzlich den echten Namen.
+async function saveRpName() {
+  const name = (el('rpName')?.value || '').trim();
+  const role = (el('rpRole')?.value || '').trim();
+  const btn = el('rpSave'); if (btn) btn.disabled = true;
+  try {
+    const r = await fetch(`${config.tokenBase}/me/rpname`, {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${sessionToken}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ name, role }),
+    });
+    const d = await r.json(); if (!r.ok) throw new Error(apiErr(d));
+    showToast(d.set ? `🎭 Rollplay-Name: ${d.name}` : '🎭 Rollplay-Name zurückgesetzt', 'success');
+  } catch (e) { showToast(e.message || 'Fehler', 'error'); }
+  finally { if (btn) btn.disabled = false; }
 }
 // Geschlecht wechseln: The Isle kann das nur per Respawn → /me/gender (selber Dino,
 // selbes Wachstum, neues Geschlecht), danach Skin erneut anwenden (Farben behalten).
