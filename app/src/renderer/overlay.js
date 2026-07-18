@@ -1125,6 +1125,7 @@ function audibleVol(steamId) {
   return vol * g * factor;
 }
 const OBSIDIAN_HEX = '#c4b5fd'; // Obsidian-Tier-Textfarbe (vgl. .tier-Obsidian in overlay.html)
+const DUTY_RED = '#ff3b3b';    // Teamler im Dienst-Modus → rot (klar als Admin/Dienst erkennbar)
 function updateSpeakingBox(speakers) {
   const box = el('speakingBox'); if (!box) return;
   const now = Date.now();
@@ -1142,13 +1143,14 @@ function updateSpeakingBox(speakers) {
   box.style.display = '';
   // Farb-/Namensregel für Teamler (sonst stechen sie durch ihre Rollenfarbe sofort heraus):
   // • Im Dienst-Modus (pinker Admin-Skin) → Klarname (Backend liefert bei onDuty schon den echten
-  //   Namen) in der Team-Rollenfarbe → klar als Admin erkennbar.
+  //   Namen) in ROT → klar als Admin/Dienst erkennbar.
   // • Außer Dienst → RP-Name (sonst echter Name) in Obsidian-Lila → wirkt wie ein normaler
   //   Top-Abonnent, die auffällige Team-Rollenfarbe wird verborgen.
   // • Alle anderen → Name in ihrer Discord-Rollenfarbe wie gehabt.
   box.innerHTML = `🔊 ${items.map(({ nm, color, team, onDuty }) => {
     let hex = (color && color > 0) ? '#' + (color >>> 0).toString(16).padStart(6, '0') : null;
-    if (team && !onDuty) hex = OBSIDIAN_HEX;                  // außer Dienst: Rollenfarbe durch Obsidian ersetzen
+    if (team && onDuty) hex = DUTY_RED;                      // im Dienst: rot (Admin/Dienst)
+    else if (team && !onDuty) hex = OBSIDIAN_HEX;            // außer Dienst: Rollenfarbe durch Obsidian ersetzen
     return hex ? `<span style="color:${hex}">${escapeHtml(nm)}</span>` : escapeHtml(nm);
   }).join(', ')}`;
 }
