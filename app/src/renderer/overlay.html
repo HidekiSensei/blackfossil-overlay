@@ -1274,7 +1274,7 @@
   <!-- Admin-Panel (eigenständiges Modal, NUR Admins — kein Support) -->
   <div id="serverPanel">
     <button id="serverCloseBtn" class="secondary" style="position:absolute;top:16px;right:18px;flex:none;width:auto;padding:6px 12px">✕</button>
-    <h2>🖥️ Administration <span style="font-weight:400;font-size:12px;color:var(--muted)">— nur Admin</span></h2>
+    <h2>🖥️ Admin <span style="font-weight:400;font-size:12px;color:var(--muted)">— Owner &amp; Admins</span></h2>
     <div class="admin-tabs" id="serverTabs">
       <button data-stab="welt">🌍 Welt</button>
       <button data-stab="ai" class="secondary">🤖 AI</button>
@@ -1314,7 +1314,7 @@
 
   <div id="adminPanel">
     <button id="adminCloseBtn" class="secondary" style="position:absolute;top:16px;right:18px;flex:none;width:auto;padding:6px 12px">✕</button>
-    <h2>🛡️ Moderation</h2>
+    <h2>🛡️ Team <span style="font-weight:400;font-size:12px;color:var(--muted)">— Moderatoren &amp; Supporter</span></h2>
     <div class="set-block" id="dutyBlock" style="display:none;margin-bottom:12px;border:1px solid rgba(236,72,153,0.4);border-radius:10px;padding:12px;background:rgba(236,72,153,0.08)">
       <div class="col-head" style="margin:0 0 4px">🩷 Dienst-Modus</div>
       <div style="font-size:11px;color:var(--muted);margin-bottom:9px">Als Moderator/Supporter musst du den Dienst-Modus einschalten, um die Werkzeuge zu nutzen. Friert deine Vitals ein (kein Verhungern) und legt den Admin-Skin an. Erneut klicken = aus. Du musst lebend auf einem Dino sein.</div>
@@ -1506,8 +1506,8 @@
       <button class="dock-btn" data-act="map" aria-label="Karte"><span>Karte</span></button>
       <button class="dock-btn" data-act="skin" aria-label="Skin"><span>Skin</span></button>
       <button class="dock-btn" data-act="settings" aria-label="Einstellungen"><span>Settings</span></button>
-      <button class="dock-btn" id="dockAdmin" data-act="admin" aria-label="Moderation" style="display:none"><span>Moderation</span></button>
-      <button class="dock-btn" id="dockServer" data-act="server" aria-label="Administration" style="display:none"><span>Administration</span></button>
+      <button class="dock-btn" id="dockAdmin" data-act="admin" aria-label="Team" style="display:none"><span>Team</span></button>
+      <button class="dock-btn" id="dockServer" data-act="server" aria-label="Admin" style="display:none"><span>Admin</span></button>
       <div class="dock-sep"></div>
       <button class="dock-btn dock-close" id="dockClose" aria-label="Schließen & weiterspielen"><span>Schließen</span></button>
     </div>
