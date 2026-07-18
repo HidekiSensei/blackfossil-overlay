@@ -2265,7 +2265,7 @@ async function loadAdminUsers() {
     // Die drei Admin-Suchfelder teilen sich admUserList und durchsuchen die volle User-Liste.
     // Das Datalist wird NICHT mehr mit allen ~1000 Optionen vorbefüllt (Chromium zeigt die dann
     // nicht zuverlässig) — filterDatalist füllt es beim Tippen/Fokus mit den Top-Treffern.
-    for (const id of ['admUserSearch', 'msgUserSearch', 'giftUserSearch']) USER_POOLS[id] = adminUsers;
+    for (const id of ['admUserSearch', 'msgUserSearch', 'giftUserSearch', 'followUserSearch']) USER_POOLS[id] = adminUsers;
     adminUserMap = new Map(); // nur noch Back-Compat; Auflösung läuft über matchUser
     for (const u of adminUsers) adminUserMap.set(u.name, u);
   } catch {}
