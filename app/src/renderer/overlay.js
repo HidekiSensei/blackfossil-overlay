@@ -1880,8 +1880,13 @@ function paRenderTable() {
       const datum = t.toLocaleDateString('de-DE', { day: '2-digit', month: '2-digit' });
       const [ico, lbl] = PA_VIA[it.via] || ['•', it.via || ''];
       const det = paDetails(it.details);
-      // actorSteam ist nur gesetzt, wenn jemand ANDERES gehandelt hat (Staff) — dann sichtbar machen.
-      const actor = it.actorSteam ? `<div style="font-size:10px;opacity:.7">durch ${escapeHtml(it.actorSteam)}</div>` : '';
+      // actorSteam ist nur gesetzt, wenn jemand ANDERES gehandelt hat (Staff, oder Combat-Angreifer
+      // /-Killer). Namen statt roher SteamID: Discord → In-Game → SteamID (Rest im Tooltip).
+      const actorLabel = it.actorDiscordName || it.actorName || it.actorSteam;
+      const actorTip = [it.actorSteam && 'Steam: ' + it.actorSteam, it.actorName && 'Ingame: ' + it.actorName].filter(Boolean).join(' · ');
+      const actor = it.actorSteam
+        ? `<div style="font-size:10px;opacity:.7" title="${escapeHtml(actorTip)}">durch ${escapeHtml(actorLabel)}${it.actorDiscordName ? ' 🎮' : ''}</div>`
+        : '';
       const td = 'padding:5px 8px;vertical-align:top';
       return `<tr style="border-top:1px solid var(--border)">
         <td style="${td};white-space:nowrap" title="${escapeHtml(t.toLocaleString('de-DE'))}">${zeit}<div style="font-size:10px;opacity:.6">${datum}</div></td>
