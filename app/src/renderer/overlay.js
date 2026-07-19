@@ -1191,16 +1191,18 @@ function ensureVoiceIRs(ctx) {
   if (godVoiceIR && identityIR) return;
   identityIR = ctx.createBuffer(1, 1, ctx.sampleRate);
   identityIR.getChannelData(0)[0] = 1; // trockener Durchlass
-  const dur = 1.3, n = Math.max(1, Math.floor(ctx.sampleRate * dur));
-  const pre = Math.floor(ctx.sampleRate * 0.022); // ~22ms Predelay → dezente Weite („von oben")
+  const dur = 1.0, n = Math.max(1, Math.floor(ctx.sampleRate * dur));
+  const pre = Math.floor(ctx.sampleRate * 0.02); // ~20ms Predelay → Hauch von Weite („von oben")
   godVoiceIR = ctx.createBuffer(2, n, ctx.sampleRate);
   for (let ch = 0; ch < 2; ch++) {
     const d = godVoiceIR.getChannelData(ch);
-    d[0] = 0.9; // Direktsignal dominiert klar → Sprache sauber, Effekt nur ein Hauch
+    d[0] = 0.95; // Direktsignal klar dominant → Stimme sauber
+    // Schweif SEHR leise: die Energie summiert sich über zehntausende Taps auf, daher muss die
+    // Pro-Sample-Amplitude winzig sein (~0.005), sonst wirkt der Hall viel zu „nass".
     for (let i = 1; i < n; i++) {
       if (i < pre) { d[i] = 0; continue; }
       const t = (i - pre) / (n - pre);
-      d[i] = (Math.random() * 2 - 1) * Math.pow(1 - t, 3.2) * 0.07; // sehr dezenter, schnell abklingender Schweif
+      d[i] = (Math.random() * 2 - 1) * Math.pow(1 - t, 3.0) * 0.005; // nur ein Hauch Raum
     }
   }
 }
