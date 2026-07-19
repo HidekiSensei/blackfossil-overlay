@@ -306,6 +306,8 @@ const DEFAULT_RANGE = 10;     // bis Reichweite empfangen wird
 // Mikros aus. Lokal pro Hörer gespeichert, unabhängig vom Distanz-Verhalten.
 let userGain = {};            // identity(steamId) -> Faktor
 try { userGain = JSON.parse(localStorage.getItem('bf-user-gain') || '{}'); } catch { userGain = {}; }
+// 3D-Stärke ist EINE persönliche Einstellung für alle, die man hört (globaler Regler
+// `spatial3dStrength`) — bewusst KEIN Pro-Spieler-Override mehr (war zu fummelig).
 // Master-Lautstärke für ALLE Spieler (0..2) — Regler über der Spielerliste.
 let masterGain = (parseFloat(localStorage.getItem('bf-master-gain')) || 1);
 // Eigene Mikrofon-Verstärkung (0..2) — wird per Web-Audio-GainNode auf den
@@ -726,8 +728,15 @@ let micEnabled = false;
 let settingsOpen = false;
 let deafened = false;                                   // eingehenden Ton stummschalten
 let amDead = false;                                     // tot / kein Dino → Voice komplett aus (weder hören noch senden)
+let godVoiceId = '';                                    // steamId des aktiven Gottstimme-Sprechers ('' = keine Durchsage) — aus /positions
+let godVoiceMine = false;                               // ob ICH gerade die Gottstimme sende (Admin-Button-Zustand)
+let godVoiceReverbActive = false;                       // Himmels-Hall bei der AKTIVEN Durchsage an? (aus /positions, für alle konsistent)
+let godVoiceReverbPref = localStorage.getItem('bf-godvoice-reverb') !== '0'; // Admin-Wahl beim Starten (Default an); wird mitgesendet
 let micDeviceId = localStorage.getItem('bf-mic-dev') || '';   // gewähltes Mikrofon
 let spkDeviceId = localStorage.getItem('bf-spk-dev') || '';   // gewähltes Ausgabegerät
+// serverVoice (aus /token): Das Backend steuert die Proximity-Subscriptions selbst → Client verbindet
+// mit autoSubscribe:false, „wer hört wen" liegt beim Backend. AUS = bisher (Client abonniert alle).
+let serverVoice = false;
 let aiSpawnMode = false;                                // Karten-Klick-Spawn aktiv
 let mapOpen = false;
 
@@ -881,6 +890,8 @@ async function init() {
   el('adminCloseBtn').onclick = () => closeAdminPanel();
   { const b = el('serverCloseBtn'); if (b) b.onclick = () => closeServerPanel(); }
   document.querySelectorAll('#serverTabs [data-stab]').forEach((b) => { b.onclick = () => showServerTab(b.dataset.stab); });
+  { const b = el('godVoiceBtn'); if (b) b.onclick = () => toggleGodVoice(); }
+  { const c = el('godVoiceReverbChk'); if (c) { c.checked = godVoiceReverbPref; c.onchange = () => setGodVoiceReverbPref(c.checked); } }
   el('admUserLoad').onclick = () => admLoadUserInfo();
   el('admLightningBtn').onclick = () => admLightning();
   { const b = el('msgSendBtn'); if (b) b.onclick = () => admSendToast(); }
@@ -932,6 +943,12 @@ async function init() {
   // Master-Lautstärke für alle Spieler
   const mv = el('masterGain');
   if (mv) { mv.value = String(Math.round(masterGain * 100)); mv.oninput = (e) => setMasterGain(parseInt(e.target.value)); }
+  // 🧭 3D-Effektstärke
+  const s3 = el('spatial3d');
+  if (s3) { s3.value = String(Math.round(spatial3dStrength * 100)); s3.oninput = (e) => setSpatial3dStrength(parseInt(e.target.value)); }
+  // 🎛️ Kill-Switch für die Effekt-Kette (3D/Unterwasser/Gottstimme-Effekt) [BFT-287]
+  const fx = el('voiceFxChk');
+  if (fx) { fx.checked = voiceEffectsOn; fx.onchange = () => setVoiceEffects(fx.checked); }
 
   // Maustasten als Hotkey (für Push-to-Talk/Mute): während des Neubelegens Klick fangen
   window.addEventListener('mousedown', onRebindMouse, true);
@@ -1009,7 +1026,12 @@ function startPositionPolling() {
       if (res.ok) {
         const data = await res.json();
         players = data.players || [];
+        godVoiceId = data.godVoice || ''; // Gottstimme-Durchsage aktiv? (steamId des Sprechers)
+        godVoiceReverbActive = !!data.godVoiceReverb; // Himmels-Hall der aktiven Durchsage (server-gesynct)
         me = players.find((p) => p.isYou) || null;
+        // Button-Zustand an die Server-Wahrheit angleichen (Reconnect / Fremd-Abschaltung).
+        const gvMine = !!(godVoiceId && me && godVoiceId === me.steamId);
+        if (gvMine !== godVoiceMine) { godVoiceMine = gvMine; if (serverOpen && serverTab === 'godvoice') renderGodVoice(); }
         // Tot / kein Dino → Voice komplett aus (weder hören noch senden). Wechsel → Mic umschalten + Hinweis.
         const wasDead = amDead;
         amDead = !me || !!me.isDead;
@@ -1129,20 +1151,327 @@ function updateGoldenHud() {
 // R = Reichweite des Sprechers (m). Rw = R*100 Welt-Einheiten. vol = clamp(2*(1 - d/Rw)).
 function updateProximityVolumes() {
   if (!room) return;
+  // STABIL: LiveKit-Wiedergabe (webAudioMix) + setVolume. Deafen/Tot über factor=0. Der 3D-Graph
+  // (updateSpatial) ist vorerst deaktiviert — wird später sauber isoliert wieder aufgesetzt.
+  // Gottstimme nur „aktiv", wenn der Sprecher WIRKLICH präsent ist (ich selbst = Sprecher, oder er ist
+  // ein Remote-Teilnehmer) — sonst würde ein voreilig gesetztes Flag alle anderen grundlos ducken.
+  const iAmGod = !!(godVoiceId && me && godVoiceId === me.steamId);
+  const godActive = !!godVoiceId && (iAmGod || [...room.remoteParticipants.values()].some((rp) => rp.identity === godVoiceId));
   for (const p of room.remoteParticipants.values()) {
     const pos = players.find((pl) => pl.steamId === p.identity);
     let vol = 1;
     if (me && pos) {
       const Rw = (remoteRanges[p.identity] ?? DEFAULT_RANGE) * UNITS_PER_M;
       const d = Math.hypot(pos.x - me.x, pos.y - me.y);
-      vol = Math.max(0, Math.min(1, 2 * (1 - d / Rw)));
+      vol = Math.max(0, Math.min(1, 1 - d / Rw));
     }
-    // Pro-User-Grundlautstärke + Master-Regler obendrauf. Bei Deafen alles auf 0.
-    // Dank webAudioMix:true setzt setVolume einen GainNode → Werte >1 wirken wirklich.
     const g = userGain[p.identity] ?? 1;
-    const factor = (deafened || amDead) ? 0 : masterGain;   // tot → du hörst niemanden
-    try { p.setVolume(vol * g * factor); } catch {}
+    let out;
+    if (godActive && p.identity === godVoiceId) {
+      // Gottstimme: voll & reichweiten-unabhängig, durchdringt Deafen; respektiert Master + Tot.
+      out = amDead ? 0 : GODVOICE_GAIN * masterGain;
+    } else {
+      const factor = (deafened || amDead) ? 0 : masterGain;
+      out = vol * g * factor;
+      if (godActive) out *= GODVOICE_DUCK; // während einer Durchsage alle anderen absenken
+    }
+    try { p.setVolume(out); } catch {}
   }
+  updateSpatialPanners(); // 3D-Richtung + Unterwasser + Gottstimme-Effekt (hängt in LiveKits Kette; Gain macht setVolume oben)
+}
+
+// ── 🧭 Räumlicher Ton (IMMER an) ─────────────────────────────────────────────
+// Je Sprecher ein eigener WebAudio-Graph: MediaStreamSource → PannerNode (Richtung aus Position+heading)
+// → BiquadFilter (Lowpass = Unterwasser-Muffling des SPRECHERS) → perGain (Proximity/User) → spatialMaster
+// (gemeinsamer Deafen-/Tot-/Master-Gate) → Ausgang. Der Raum verbindet mit webAudioMix:false.
+let spatialCtx = null;                 // gemeinsamer AudioContext für alle Remote-Sprecher
+let spatialMaster = null;              // gemeinsamer Master-GainNode: Deafen/Tot/Master-Lautstärke
+const spatialNodes = new Map();        // identity → { src, panner, lowpass, gain }
+const SPATIAL_SCALE = 0.001;           // Welt-Einheiten → Audio-Meter (nur Richtung zählt, Rolloff=0)
+const SPATIAL_HEADING_OFF = 0;         // Grad: Blickrichtung→Panner. 0 (Test: +90 lag 90° zu weit rechts → 0°)
+const UNDERWATER_HZ = 380;             // Lowpass-Grenzfrequenz unter Wasser — deutlich dumpf/gedämpft
+const OPEN_HZ = 20000;                 // offen (keine Dämpfung)
+// ── Gottstimme-Durchsage (Admin) ─────────────────────────────────────────────
+const GODVOICE_GAIN = 0.5;             // Wiedergabe-Pegel des Durchsage-Sprechers (× Master) — bewusst leise + Limiter gegen Übersteuern
+const GODVOICE_DUCK = 0.15;            // Faktor, auf den alle ANDEREN Sprecher während der Durchsage abgesenkt werden
+// „Gott spricht vom Himmel": KEIN Verzerrer (klang übersteuert), sondern ein großer, weicher Hall.
+// Umgesetzt als ConvolverNode-Impulsantwort, die das Direktsignal (Dry-Spike bei t=0) UND einen langen,
+// exponentiell abklingenden Rausch-Schweif enthält → Reverb OHNE Parallel-Mix (passt in die Serien-Kette).
+let godVoiceIR = null;   // Impulsantwort für den Himmels-Hall (lazy je AudioContext)
+let identityIR = null;   // Ein-Sample-Impuls = Passthrough (Convolver „aus")
+function ensureVoiceIRs(ctx) {
+  if (godVoiceIR && identityIR) return;
+  identityIR = ctx.createBuffer(1, 1, ctx.sampleRate);
+  identityIR.getChannelData(0)[0] = 1; // trockener Durchlass
+  const dur = 1.0, n = Math.max(1, Math.floor(ctx.sampleRate * dur));
+  const pre = Math.floor(ctx.sampleRate * 0.02); // ~20ms Predelay → Hauch von Weite („von oben")
+  godVoiceIR = ctx.createBuffer(2, n, ctx.sampleRate);
+  for (let ch = 0; ch < 2; ch++) {
+    const d = godVoiceIR.getChannelData(ch);
+    d[0] = 0.95; // Direktsignal klar dominant → Stimme sauber
+    // Schweif SEHR leise: die Energie summiert sich über zehntausende Taps auf, daher muss die
+    // Pro-Sample-Amplitude winzig sein (~0.005), sonst wirkt der Hall viel zu „nass".
+    for (let i = 1; i < n; i++) {
+      if (i < pre) { d[i] = 0; continue; }
+      const t = (i - pre) / (n - pre);
+      d[i] = (Math.random() * 2 - 1) * Math.pow(1 - t, 3.0) * 0.005; // nur ein Hauch Raum
+    }
+  }
+}
+function spatialWake() { if (spatialCtx && spatialCtx.state === 'suspended') spatialCtx.resume().catch(() => {}); }
+function ensureSpatialCtx() {
+  if (!spatialCtx) {
+    try {
+      spatialCtx = new (window.AudioContext || window.webkitAudioContext)();
+      spatialMaster = spatialCtx.createGain();
+      spatialMaster.connect(spatialCtx.destination);
+      // Autoplay-Policy: der Context startet „suspended" → per Geste entsperren und wach HALTEN,
+      // sonst bleibt der ganze Graph stumm (man hört niemanden).
+      spatialCtx.addEventListener('statechange', spatialWake);
+      ['click', 'keydown', 'pointerdown'].forEach((ev) => window.addEventListener(ev, spatialWake, { passive: true }));
+    } catch {}
+  }
+  spatialWake();
+  return spatialCtx;
+}
+function spatialAttach(track, identity) {
+  const ctx = ensureSpatialCtx(); if (!ctx || !identity) return;
+  spatialDetach(identity); // evtl. alten Graph derselben identity räumen
+  // track.attach() erzeugt ein <audio>-Element, das die WebRTC-Pipeline TREIBT; createMediaElementSource
+  // leitet dessen Ton IN den Graph um (Element gibt dann nicht mehr direkt auf die Boxen). Reines
+  // MediaStreamSource bleibt bei Remote-Tracks in Chromium oft still — daher der Element-Weg.
+  const el = track.attach(); el.autoplay = true;
+  document.body.appendChild(el);
+  let src;
+  try { src = ctx.createMediaElementSource(el); } catch { try { el.remove(); } catch {} return; }
+  const panner = ctx.createPanner();
+  panner.panningModel = 'HRTF'; panner.distanceModel = 'linear';
+  panner.refDistance = 1; panner.maxDistance = 1e6; panner.rolloffFactor = 0; // Distanz-Gain macht perGain, nicht der Panner
+  const lowpass = ctx.createBiquadFilter(); lowpass.type = 'lowpass'; lowpass.frequency.value = OPEN_HZ;
+  const gain = ctx.createGain(); gain.gain.value = 0;
+  src.connect(panner); panner.connect(lowpass); lowpass.connect(gain); gain.connect(spatialMaster);
+  spatialNodes.set(identity, { el, src, panner, lowpass, gain });
+  if (spkDeviceId && ctx.setSinkId) ctx.setSinkId(spkDeviceId).catch(() => {}); // Ausgabegerät (falls Browser es kann)
+}
+function spatialDetach(identity) {
+  const n = identity && spatialNodes.get(identity);
+  if (!n) return;
+  try { n.src.disconnect(); n.panner.disconnect(); n.lowpass.disconnect(); n.gain.disconnect(); } catch {}
+  try { if (n.el) n.el.remove(); } catch {}
+  spatialNodes.delete(identity);
+}
+function updateSpatial() {
+  const ctx = spatialCtx; if (!ctx || !spatialMaster) return;
+  const now = ctx.currentTime;
+  // Deafen/Tot = HARTER Master-Gate (unabhängig davon, wen der Server subscribed); sonst Master-Lautstärke.
+  const master = (deafened || amDead) ? 0 : masterGain;
+  try { spatialMaster.gain.setTargetAtTime(master, now, 0.03); } catch { spatialMaster.gain.value = master; }
+  // Blickrichtung von „mir" → Welt-Forward/Right-Basis (gleiche -90°-Konvention wie Karte/Kompass).
+  const hr = ((me && me.heading != null ? me.heading : 0) + SPATIAL_HEADING_OFF) * Math.PI / 180;
+  const fx = Math.cos(hr), fy = Math.sin(hr);   // Forward (Welt)
+  const rx = -fy, ry = fx;                        // Right = Forward um +90° (L/R gespiegelt: vorn/hinten stimmte, links/rechts war getauscht)
+  const dbg = [`me:${me ? `x${me.x | 0} y${me.y | 0} h${Math.round(me.heading || 0)}` : 'NULL'} ctx:${ctx.state} master:${master.toFixed(2)} spk:${spatialNodes.size}`];
+  for (const [identity, n] of spatialNodes) {
+    const pos = players.find((pl) => pl.steamId === identity);
+    // Richtung relativ zu meiner Blickrichtung (WebAudio: +x rechts, -z vorn, +y oben).
+    let px = 0, pz = -1, dU = 0;
+    if (me && pos) {
+      const dx = pos.x - me.x, dy = pos.y - me.y;
+      const fwd = dx * fx + dy * fy, right = dx * rx + dy * ry;
+      px = right * SPATIAL_SCALE; pz = -fwd * SPATIAL_SCALE;
+      dU = Math.hypot(dx, dy);
+    }
+    try { n.panner.positionX.setValueAtTime(px, now); n.panner.positionY.setValueAtTime(0, now); n.panner.positionZ.setValueAtTime(pz, now); }
+    catch { try { n.panner.setPosition(px, 0, pz); } catch {} }
+    // Unterwasser-Muffling des Sprechers (weicher Übergang, kein Klick).
+    const targetHz = (pos && pos.isUnderwater) ? UNDERWATER_HZ : OPEN_HZ;
+    try { n.lowpass.frequency.setTargetAtTime(targetHz, now, 0.08); } catch { n.lowpass.frequency.value = targetHz; }
+    // Proximity-Gain je Sprecher (Deafen/Master liegt im spatialMaster).
+    let vol = 1;
+    if (me && pos) {
+      const Rw = (remoteRanges[identity] ?? DEFAULT_RANGE) * UNITS_PER_M;
+      vol = Math.max(0, Math.min(1, 1 - dU / Rw));
+    }
+    const g = userGain[identity] ?? 1;
+    try { n.gain.gain.setTargetAtTime(vol * g, now, 0.05); } catch { n.gain.gain.value = vol * g; }
+    const nm = (pos && (pos.name || pos.playerName)) || String(identity).slice(-4);
+    const side = px > 0.05 ? 'R' : px < -0.05 ? 'L' : 'C';
+    const frb = pz < -0.05 ? 'F' : pz > 0.05 ? 'B' : '·';
+    dbg.push(`${pos ? '' : '?'}${nm}  d=${Math.round(dU / UNITS_PER_M)}m vol=${vol.toFixed(2)} pan=${side}${frb}(${px.toFixed(2)})${(pos && pos.isUnderwater) ? ' UW' : ''}`);
+  }
+  renderVoiceDbg(dbg);
+}
+// F9-Debug-Panel: exakte Zahlen (Distanz/Gain/Pan je Sprecher) zum Tunen von Reichweite & 3D.
+let voiceDbgOn = false; // NUR für Admins, per F9 einblendbar — normale Spieler sehen das Panel NIE
+function renderVoiceDbg(rows) {
+  const box = el('voiceDbg'); if (!box) return;
+  if (!voiceDbgOn || !voiceConnected || !isAdmin) { box.style.display = 'none'; return; } // Admin-Gate
+  box.style.display = 'block';
+  box.textContent = rows.join('\n');
+}
+window.addEventListener('keydown', (e) => {
+  if (e.key !== 'F9' || !isAdmin) return; // F9-Toggle nur für Admins
+  voiceDbgOn = !voiceDbgOn;
+  const b = el('voiceDbg'); if (b && !voiceDbgOn) b.style.display = 'none';
+});
+
+// ── 🧭 Räumlicher Ton v2 (weniger invasiv) ───────────────────────────────────
+// webAudioMix BLEIBT AN (stabil, kein Rauschen). Wir hängen NUR einen PannerNode + Lowpass über
+// LiveKits offizielle setWebAudioPlugins-API in die bestehende Kette:
+//   source → [panner → lowpass] → gainNode(setVolume) → out
+// Kein eigener Graph, kein eigenes Element, keine Autoplay-Bastelei — LiveKit managt Quelle/Gain/
+// Lifecycle. LiveKit nutzt UNSEREN AudioContext (voiceCtx), damit die Nodes zusammenpassen.
+let voiceCtx = null;
+const spatialPlugins = new Map(); // identity → { panner, lowpass }
+// 3D-Effektstärke (0 = mono/mittig, 1 = normal, bis 1.5 überzeichnet). Skaliert die Panner-Auslenkung.
+let spatial3dStrength = (() => { const v = parseFloat(localStorage.getItem('bf-voice-3d-strength')); return isNaN(v) ? 1 : v; })();
+function setSpatial3dStrength(pct) {
+  spatial3dStrength = Math.max(0, Math.min(1.5, pct / 100));
+  try { localStorage.setItem('bf-voice-3d-strength', String(spatial3dStrength)); } catch {}
+  const lbl = el('spatial3dVal'); if (lbl) lbl.textContent = `${Math.round(spatial3dStrength * 100)}%`;
+  updateProximityVolumes(); // sofort wirksam (kein Neuverbinden)
+}
+// ── Gottstimme-Durchsage (Admin, im Admin-Tab „📣 Gottstimme") ────────────────
+// Startet/beendet die server-weite Durchsage über POST /voice/godvoice. Der echte Zustand kommt über
+// /positions (data.godVoice) zurück und steuert bei allen Clients Effekt + Ducken (updateProximityVolumes).
+async function setGodVoice(on) {
+  if (!sessionToken) return;
+  if (on && !voiceConnected) { showToast('⚠️ Erst dem Voice beitreten — sonst hört dich niemand.', 'warn'); return; }
+  try {
+    const res = await fetch(`${config.tokenBase}/voice/godvoice`, {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${sessionToken}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ on: !!on, reverb: godVoiceReverbPref }),
+    });
+    if (!res.ok) { showToast('Gottstimme fehlgeschlagen', 'error'); return; }
+    const data = await res.json().catch(() => ({}));
+    godVoiceMine = !!data.on;          // optimistisch; der nächste /positions-Poll bestätigt
+    renderGodVoice();
+    showToast(godVoiceMine ? '📣 Gottstimme AN — alle hören dich.' : 'Gottstimme aus.', godVoiceMine ? 'success' : 'info');
+  } catch { showToast('Gottstimme fehlgeschlagen', 'error'); }
+}
+function toggleGodVoice() { setGodVoice(!godVoiceMine); }
+// Himmels-Hall an/aus (Admin-Wahl). Läuft gerade MEINE Durchsage, sofort server-seitig nachziehen.
+function setGodVoiceReverbPref(on) {
+  godVoiceReverbPref = !!on;
+  try { localStorage.setItem('bf-godvoice-reverb', godVoiceReverbPref ? '1' : '0'); } catch {}
+  if (godVoiceMine) setGodVoice(true); // aktualisiert reverb server-seitig (alle Hörer sofort)
+  renderGodVoice();
+}
+function renderGodVoice() {
+  const btn = el('godVoiceBtn'); if (!btn) return;
+  btn.textContent = godVoiceMine ? '⏹️ Gottstimme beenden' : '📣 Gottstimme starten';
+  btn.classList.toggle('secondary', godVoiceMine);
+  const chk = el('godVoiceReverbChk'); if (chk) chk.checked = godVoiceReverbPref;
+  const hint = el('godVoiceHint');
+  if (hint) hint.textContent = !voiceConnected
+    ? '⚠️ Nicht im Voice verbunden — die Durchsage wird nicht übertragen.'
+    : (godVoiceMine ? '● Läuft — du wirst server-weit gehört.' : '');
+}
+function ensureVoiceCtx() {
+  if (!voiceCtx) {
+    try {
+      voiceCtx = new (window.AudioContext || window.webkitAudioContext)();
+      // 🔊 Ausgabegerät auf den CONTEXT setzen: bei webAudioMix läuft der Ton über den AudioContext,
+      // setSinkId auf den <audio>-Elementen ist wirkungslos. Ohne das hörten User mit Nicht-Standard-
+      // Ausgabegerät (Headset) nichts bzw. auf dem falschen Gerät. [BFT-287]
+      if (spkDeviceId && voiceCtx.setSinkId) voiceCtx.setSinkId(spkDeviceId).catch(() => {});
+      // Autoplay-Gate: bleibt der Context „suspended" (startAudio fehlgeschlagen), wäre ALLES dauerhaft
+      // stumm. Per Geste + statechange entsperren und wach halten. [BFT-287]
+      voiceCtx.addEventListener('statechange', voiceCtxWake);
+      ['click', 'keydown', 'pointerdown'].forEach((ev) => window.addEventListener(ev, voiceCtxWake, { passive: true }));
+    } catch {}
+  }
+  voiceCtxWake();
+  return voiceCtx;
+}
+function voiceCtxWake() { if (voiceCtx && voiceCtx.state === 'suspended') voiceCtx.resume().catch(() => {}); }
+// 🔀 Kill-Switch für die ganze Effekt-Kette (3D/Unterwasser/Gottstimme-Effekt). Default AN.
+// AUS = pures LiveKit-Playback wie vor 1.9 (Diagnose-/Rettungsschalter bei Knistern/Audio-Problemen).
+let voiceEffectsOn = localStorage.getItem('bf-voice-effects') !== '0';
+function setVoiceEffects(on) {
+  voiceEffectsOn = !!on;
+  try { localStorage.setItem('bf-voice-effects', voiceEffectsOn ? '1' : '0'); } catch {}
+  if (!voiceEffectsOn) {
+    for (const [, pl] of spatialPlugins) { try { pl.track.setWebAudioPlugins([]); } catch {} } // Ketten leeren → plain
+    spatialPlugins.clear();
+  } else if (room) {
+    for (const p of room.remoteParticipants.values()) {   // Ketten für alle aktiven Tracks neu aufbauen
+      for (const pub of p.audioTrackPublications.values()) { if (pub.track) attachSpatialPlugins(pub.track, p.identity); }
+    }
+  }
+  updateProximityVolumes();
+}
+function attachSpatialPlugins(track, identity) {
+  const ctx = voiceCtx; if (!voiceEffectsOn || !ctx || !identity || typeof track.setWebAudioPlugins !== 'function') return;
+  // 'equalpower' statt HRTF: HRTF ist eine Faltung PRO QUELLE — bei ~36 Sprechern neben dem laufenden
+  // Spiel führte das zu Audio-Underruns (Knistern). equalpower liefert weiter klares L/R-Panning bei
+  // einem Bruchteil der CPU. [BFT-287]
+  const panner = ctx.createPanner();
+  panner.panningModel = 'equalpower'; panner.distanceModel = 'linear';
+  panner.refDistance = 1; panner.maxDistance = 1e6; panner.rolloffFactor = 0; // Distanz-Gain macht setVolume, nicht der Panner
+  const lowpass = ctx.createBiquadFilter(); lowpass.type = 'lowpass'; lowpass.frequency.value = OPEN_HZ;
+  // Normale Sprecher = MINIMAL-Kette (nur Panner+Lowpass). Reverb+Limiter existieren NUR in der
+  // Gottstimme-Kette (godChain unten) — statt 36× Convolver+Compressor im Signalweg. [BFT-287]
+  try { track.setWebAudioPlugins([panner, lowpass]); } catch { return; } // source→panner→lowpass→gain
+  spatialPlugins.set(identity, { track, panner, lowpass, god: false, reverb: null, limiter: null });
+}
+// Gottstimme-Kette nur für den aktiven Durchsage-Sprecher ein-/aushängen (Reverb + Limiter).
+function setGodChain(pl, on) {
+  if (pl.god === on) return;
+  const ctx = voiceCtx; if (!ctx) return;
+  if (on && !pl.limiter) {
+    ensureVoiceIRs(ctx);
+    pl.reverb = ctx.createConvolver(); pl.reverb.normalize = false; pl.reverb.buffer = identityIR;
+    // Brick-Wall-Limiter: die Gottstimme läuft mit vollem Pegel ohne Distanz-Abschwächung → Spitzen
+    // nahe 0 dBFS abfangen, damit nichts übersteuert.
+    pl.limiter = ctx.createDynamicsCompressor();
+    pl.limiter.threshold.value = -2; pl.limiter.knee.value = 0; pl.limiter.ratio.value = 20; pl.limiter.attack.value = 0.003; pl.limiter.release.value = 0.12;
+  }
+  try {
+    pl.track.setWebAudioPlugins(on ? [pl.panner, pl.lowpass, pl.reverb, pl.limiter] : [pl.panner, pl.lowpass]);
+    pl.god = on;
+  } catch {}
+}
+// Panner-Richtung (z+heading) + Unterwasser-Lowpass je Sprecher aktualisieren. Gain/Deafen macht weiter setVolume.
+function updateSpatialPanners() {
+  const ctx = voiceCtx; if (!ctx) { renderVoiceDbg([]); return; }
+  if (!voiceEffectsOn) { renderVoiceDbg(['3D/Effekte AUS (Audio-Einstellungen)']); return; }
+  const now = ctx.currentTime;
+  const hr = ((me && me.heading != null ? me.heading : 0) + SPATIAL_HEADING_OFF) * Math.PI / 180;
+  const fx = Math.cos(hr), fy = Math.sin(hr);   // Forward (Welt)
+  const rx = -fy, ry = fx;                        // Right = Forward um +90° (L/R gespiegelt: vorn/hinten stimmte, links/rechts war getauscht)
+  const meUW = !!(me && me.isUnderwater); // ICH untergetaucht → ich höre ALLE gedämpft
+  const dbg = [`me:${me ? `h${Math.round(me.heading || 0)}${meUW ? ' UW' : ''}` : 'NULL'} ctx:${ctx.state} spk:${spatialPlugins.size}`];
+  for (const [identity, pl] of spatialPlugins) {
+    const pos = players.find((p) => p.steamId === identity);
+    const isGod = !!godVoiceId && identity === godVoiceId; // Gottstimme: zentriert, offen, verzerrt — ohne Richtung/Muffling
+    let px = 0, pz = -1, dU = 0;
+    if (me && pos && !isGod) {
+      const dx = pos.x - me.x, dy = pos.y - me.y;
+      const fwd = dx * fx + dy * fy, right = dx * rx + dy * ry;
+      const s = spatial3dStrength; // eine persönliche 3D-Stärke für alle, die man hört
+      px = right * SPATIAL_SCALE * s;
+      pz = (-fwd * SPATIAL_SCALE) * s - (1 - s); // s→0 blendet nach (0,0,-1) = geradeaus
+      dU = Math.hypot(dx, dy);
+    }
+    // Weich zur neuen Position gleiten (setTargetAtTime) statt harter 100-ms-Sprünge (setValueAtTime):
+    // die Sprünge erzeugten hörbare Klick-/Zipper-Artefakte bei sich bewegenden Sprechern. [BFT-287]
+    try { pl.panner.positionX.setTargetAtTime(px, now, 0.05); pl.panner.positionY.setTargetAtTime(0, now, 0.05); pl.panner.positionZ.setTargetAtTime(pz, now, 0.05); }
+    catch { try { pl.panner.setPosition(px, 0, pz); } catch {} }
+    // Unterwasser-Muffel BEIDSEITIG: gedämpft, wenn ICH untergetaucht bin ODER der Sprecher es ist.
+    // Gottstimme durchdringt Wasser (bleibt offen).
+    const spkUW = !!(pos && pos.isUnderwater);
+    const uw = !isGod && (meUW || spkUW);
+    const hz = isGod ? OPEN_HZ : (uw ? UNDERWATER_HZ : OPEN_HZ);
+    try { pl.lowpass.frequency.setTargetAtTime(hz, now, 0.08); } catch { pl.lowpass.frequency.value = hz; }
+    setGodChain(pl, isGod); // Reverb+Limiter NUR am Durchsage-Sprecher (Ein-/Aushängen bei Statuswechsel)
+    if (pl.reverb) { const want = (isGod && godVoiceReverbActive) ? godVoiceIR : identityIR; if (pl.reverb.buffer !== want) pl.reverb.buffer = want; } // Himmels-Hall nur bei Durchsage + wenn eingeschaltet
+    const nm = (pos && (pos.name || pos.playerName)) || String(identity).slice(-4);
+    const side = isGod ? '👑' : (px > 0.05 ? 'R' : px < -0.05 ? 'L' : 'C');
+    dbg.push(`${pos ? '' : '?'}${nm} d=${Math.round(dU / UNITS_PER_M)}m pan=${side}(${px.toFixed(2)})${isGod ? ' GOD' : uw ? ' UW' : ''}`);
+  }
+  renderVoiceDbg(dbg);
 }
 
 // ── Info-Box: Namen der Spieler, die man gerade hört (active speakers) ───────
@@ -1157,7 +1486,7 @@ function audibleVol(steamId) {
   if (me && pos) {
     const Rw = (remoteRanges[steamId] ?? DEFAULT_RANGE) * UNITS_PER_M;
     const d = Math.hypot(pos.x - me.x, pos.y - me.y);
-    vol = Math.max(0, Math.min(1, 2 * (1 - d / Rw)));
+    vol = Math.max(0, Math.min(1, 1 - d / Rw));
   }
   const g = userGain[steamId] ?? 1;
   const factor = (deafened || amDead) ? 0 : masterGain;
@@ -1228,17 +1557,16 @@ function renderVoiceUsers() {
   for (const { p, name } of list) {
     const g = userGain[p.identity] ?? 1;
     const row = document.createElement('div');
-    row.style.cssText = 'display:flex;align-items:center;gap:8px;margin-bottom:6px';
+    row.style.cssText = 'margin-bottom:8px';
     row.innerHTML =
-      `<span style="flex:1;font-size:12px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">👤 ${name}</span>` +
-      `<input type="range" min="0" max="200" step="5" value="${Math.round(g * 100)}" style="flex:1;accent-color:var(--accent)">` +
-      `<span style="width:42px;text-align:right;font-size:12px;color:var(--muted)">${Math.round(g * 100)}%</span>`;
-    const slider = row.querySelector('input');
-    const label = row.querySelector('span:last-child');
-    slider.addEventListener('input', () => {
-      label.textContent = `${slider.value}%`;
-      setUserGain(p.identity, parseInt(slider.value) / 100);
-    });
+      `<div style="font-size:12px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;margin-bottom:3px">👤 ${name}</div>` +
+      `<div style="display:flex;align-items:center;gap:6px">` +
+        `<span title="Lautstärke" style="width:16px">🔊</span>` +
+        `<input class="u-vol" type="range" min="0" max="200" step="5" value="${Math.round(g * 100)}" style="flex:1;accent-color:var(--accent)">` +
+        `<span class="u-vol-l" style="width:40px;text-align:right;font-size:11px;color:var(--muted)">${Math.round(g * 100)}%</span>` +
+      `</div>`;
+    const uv = row.querySelector('.u-vol'), uvl = row.querySelector('.u-vol-l');
+    uv.addEventListener('input', () => { uvl.textContent = `${uv.value}%`; setUserGain(p.identity, parseInt(uv.value) / 100); });
     box.appendChild(row);
   }
 }
@@ -1841,6 +2169,7 @@ function showAdminTab(t) {
   else if (t === 'lootbox') ensureLootboxCfgLoaded();
   else if (t === 'warn') renderWarnPane();
   else if (t === 'audit') renderAudit();
+  else if (t === 'teamaudit') renderTeamAudit();
   else if (t === 'handbuch') renderHandbuch();
   bfScheduleFrameSync && bfScheduleFrameSync();
 }
@@ -1934,8 +2263,13 @@ function paRenderTable() {
       const datum = t.toLocaleDateString('de-DE', { day: '2-digit', month: '2-digit' });
       const [ico, lbl] = PA_VIA[it.via] || ['•', it.via || ''];
       const det = paDetails(it.details);
-      // actorSteam ist nur gesetzt, wenn jemand ANDERES gehandelt hat (Staff) — dann sichtbar machen.
-      const actor = it.actorSteam ? `<div style="font-size:10px;opacity:.7">durch ${escapeHtml(it.actorSteam)}</div>` : '';
+      // actorSteam ist nur gesetzt, wenn jemand ANDERES gehandelt hat (Staff, oder Combat-Angreifer
+      // /-Killer). Namen statt roher SteamID: Discord → In-Game → SteamID (Rest im Tooltip).
+      const actorLabel = it.actorDiscordName || it.actorName || it.actorSteam;
+      const actorTip = [it.actorSteam && 'Steam: ' + it.actorSteam, it.actorName && 'Ingame: ' + it.actorName].filter(Boolean).join(' · ');
+      const actor = it.actorSteam
+        ? `<div style="font-size:10px;opacity:.7" title="${escapeHtml(actorTip)}">durch ${escapeHtml(actorLabel)}${it.actorDiscordName ? ' 🎮' : ''}</div>`
+        : '';
       const td = 'padding:5px 8px;vertical-align:top';
       return `<tr style="border-top:1px solid var(--border)">
         <td style="${td};white-space:nowrap" title="${escapeHtml(t.toLocaleString('de-DE'))}">${zeit}<div style="font-size:10px;opacity:.6">${datum}</div></td>
@@ -2029,6 +2363,132 @@ async function renderAudit() {
 
   paState.built = true;
   paLoad(true);
+}
+
+// ── Team-Audit: Staff-Aktions-Log (dieselben Daten wie der Discord-Audit-Channel) ────────────
+// Backend /admin/staff-audit filtert + paginiert serverseitig und gated selbst auf Staff. Nur UI.
+const TA_SRC = { overlay: ['🎮', 'Overlay'], discord: ['💬', 'Discord'] };
+let taState = { built: false, items: [], total: 0, limit: 100, offset: 0, loading: false, fromMs: 0, toMs: 0 };
+function taQuery() {
+  const p = new URLSearchParams();
+  for (const [id, key] of [['taActor', 'actor'], ['taAction', 'action'], ['taSource', 'source']]) {
+    const v = (el(id)?.value || '').trim();
+    if (v) p.set(key, v);
+  }
+  for (const [id, key] of [['taFrom', 'from'], ['taTo', 'to']]) {
+    const ms = Date.parse((el(id)?.value || '').trim());
+    if (!isNaN(ms)) p.set(key, String(ms));
+  }
+  p.set('limit', String(taState.limit)); p.set('offset', String(taState.offset));
+  return p.toString();
+}
+async function taLoad(resetOffset) {
+  if (resetOffset) taState.offset = 0;
+  taState.loading = true; taRenderTable();
+  try {
+    const r = await fetch(`${config.tokenBase}/admin/staff-audit?${taQuery()}`, { headers: { Authorization: `Bearer ${sessionToken}` } });
+    if (!r.ok) throw new Error(r.status === 403 ? 'Nicht berechtigt — nur Staff.' : `Fehler ${r.status}`);
+    const d = await r.json();
+    taState.items = d.items || []; taState.total = d.total || 0;
+    taState.limit = d.limit || taState.limit; taState.offset = d.offset || 0;
+    taState.fromMs = d.fromMs || 0; taState.toMs = d.toMs || 0;
+  } catch (e) {
+    taState.items = []; taState.total = 0;
+    showToast(e.message, 'error');
+  }
+  taState.loading = false;
+  taRenderTable();
+}
+function taRenderTable() {
+  const box = el('taTableWrap'); if (!box) return;
+  if (taState.loading) {
+    box.innerHTML = '<div class="dt-muted" style="padding:12px">Lade…</div>';
+  } else if (!taState.items.length) {
+    box.innerHTML = '<div class="dt-muted" style="padding:12px">Keine Einträge für diese Filter.</div>';
+  } else {
+    const td = 'padding:5px 8px;vertical-align:top';
+    const rows = taState.items.map((it) => {
+      const t = new Date(it.createdAtMs);
+      const zeit = t.toLocaleTimeString('de-DE', { hour12: false });
+      const datum = t.toLocaleDateString('de-DE', { day: '2-digit', month: '2-digit' });
+      const [ico, lbl] = TA_SRC[it.source] || ['•', it.source || ''];
+      const who = it.actorName || it.actorDiscord || it.actorSteam || '—';
+      const whoTip = [it.actorSteam && 'Steam: ' + it.actorSteam, it.actorDiscord && 'Discord-ID: ' + it.actorDiscord].filter(Boolean).join(' · ');
+      const det = paDetails(it.details);
+      return `<tr style="border-top:1px solid var(--border)">
+        <td style="${td};white-space:nowrap" title="${escapeHtml(t.toLocaleString('de-DE'))}">${zeit}<div style="font-size:10px;opacity:.6">${datum}</div></td>
+        <td style="${td};max-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${escapeHtml(whoTip)}">${escapeHtml(who)}</td>
+        <td style="${td}"><span style="background:rgba(255,255,255,.07);padding:2px 6px;border-radius:6px;font-family:monospace;font-size:11px">${escapeHtml(it.action || '')}</span>${it.method && it.method !== 'POST' ? `<span style="font-size:10px;opacity:.6;margin-left:4px">${escapeHtml(it.method)}</span>` : ''}</td>
+        <td style="${td};white-space:nowrap" title="${escapeHtml(it.source || '')}">${ico} ${escapeHtml(lbl)}</td>
+        <td style="${td};max-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:11px;opacity:.85" title="${escapeHtml(det)}">${escapeHtml(det)}</td>
+      </tr>`;
+    }).join('');
+    const th = (l, w) => `<th style="padding:6px 8px;text-align:left;color:var(--muted);font-weight:600;white-space:nowrap${w ? `;width:${w}` : ''}">${l}</th>`;
+    box.innerHTML = `<table style="width:100%;border-collapse:collapse;font-size:12px">
+      <thead><tr style="position:sticky;top:0;background:#1c1c22;z-index:1">${th('Zeit', '86px')}${th('Wer', '150px')}${th('Aktion', '200px')}${th('Quelle', '96px')}${th('Details')}</tr></thead>
+      <tbody>${rows}</tbody></table>`;
+  }
+  const foot = el('taFoot'); if (!foot) return;
+  const von = taState.offset + 1, bis = taState.offset + taState.items.length;
+  const zeitraum = taState.fromMs && taState.toMs
+    ? `${new Date(taState.fromMs).toLocaleString('de-DE')} – ${new Date(taState.toMs).toLocaleString('de-DE')}` : '';
+  foot.innerHTML = `<span>${taState.total ? `${von}–${bis} von ${taState.total}` : '0 Treffer'}${zeitraum ? ` · Zeitraum: ${escapeHtml(zeitraum)}` : ''}</span>
+    <span style="display:flex;gap:6px">
+      <button id="taPrev" class="secondary" style="width:auto;padding:3px 9px;font-size:11px" ${taState.offset <= 0 ? 'disabled' : ''}>← Zurück</button>
+      <button id="taNext" class="secondary" style="width:auto;padding:3px 9px;font-size:11px" ${bis >= taState.total ? 'disabled' : ''}>Weiter →</button>
+    </span>`;
+  const pv = el('taPrev'), nx = el('taNext');
+  if (pv) pv.onclick = () => { taState.offset = Math.max(0, taState.offset - taState.limit); taLoad(false); };
+  if (nx) nx.onclick = () => { taState.offset += taState.limit; taLoad(false); };
+}
+function renderTeamAudit() {
+  const box = el('taBody'); if (!box) return;
+  if (taState.built) { taLoad(true); return; }
+  const lab = 'font-size:11px;color:var(--muted);display:block;margin-bottom:2px';
+  const inp = 'width:100%;box-sizing:border-box;padding:7px 8px;border-radius:8px;border:1px solid var(--border);background:var(--input-bg);color:#eee;font-size:12px';
+  box.innerHTML = `
+    <div style="font-weight:600;font-size:14px">🛡️ Team-Audit <span style="font-weight:400;font-size:11px;color:var(--muted)">— jede verändernde Staff-Aktion (Overlay + Discord)</span></div>
+    <div style="font-size:11px;color:var(--muted);margin:2px 0 8px">Dieselben Einträge wie im Discord-Audit-Channel.</div>
+    <div style="display:flex;flex-wrap:wrap;gap:8px;align-items:flex-end;margin-bottom:6px">
+      <div style="flex:1;min-width:130px"><label style="${lab}">Wer (Name)</label><input id="taActor" style="${inp}" placeholder="Teil des Namens"></div>
+      <div style="flex:1;min-width:140px"><label style="${lab}">Aktion</label><input id="taAction" style="${inp}" placeholder="z. B. gift, ban"></div>
+      <div style="min-width:120px"><label style="${lab}">Quelle</label><select id="taSource" style="${inp}"><option value="">alle</option><option value="overlay">🎮 Overlay</option><option value="discord">💬 Discord</option></select></div>
+      <div style="min-width:158px"><label style="${lab}">Von</label><input id="taFrom" type="datetime-local" style="${inp}"></div>
+      <div style="min-width:158px"><label style="${lab}">Bis</label><input id="taTo" type="datetime-local" style="${inp}"></div>
+    </div>
+    <div style="display:flex;flex-wrap:wrap;gap:6px;align-items:center;margin-bottom:8px">
+      <span style="font-size:11px;color:var(--muted)">Schnell:</span>
+      <button class="secondary" data-tarange="24" style="width:auto;padding:4px 9px;font-size:11px">24 h</button>
+      <button class="secondary" data-tarange="168" style="width:auto;padding:4px 9px;font-size:11px">7 Tage</button>
+      <button class="secondary" data-tarange="720" style="width:auto;padding:4px 9px;font-size:11px">30 Tage</button>
+      <span style="flex:1"></span>
+      <button id="taApply" style="width:auto;padding:5px 12px;font-size:12px">🔍 Filtern</button>
+      <button id="taReset" class="secondary" style="width:auto;padding:5px 12px;font-size:12px">Zurücksetzen</button>
+    </div>
+    <div id="taTableWrap" style="max-height:46vh;overflow:auto;border:1px solid var(--border);border-radius:8px;background:rgba(0,0,0,.18)"></div>
+    <div id="taFoot" style="display:flex;justify-content:space-between;align-items:center;gap:8px;margin-top:6px;font-size:11px;color:var(--muted)"></div>`;
+
+  el('taApply').onclick = () => taLoad(true);
+  el('taReset').onclick = () => {
+    ['taActor', 'taAction', 'taFrom', 'taTo'].forEach((id) => { const e = el(id); if (e) e.value = ''; });
+    el('taSource').value = '';
+    taLoad(true);
+  };
+  box.querySelectorAll('[data-tarange]').forEach((b) => {
+    b.onclick = () => {
+      const now = Date.now();
+      el('taTo').value = paToLocalInput(now);
+      el('taFrom').value = paToLocalInput(now - Number(b.dataset.tarange) * 3600_000);
+      taLoad(true);
+    };
+  });
+  ['taActor', 'taAction'].forEach((id) => {
+    const e = el(id); if (e) e.onkeydown = (ev) => { if (ev.key === 'Enter') { ev.preventDefault(); taLoad(true); } };
+  });
+  ['taSource', 'taFrom', 'taTo'].forEach((id) => { const e = el(id); if (e) e.onchange = () => taLoad(true); });
+
+  taState.built = true;
+  taLoad(true);
 }
 
 // ── Verwarnungen (Staff) ─────────────────────────────────────────────────────
@@ -2307,6 +2767,7 @@ function showServerTab(t) {
   else if (t === 'objects') renderSvObjects();
   else if (t === 'karte') { loadTeleports(); renderAdminTpList(); }
   else if (t === 'server') { renderServer(); svRenderClassLimits(); }
+  else if (t === 'godvoice') renderGodVoice();
   bfScheduleFrameSync && bfScheduleFrameSync();
 }
 // Class-Limits im Server-Tab (dieselben /dino-limits-Endpoints wie das Admin-Panel; das Admin-Panel
@@ -2661,7 +3122,7 @@ async function loadAdminUsers() {
     // Die drei Admin-Suchfelder teilen sich admUserList und durchsuchen die volle User-Liste.
     // Das Datalist wird NICHT mehr mit allen ~1000 Optionen vorbefüllt (Chromium zeigt die dann
     // nicht zuverlässig) — filterDatalist füllt es beim Tippen/Fokus mit den Top-Treffern.
-    for (const id of ['admUserSearch', 'msgUserSearch', 'giftUserSearch']) USER_POOLS[id] = adminUsers;
+    for (const id of ['admUserSearch', 'msgUserSearch', 'giftUserSearch', 'followUserSearch']) USER_POOLS[id] = adminUsers;
     adminUserMap = new Map(); // nur noch Back-Compat; Auflösung läuft über matchUser
     for (const u of adminUsers) adminUserMap.set(u.name, u);
   } catch {}
@@ -6879,6 +7340,7 @@ async function connectWithSession(session) {
     // Abo bzw. falls die Discord-Rollen-Auflösung serverseitig mal nicht greift (sonst Schlösser für Teamler).
     setAboTier((data.team || data.admin) ? 'Obsidian' : data.aboTier);
     mySkinFree = !!data.skinFree;   // 🎨 Skin-Creator gratis (ab Knochen ODER Beta-Tester)
+    serverVoice = !!data.serverVoice; // Backend steuert Proximity-Subscriptions → autoSubscribe:false
     setStaff(data.staff);
     pollHud();
     if (!pollHud._timer) pollHud._timer = setInterval(pollHud, 6000);
@@ -6895,13 +7357,17 @@ async function connectWithSession(session) {
 
 async function connect({ token, url }) {
   setMicState('connecting');
+  ensureVoiceCtx(); // eigener AudioContext für webAudioMix — Panner/Lowpass hängen später hier ein
   // webAudioMix: leitet alle Remote-Audios über einen gemeinsamen AudioContext +
   //   GainNodes → setVolume kann >1.0 (Einzel- & Master-Regler wirken wirklich) und
   //   der Context wird auch auf den lokalen Teilnehmer gesetzt (Mikro-Gain-Processor).
   // adaptiveStream/dynacast: nur für Video sinnvoll; für reines Audio aus (vermeidet
   //   pausierte Subscriptions → Cutouts).
   room = new Room({
-    adaptiveStream: false, dynacast: false, webAudioMix: true,
+    // webAudioMix AN (stabil): LiveKit mischt alle Remote-Audios über UNSEREN AudioContext + GainNodes →
+    // setVolume (Proximity/Deafen) wirkt zuverlässig, und wir hängen je Track Panner+Lowpass via
+    // setWebAudioPlugins in die Kette (3D + Unterwasser), ohne LiveKits stabile Pipeline zu ersetzen.
+    adaptiveStream: false, dynacast: false, webAudioMix: voiceCtx ? { audioContext: voiceCtx } : true,
     // 🎧 Bandbreite senken (Voice-Server-Fanout war ~5 Mbit/s/User → Jitter/„roboterhaft"):
     //  • red:false  — keine redundanten Audio-Kopien (halbiert die Audio-Bitrate; Paketverlust ist
     //                 ohnehin minimal, RED bringt hier kaum was).
@@ -6930,32 +7396,36 @@ async function connect({ token, url }) {
         if (msg.t === 'range' && participant) { remoteRanges[participant.identity] = msg.r; updateProximityVolumes(); }
       } catch {}
     })
-    .on(RoomEvent.TrackSubscribed, (track) => {
+    .on(RoomEvent.TrackSubscribed, (track, _pub, participant) => {
       if (track.kind === Track.Kind.Audio) {
-        // Mit webAudioMix mutet LiveKit das Element selbst und spielt über den
-        // AudioContext. Deafen/Lautstärke laufen daher über setVolume (s.u.),
-        // nicht über a.muted.
+        // webAudioMix: LiveKit spielt über den gemeinsamen Context; Lautstärke/Deafen via setVolume.
         const a = track.attach(); a.autoplay = true;
         if (spkDeviceId && a.setSinkId) a.setSinkId(spkDeviceId).catch(() => {});
         document.body.appendChild(a);
+        attachSpatialPlugins(track, participant && participant.identity); // Panner+Lowpass in die Kette (3D)
         updateProximityVolumes();
       }
     })
-    .on(RoomEvent.TrackUnsubscribed, (track) => {
-      // Audio-Elemente beim Verlassen wieder aus dem DOM nehmen (sonst Memory-Leak)
+    .on(RoomEvent.TrackUnsubscribed, (track, _pub, participant) => {
       if (track.kind === Track.Kind.Audio) {
+        if (participant) spatialPlugins.delete(participant.identity);
         track.detach().forEach((el) => el.remove());
         updateProximityVolumes();
       }
     });
   try {
-    await room.connect(url, token);
+    // autoSubscribe:false, wenn das Backend die Proximity-Subscriptions steuert (serverVoice) → der
+    // Server abonniert je Hörer nur die In-Range-Nachbarn. Sonst (Prod/Flag AUS) wie bisher: alle abonnieren.
+    await room.connect(url, token, { autoSubscribe: !serverVoice });
   } catch (e) {
     // Fehlversuch sauber zurückrollen, sonst bleibt ein toter Room hängen
     try { room.disconnect(); } catch {}
     room = null; voiceConnected = false;
     throw e;   // connectWithSession zeigt den Fehler-Toast
   }
+  // LiveKit-Audio + unseren Mix-Context entsperren (Autoplay-Policy).
+  try { await room.startAudio(); } catch {}
+  try { if (voiceCtx && voiceCtx.state === 'suspended') await voiceCtx.resume(); } catch {}
   // Gewählte Audio-Geräte anwenden (falls gesetzt)
   try { if (micDeviceId) await room.switchActiveDevice('audioinput', micDeviceId); } catch {}
   try { if (spkDeviceId) await room.switchActiveDevice('audiooutput', spkDeviceId); } catch {}
@@ -7042,6 +7512,8 @@ async function setMicDevice(id) {
 async function setSpkDevice(id) {
   spkDeviceId = id; localStorage.setItem('bf-spk-dev', id);
   try { if (room && id) await room.switchActiveDevice('audiooutput', id); } catch {}
+  // webAudioMix: der Ton läuft über den AudioContext → Gerätewechsel MUSS auch dort ankommen. [BFT-287]
+  try { if (voiceCtx && voiceCtx.setSinkId && id) voiceCtx.setSinkId(id).catch(() => {}); } catch {}
   for (const a of document.querySelectorAll('audio')) { if (a.setSinkId && id) a.setSinkId(id).catch(() => {}); }
 }
 
