@@ -1148,7 +1148,7 @@ let spatialCtx = null;                 // gemeinsamer AudioContext für alle Rem
 let spatialMaster = null;              // gemeinsamer Master-GainNode: Deafen/Tot/Master-Lautstärke
 const spatialNodes = new Map();        // identity → { src, panner, lowpass, gain }
 const SPATIAL_SCALE = 0.001;           // Welt-Einheiten → Audio-Meter (nur Richtung zählt, Rolloff=0)
-const SPATIAL_HEADING_OFF = -90;       // Grad: Blickrichtung→Welt-Vektor (wie Karte/Kompass, COMPASS_NORTH_OFF)
+const SPATIAL_HEADING_OFF = -180;      // Grad: Blickrichtung→Panner. -90 (Karte/Kompass) + weitere -90 (Richtungs-Korrektur im Test)
 const UNDERWATER_HZ = 700;             // Lowpass-Grenzfrequenz unter Wasser (dumpf)
 const OPEN_HZ = 20000;                 // offen (keine Dämpfung)
 function spatialWake() { if (spatialCtx && spatialCtx.state === 'suspended') spatialCtx.resume().catch(() => {}); }
