@@ -818,7 +818,7 @@ async function init() {
   el('updateBtn').onclick = () => {
     if (updateState === 'available') { updateState = 'downloading'; window.bf.updateDownload?.(); renderUpdateUI(); }
     else if (updateState === 'ready') { window.bf.updateInstall?.(); }
-    else if (updateState === 'error') { window.bf.openExternal?.(`${config.tokenBase}/overlay/`); }   // manueller Download-Fallback (Backend-Download-Seite)
+    else if (updateState === 'error') { window.bf.openExternal?.(String(config.tokenBase || '').includes('api-test') ? `${config.tokenBase}/overlay/` : 'https://github.com/HidekiSensei/blackfossil-overlay/releases/latest'); }   // manueller Download-Fallback (Test: Backend-Seite, Prod: GitHub-Releases)
   };
   window.bf.onUpdateAvailable?.((version) => {
     updateVersion = version || ''; updateState = 'available'; renderUpdateUI();
@@ -7190,16 +7190,27 @@ async function loadSoftwareTab() {
   if (_swNotesLoaded) return;
   const meta = el('swRelMeta'), notes = el('swRelNotes');
   if (!notes) return;
+  const dateDe = (v) => { try { return new Date(v).toLocaleDateString('de-DE', { day: '2-digit', month: 'short', year: 'numeric' }); } catch { return ''; } };
   try {
-    const r = await fetch(`${config.tokenBase}/overlay/releases.json`, { headers: { Accept: 'application/json' } });
-    if (!r.ok) throw new Error('HTTP ' + r.status);
-    const list = await r.json();
-    const d = Array.isArray(list) ? list[0] : null;
-    if (!d) throw new Error('leere Release-Liste');
-    let dstr = '';
-    try { dstr = new Date(d.date).toLocaleDateString('de-DE', { day: '2-digit', month: 'short', year: 'numeric' }); } catch {}
-    if (meta) meta.textContent = `v${d.version || '?'}${dstr ? ' · ' + dstr : ''}`;
-    notes.innerHTML = mdLiteToHtml(String(d.notes || '').trim() || 'Keine Notizen.');
+    let metaText = '', notesMd = '';
+    // NUR Test zieht die Notes vom Backend; Prod bleibt (vorerst) beim GitHub-Releases-API — unverändert.
+    if (String(config.tokenBase || '').includes('api-test')) {
+      const list = await (await fetch(`${config.tokenBase}/overlay/releases.json`, { headers: { Accept: 'application/json' } })).json();
+      const d = Array.isArray(list) ? list[0] : null;
+      if (!d) throw new Error('leere Release-Liste');
+      const ds = dateDe(d.date);
+      metaText = `v${d.version || '?'}${ds ? ' · ' + ds : ''}`;
+      notesMd = String(d.notes || '').trim();
+    } else {
+      const r = await fetch('https://api.github.com/repos/HidekiSensei/blackfossil-overlay/releases/latest', { headers: { Accept: 'application/vnd.github+json' } });
+      if (!r.ok) throw new Error('HTTP ' + r.status);
+      const d = await r.json();
+      const ds = dateDe(d.published_at);
+      metaText = `${d.name || d.tag_name || ''}${ds ? ' · ' + ds : ''}`;
+      notesMd = String(d.body || '').trim();
+    }
+    if (meta) meta.textContent = metaText;
+    notes.innerHTML = mdLiteToHtml(notesMd || 'Keine Notizen.');
     notes.querySelectorAll('.sw-lnk').forEach((a) => { a.onclick = (e) => { e.preventDefault(); const h = a.dataset.href; if (h) { try { window.bf.openExternal?.(h); } catch {} } }; });
     _swNotesLoaded = true;
   } catch (e) {

@@ -60,13 +60,6 @@ jobs:
             echo "Release-Version: $V (Tag v$V)"
           fi
 
-      # Guard: Version ist gebumpt, aber es fehlt der Release-Note-Abschnitt in CHANGELOG.md
-      # -> HARTER Fehlschlag (kein Build/Upload). Version-nicht-gebumpt wird oben sauber übersprungen.
-      - name: Release-Note vorhanden? (Guard)
-        if: steps.v.outputs.exists == 'false'
-        shell: bash
-        run: node app/scripts/changelog-to-json.js --require "${{ steps.v.outputs.version }}"
-
       - name: Produktiv-Werte setzen (appId, productName, API-URL)
         if: steps.v.outputs.exists == 'false'
         run: node app/scripts/patch-prod.js
@@ -101,23 +94,6 @@ jobs:
         run: npx electron-builder --win --publish always
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-
-      # Bridge-Phase: parallel zum GitHub-Publish auch aufs eigene Backend laden (neuer Feed).
-      # Sobald ein Client einmal einen Build mit setFeedURL(Backend) installiert hat, zieht er
-      # künftig von hier. Nach der Migration wird "--publish always" (GitHub) entfernt.
-      - name: Windows-Artefakte aufs Backend laden
-        if: steps.v.outputs.exists == 'false'
-        working-directory: app
-        shell: bash
-        run: |
-          for f in release/latest.yml release/*.exe release/*.exe.blockmap; do
-            [ -e "$f" ] || continue
-            echo "Upload $(basename "$f")"
-            curl -fsS -H "Authorization: Bearer $BF_OVERLAY_UPLOAD_TOKEN" -F "file=@$f" "$API/overlay/upload"
-          done
-        env:
-          API: https://api.blackfossil.de
-          BF_OVERLAY_UPLOAD_TOKEN: ${{ secrets.BF_OVERLAY_UPLOAD_TOKEN }}
 
   # Linux-AppImage ins SELBE Release. NACH dem Windows-Job, nicht parallel: sonst wuerden beide
   # gleichzeitig das Draft-Release anlegen wollen (Race), und den Tag setzt ohnehin nur "release".
@@ -154,19 +130,6 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Linux-Artefakte aufs Backend laden
-        working-directory: app
-        shell: bash
-        run: |
-          for f in release/latest-linux.yml release/*.AppImage; do
-            [ -e "$f" ] || continue
-            echo "Upload $(basename "$f")"
-            curl -fsS -H "Authorization: Bearer $BF_OVERLAY_UPLOAD_TOKEN" -F "file=@$f" "$API/overlay/upload"
-          done
-        env:
-          API: https://api.blackfossil.de
-          BF_OVERLAY_UPLOAD_TOKEN: ${{ secrets.BF_OVERLAY_UPLOAD_TOKEN }}
-
   # Release erst live schalten, wenn BEIDE Artefakte oben liegen. Vorher stand dieser Schritt am
   # Ende des Windows-Jobs — damit waere das Release "latest" gewesen, waehrend die AppImage noch
   # fehlt, und der Linux-Updater liefe gegen eine 404 auf latest-linux.yml.
@@ -179,32 +142,31 @@ jobs:
         with:
           fetch-depth: 0   # volle Historie + Tags für den Changelog
 
-      # Kuratierte Release-Notes aus CHANGELOG.md (kein Auto-Commit-Dump).
-      - name: releases.json aus CHANGELOG + Notes bauen
+      # Changelog aus den Commits seit dem letzten Tag + Release veröffentlichen und als
+      # Latest markieren — Letztes ist entscheidend, sonst zieht der Auto-Updater es nicht.
+      - name: Changelog + Release veröffentlichen
         shell: bash
         run: |
-          V="${{ needs.release.outputs.version }}"
-          node app/scripts/changelog-to-json.js --notes "$V" > "${RUNNER_TEMP}/notes.md"
-          node app/scripts/changelog-to-json.js --out "${RUNNER_TEMP}/releases.json"
-
-      # Volle Notes-Historie aufs Backend (Software-Tab + später Discord-Bot).
-      - name: releases.json aufs Backend laden
-        shell: bash
-        run: |
-          curl -fsS -H "Authorization: Bearer $BF_OVERLAY_UPLOAD_TOKEN" -F "file=@${RUNNER_TEMP}/releases.json" "$API/overlay/upload"
-        env:
-          API: https://api.blackfossil.de
-          BF_OVERLAY_UPLOAD_TOKEN: ${{ secrets.BF_OVERLAY_UPLOAD_TOKEN }}
-
-      # GitHub-Release live schalten + als Latest markieren (Bridge-Phase: alte Clients ziehen von hier).
-      # --latest ist entscheidend, sonst nimmt der GitHub-basierte Auto-Updater es nicht.
-      - name: GitHub-Release veröffentlichen
-        shell: bash
-        run: |
-          gh release edit "${{ needs.release.outputs.tag }}" \
+          TAG="${{ needs.release.outputs.tag }}"
+          PREV=$(git describe --tags --abbrev=0 "${TAG}^" 2>/dev/null || echo "")
+          {
+            echo "## 📝 Änderungen"
+            echo ""
+            if [ -n "$PREV" ]; then
+              git log --no-merges --pretty=format:'- %s' "${PREV}..${TAG}"
+            else
+              git log --no-merges --pretty=format:'- %s' "${TAG}"
+            fi
+            echo ""
+            if [ -n "$PREV" ]; then
+              echo ""
+              echo "**Vollständiger Vergleich:** https://github.com/${GITHUB_REPOSITORY}/compare/${PREV}...${TAG}"
+            fi
+          } > "${RUNNER_TEMP}/notes.md"
+          gh release edit "${TAG}" \
             --draft=false \
             --latest \
-            --title "BlackFossil Overlay ${{ needs.release.outputs.tag }}" \
+            --title "BlackFossil Overlay ${TAG}" \
             --notes-file "${RUNNER_TEMP}/notes.md"
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
