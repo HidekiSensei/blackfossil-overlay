@@ -1208,7 +1208,7 @@ function updateSpatial() {
   // Blickrichtung von „mir" → Welt-Forward/Right-Basis (gleiche -90°-Konvention wie Karte/Kompass).
   const hr = ((me && me.heading != null ? me.heading : 0) + SPATIAL_HEADING_OFF) * Math.PI / 180;
   const fx = Math.cos(hr), fy = Math.sin(hr);   // Forward (Welt)
-  const rx = fy, ry = -fx;                        // Right = Forward um -90° gedreht
+  const rx = -fy, ry = fx;                        // Right = Forward um +90° (L/R gespiegelt: vorn/hinten stimmte, links/rechts war getauscht)
   const dbg = [`me:${me ? `x${me.x | 0} y${me.y | 0} h${Math.round(me.heading || 0)}` : 'NULL'} ctx:${ctx.state} master:${master.toFixed(2)} spk:${spatialNodes.size}`];
   for (const [identity, n] of spatialNodes) {
     const pos = players.find((pl) => pl.steamId === identity);
@@ -1288,7 +1288,7 @@ function updateSpatialPanners() {
   const now = ctx.currentTime;
   const hr = ((me && me.heading != null ? me.heading : 0) + SPATIAL_HEADING_OFF) * Math.PI / 180;
   const fx = Math.cos(hr), fy = Math.sin(hr);   // Forward (Welt)
-  const rx = fy, ry = -fx;                        // Right = Forward um -90° gedreht
+  const rx = -fy, ry = fx;                        // Right = Forward um +90° (L/R gespiegelt: vorn/hinten stimmte, links/rechts war getauscht)
   const dbg = [`me:${me ? `h${Math.round(me.heading || 0)}` : 'NULL'} ctx:${ctx.state} spk:${spatialPlugins.size}`];
   for (const [identity, pl] of spatialPlugins) {
     const pos = players.find((p) => p.steamId === identity);
