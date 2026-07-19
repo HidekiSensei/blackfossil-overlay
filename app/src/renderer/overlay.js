@@ -926,6 +926,9 @@ async function init() {
   // Master-Lautstärke für alle Spieler
   const mv = el('masterGain');
   if (mv) { mv.value = String(Math.round(masterGain * 100)); mv.oninput = (e) => setMasterGain(parseInt(e.target.value)); }
+  // 🧭 3D-Effektstärke
+  const s3 = el('spatial3d');
+  if (s3) { s3.value = String(Math.round(spatial3dStrength * 100)); s3.oninput = (e) => setSpatial3dStrength(parseInt(e.target.value)); }
 
   // Maustasten als Hotkey (für Push-to-Talk/Mute): während des Neubelegens Klick fangen
   window.addEventListener('mousedown', onRebindMouse, true);
@@ -1254,6 +1257,14 @@ window.addEventListener('keydown', (e) => {
 // Lifecycle. LiveKit nutzt UNSEREN AudioContext (voiceCtx), damit die Nodes zusammenpassen.
 let voiceCtx = null;
 const spatialPlugins = new Map(); // identity → { panner, lowpass }
+// 3D-Effektstärke (0 = mono/mittig, 1 = normal, bis 1.5 überzeichnet). Skaliert die Panner-Auslenkung.
+let spatial3dStrength = (() => { const v = parseFloat(localStorage.getItem('bf-voice-3d-strength')); return isNaN(v) ? 1 : v; })();
+function setSpatial3dStrength(pct) {
+  spatial3dStrength = Math.max(0, Math.min(1.5, pct / 100));
+  try { localStorage.setItem('bf-voice-3d-strength', String(spatial3dStrength)); } catch {}
+  const lbl = el('spatial3dVal'); if (lbl) lbl.textContent = `${Math.round(spatial3dStrength * 100)}%`;
+  updateProximityVolumes(); // sofort wirksam (kein Neuverbinden)
+}
 function ensureVoiceCtx() {
   if (!voiceCtx) { try { voiceCtx = new (window.AudioContext || window.webkitAudioContext)(); } catch {} }
   if (voiceCtx && voiceCtx.state === 'suspended') voiceCtx.resume().catch(() => {});
@@ -1282,7 +1293,10 @@ function updateSpatialPanners() {
     if (me && pos) {
       const dx = pos.x - me.x, dy = pos.y - me.y;
       const fwd = dx * fx + dy * fy, right = dx * rx + dy * ry;
-      px = right * SPATIAL_SCALE; pz = -fwd * SPATIAL_SCALE; dU = Math.hypot(dx, dy);
+      const s = spatial3dStrength; // 0 = geradeaus/mittig, 1 = volle Richtung
+      px = right * SPATIAL_SCALE * s;
+      pz = (-fwd * SPATIAL_SCALE) * s - (1 - s); // s→0 blendet nach (0,0,-1) = geradeaus
+      dU = Math.hypot(dx, dy);
     }
     try { pl.panner.positionX.setValueAtTime(px, now); pl.panner.positionY.setValueAtTime(0, now); pl.panner.positionZ.setValueAtTime(pz, now); }
     catch { try { pl.panner.setPosition(px, 0, pz); } catch {} }
