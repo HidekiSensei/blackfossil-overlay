@@ -741,6 +741,7 @@ let spkDeviceId = localStorage.getItem('bf-spk-dev') || '';   // gewähltes Ausg
 // mit autoSubscribe:false, „wer hört wen" liegt beim Backend. AUS = bisher (Client abonniert alle).
 let serverVoice = false;
 let aiSpawnMode = false;                                // Karten-Klick-Spawn aktiv
+let encWpMode = false;                                  // Brain-Editor: Karten-Klick = Patrouillen-Wegpunkt anhängen
 let mapOpen = false;
 
 async function init() {
@@ -1811,6 +1812,16 @@ function onMapClick(e) {
   // AI-Dino-Spawn-Modus (nur Team): Klick = Spawn-Position
   if (aiSpawnMode && tpIsAdmin) {
     aiSpawnAt(w.x, w.y);
+    return;
+  }
+
+  // Encounter-Wegpunkt-Modus (Brain-Editor): jeder Klick hängt einen Patrouillen-Punkt an.
+  // z=0 = „Boden am Laufzeitpunkt suchen" (der Brain snappt/pathet selbst). [BFT-294]
+  if (encWpMode && svEncDraft) {
+    (svEncDraft.patrol = svEncDraft.patrol || []).push({ x: Math.round(w.x), y: Math.round(w.y), z: 0 });
+    showToast(`🗺️ Wegpunkt ${svEncDraft.patrol.length} gesetzt`, 'success');
+    renderEncEditor();
+    renderBigMap();
     return;
   }
 
@@ -3114,9 +3125,10 @@ let svEncEditId = null, svEncDraft = null;
 async function renderSvAi() {
   const box = el('svAiBody'); if (!box) return;
   box.innerHTML = '<div class="dt-muted">Lade…</div>';
-  const [st, list] = await Promise.all([
+  const [st, list, brain] = await Promise.all([
     svApi('GET', '/admin/mod-ai/encounters/status').catch(() => ({})),
     svApi('GET', '/admin/mod-ai/encounters').catch(() => ({ encounters: [] })),
+    svApi('GET', '/admin/mod-ai/encounters/brain').catch(() => null), // älterer Mod-Build → Zeile ausblenden
   ]);
   const enabled = !!(st.ai_encounters_enabled != null ? st.ai_encounters_enabled : st.enabled);
   const encs = list.encounters || [];
@@ -3129,7 +3141,11 @@ async function renderSvAi() {
     </div>`).join('') || '<div class="dt-muted">Keine Encounters angelegt.</div>';
   box.innerHTML = `
     <div class="sec-title">🤖 AI-Encounters</div>
-    <label style="display:flex;align-items:center;gap:8px;font-size:13px;margin:8px 0 14px"><input id="svAiMaster" type="checkbox" ${enabled ? 'checked' : ''}> Encounter-System aktiv (Master-Schalter)</label>
+    <label style="display:flex;align-items:center;gap:8px;font-size:13px;margin:8px 0 6px"><input id="svAiMaster" type="checkbox" ${enabled ? 'checked' : ''}> Encounter-System aktiv (Master-Schalter)</label>
+    ${brain ? `<label style="display:flex;align-items:center;gap:8px;font-size:13px;margin:0 0 14px" title="Steuert Patrouille/Territorial/Rudel/Schlafen. Kill-Switch: aus = Dinos stehen nur (wie bisher).">
+      <input id="svAiBrain" type="checkbox" ${brain.brainEnabled ? 'checked' : ''}> 🧠 Verhaltens-Engine aktiv
+      <span style="color:var(--muted);font-size:11px">(max ${brain.maxTotalPawns} Pawns · Tick ${brain.tickMs} ms)</span>
+    </label>` : ''}
     <div class="sec-title">Encounters (${encs.length})</div>
     <div id="svEncList" style="margin:6px 0 6px">${rows}</div>
     <div id="svEncEditor"></div>
@@ -3144,6 +3160,10 @@ async function renderSvAi() {
       <label style="display:flex;align-items:center;gap:8px;margin-top:6px"><input id="svEncAtMe" type="checkbox" checked> Spawnpunkt = meine Position</label>
     </div>
     <button id="svEncCreate" style="width:100%;margin-top:8px">➕ Encounter anlegen</button>`;
+  { const b = el('svAiBrain'); if (b) b.onchange = async () => {
+    try { await svApi('POST', '/admin/mod-ai/encounters/brain', { enabled: b.checked }); showToast(b.checked ? '🧠 Verhaltens-Engine AN' : '🧠 Verhaltens-Engine AUS', 'success'); }
+    catch (e) { b.checked = !b.checked; showToast(e.message, 'error'); }
+  }; }
   el('svAiMaster').onchange = async () => {
     try { await svApi('PATCH', '/admin/mod-ai/encounters/status', { ai_encounters_enabled: el('svAiMaster').checked }); showToast(el('svAiMaster').checked ? '🤖 AI-Encounters AN' : '🤖 AI-Encounters AUS', 'success'); }
     catch (e) { el('svAiMaster').checked = !el('svAiMaster').checked; showToast(e.message, 'error'); }
@@ -3178,6 +3198,19 @@ function svEncSyncDraft() {
   const pts = [];
   box.querySelectorAll('.ee-pt').forEach((r) => pts.push({ x: parseFloat(r.querySelector('.pt-x').value) || 0, y: parseFloat(r.querySelector('.pt-y').value) || 0, z: parseFloat(r.querySelector('.pt-z').value) || 0 }));
   svEncDraft.patrol = pts;
+  // 🧠 Verhaltens-Felder (Brain, BFT-294). UI in Metern/Sekunden — Mod speichert Welt-Einheiten (×100).
+  const num = (c) => { const e = q(c); if (!e || e.value === '') return undefined; const v = parseFloat(e.value); return isNaN(v) ? undefined : v; };
+  const m = (c) => { const v = num(c); return v === undefined ? undefined : Math.round(v * UNITS_PER_M); };
+  svEncDraft.homeRadius = m('.ee-homer'); svEncDraft.leashRadius = m('.ee-leash');
+  svEncDraft.packCohesionRadius = m('.ee-packc'); svEncDraft.packAssistRadius = m('.ee-packa');
+  svEncDraft.chaseTimeoutSec = num('.ee-chase'); svEncDraft.patrolPauseSec = num('.ee-ppause');
+  if (q('.ee-dayactive')) {
+    svEncDraft.schedule = {
+      dayActive: q('.ee-dayactive').checked,
+      sleepFromHour: Math.max(0, Math.min(23, parseInt(q('.ee-sleepfrom').value) || 21)),
+      wakeHour: Math.max(0, Math.min(23, parseInt(q('.ee-wake').value) || 6)),
+    };
+  }
 }
 
 // Detail-Editor eines Encounters (Koordinaten + Patrouillen-Pfad). Rendert nur aus svEncDraft,
@@ -3218,9 +3251,27 @@ function renderEncEditor() {
         <div style="display:flex;gap:6px;margin-top:4px">
           <button class="secondary ee-pt-add" style="flex:1">➕ Punkt</button>
           <button class="secondary ee-pt-addme" style="flex:1">📍 Punkt an meiner Position</button>
+          <button class="secondary ee-pt-map" style="flex:1${encWpMode ? ';border-color:var(--accent);color:var(--accent)' : ''}">🗺️ ${encWpMode ? 'Karten-Modus beenden' : 'Auf Karte klicken'}</button>
         </div>
         <label style="margin-top:8px">Respawn-Delay (Sek, optional)</label>
         <input type="number" min="0" class="tm-input ee-respawn" value="${d.respawnDelaySec != null ? d.respawnDelaySec : ''}" placeholder="—">
+        <div class="sec-title" style="margin-top:12px">🧠 Verhalten (Brain)</div>
+        <div style="font-size:11px;color:var(--muted);margin-bottom:6px">Wirkt nur bei aktivierter Verhaltens-Engine (Kill-Switch im AI-Tab). Leer = Standardwerte. Angaben in Metern/Sekunden.</div>
+        <div style="display:flex;gap:6px">
+          <div style="flex:1"><label>Heimat-Radius (m)</label><input type="number" min="1" class="tm-input ee-homer" value="${d.homeRadius != null ? Math.round(d.homeRadius / UNITS_PER_M) : ''}" placeholder="—"></div>
+          <div style="flex:1"><label>Leine (m)</label><input type="number" min="1" class="tm-input ee-leash" value="${d.leashRadius != null ? Math.round(d.leashRadius / UNITS_PER_M) : ''}" placeholder="1,5×Aggro"></div>
+          <div style="flex:1"><label>Jagd-Timeout (s)</label><input type="number" min="3" class="tm-input ee-chase" value="${d.chaseTimeoutSec != null ? d.chaseTimeoutSec : ''}" placeholder="—"></div>
+        </div>
+        <div style="display:flex;gap:6px;margin-top:6px">
+          <div style="flex:1"><label>Rudel-Zusammenhalt (m)</label><input type="number" min="1" class="tm-input ee-packc" value="${d.packCohesionRadius != null ? Math.round(d.packCohesionRadius / UNITS_PER_M) : ''}" placeholder="—"></div>
+          <div style="flex:1"><label>Rudel-Beistand (m)</label><input type="number" min="1" class="tm-input ee-packa" value="${d.packAssistRadius != null ? Math.round(d.packAssistRadius / UNITS_PER_M) : ''}" placeholder="—"></div>
+          <div style="flex:1"><label>Patrouillen-Pause (s)</label><input type="number" min="0" class="tm-input ee-ppause" value="${d.patrolPauseSec != null ? d.patrolPauseSec : ''}" placeholder="—"></div>
+        </div>
+        <div style="display:flex;gap:10px;align-items:center;margin-top:8px;flex-wrap:wrap">
+          <label style="display:flex;align-items:center;gap:5px;font-size:12px;cursor:pointer"><input type="checkbox" class="ee-dayactive" ${!d.schedule || d.schedule.dayActive !== false ? 'checked' : ''}> ☀️ Tagaktiv (ruht nachts)</label>
+          <span style="font-size:12px">😴 ab <input type="number" min="0" max="23" class="tm-input ee-sleepfrom" style="width:52px" value="${d.schedule && d.schedule.sleepFromHour != null ? d.schedule.sleepFromHour : 21}"> Uhr</span>
+          <span style="font-size:12px">⏰ wach ab <input type="number" min="0" max="23" class="tm-input ee-wake" style="width:52px" value="${d.schedule && d.schedule.wakeHour != null ? d.schedule.wakeHour : 6}"> Uhr</span>
+        </div>
       </div>
       <div style="display:flex;gap:6px;margin-top:10px">
         <button class="ee-save" style="flex:1">💾 Speichern</button>
@@ -3232,7 +3283,13 @@ function renderEncEditor() {
   box.querySelector('.ee-pt-add').onclick = () => { svEncSyncDraft(); (svEncDraft.patrol = svEncDraft.patrol || []).push({ x: 0, y: 0, z: 0 }); renderEncEditor(); };
   box.querySelector('.ee-pt-addme').onclick = () => { svEncSyncDraft(); if (me && typeof me.x === 'number') (svEncDraft.patrol = svEncDraft.patrol || []).push({ x: me.x, y: me.y, z: me.z || 0 }); else showToast('Position unbekannt', 'error'); renderEncEditor(); };
   box.querySelectorAll('.ee-pt-del').forEach((b) => b.onclick = () => { svEncSyncDraft(); svEncDraft.patrol.splice(parseInt(b.dataset.i), 1); renderEncEditor(); });
-  box.querySelector('.ee-cancel').onclick = () => { svEncEditId = null; svEncDraft = null; renderEncEditor(); };
+  box.querySelector('.ee-pt-map').onclick = () => {
+    svEncSyncDraft();
+    encWpMode = !encWpMode;
+    if (encWpMode) { if (!mapOpen) toggleMap(true); showToast('🗺️ Karte: jeder Klick = Wegpunkt. Button erneut = beenden.', 'info'); }
+    renderEncEditor();
+  };
+  box.querySelector('.ee-cancel').onclick = () => { svEncEditId = null; svEncDraft = null; encWpMode = false; renderEncEditor(); };
   box.querySelector('.ee-del').onclick = () => svArmConfirm(box.querySelector('.ee-del'), 'Encounter löschen', async () => {
     try { await svApi('DELETE', `/admin/mod-ai/encounters/${encodeURIComponent(svEncEditId)}`); showToast('🗑️ Encounter gelöscht', 'success'); svEncEditId = null; svEncDraft = null; renderSvAi(); } catch (e) { showToast(e.message, 'error'); }
   });
@@ -3241,7 +3298,11 @@ function renderEncEditor() {
     if (!svEncDraft.species) { showToast('Spezies angeben', 'error'); return; }
     const body = { name: svEncDraft.name, species: svEncDraft.species, archetype: svEncDraft.archetype, count: svEncDraft.count, enabled: svEncDraft.enabled, spawn: svEncDraft.spawn, patrol: svEncDraft.patrol };
     if (svEncDraft.respawnDelaySec != null) body.respawnDelaySec = svEncDraft.respawnDelaySec;
-    try { await svApi('PATCH', `/admin/mod-ai/encounters/${encodeURIComponent(svEncEditId)}`, body); showToast('💾 Encounter gespeichert', 'success'); svEncEditId = null; svEncDraft = null; renderSvAi(); } catch (e) { showToast(e.message, 'error'); }
+    // Brain-Felder nur mitsenden, wenn gesetzt (undefined-Werte fallen bei JSON.stringify weg).
+    for (const k of ['homeRadius', 'leashRadius', 'packCohesionRadius', 'packAssistRadius', 'chaseTimeoutSec', 'patrolPauseSec', 'schedule']) {
+      if (svEncDraft[k] !== undefined) body[k] = svEncDraft[k];
+    }
+    try { await svApi('PATCH', `/admin/mod-ai/encounters/${encodeURIComponent(svEncEditId)}`, body); showToast('💾 Encounter gespeichert', 'success'); svEncEditId = null; svEncDraft = null; encWpMode = false; renderSvAi(); } catch (e) { showToast(e.message, 'error'); }
   };
 }
 
