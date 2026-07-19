@@ -3125,9 +3125,10 @@ let svEncEditId = null, svEncDraft = null;
 async function renderSvAi() {
   const box = el('svAiBody'); if (!box) return;
   box.innerHTML = '<div class="dt-muted">Lade…</div>';
-  const [st, list] = await Promise.all([
+  const [st, list, brain] = await Promise.all([
     svApi('GET', '/admin/mod-ai/encounters/status').catch(() => ({})),
     svApi('GET', '/admin/mod-ai/encounters').catch(() => ({ encounters: [] })),
+    svApi('GET', '/admin/mod-ai/encounters/brain').catch(() => null), // älterer Mod-Build → Zeile ausblenden
   ]);
   const enabled = !!(st.ai_encounters_enabled != null ? st.ai_encounters_enabled : st.enabled);
   const encs = list.encounters || [];
@@ -3140,7 +3141,11 @@ async function renderSvAi() {
     </div>`).join('') || '<div class="dt-muted">Keine Encounters angelegt.</div>';
   box.innerHTML = `
     <div class="sec-title">🤖 AI-Encounters</div>
-    <label style="display:flex;align-items:center;gap:8px;font-size:13px;margin:8px 0 14px"><input id="svAiMaster" type="checkbox" ${enabled ? 'checked' : ''}> Encounter-System aktiv (Master-Schalter)</label>
+    <label style="display:flex;align-items:center;gap:8px;font-size:13px;margin:8px 0 6px"><input id="svAiMaster" type="checkbox" ${enabled ? 'checked' : ''}> Encounter-System aktiv (Master-Schalter)</label>
+    ${brain ? `<label style="display:flex;align-items:center;gap:8px;font-size:13px;margin:0 0 14px" title="Steuert Patrouille/Territorial/Rudel/Schlafen. Kill-Switch: aus = Dinos stehen nur (wie bisher).">
+      <input id="svAiBrain" type="checkbox" ${brain.brainEnabled ? 'checked' : ''}> 🧠 Verhaltens-Engine aktiv
+      <span style="color:var(--muted);font-size:11px">(max ${brain.maxTotalPawns} Pawns · Tick ${brain.tickMs} ms)</span>
+    </label>` : ''}
     <div class="sec-title">Encounters (${encs.length})</div>
     <div id="svEncList" style="margin:6px 0 6px">${rows}</div>
     <div id="svEncEditor"></div>
@@ -3155,6 +3160,10 @@ async function renderSvAi() {
       <label style="display:flex;align-items:center;gap:8px;margin-top:6px"><input id="svEncAtMe" type="checkbox" checked> Spawnpunkt = meine Position</label>
     </div>
     <button id="svEncCreate" style="width:100%;margin-top:8px">➕ Encounter anlegen</button>`;
+  { const b = el('svAiBrain'); if (b) b.onchange = async () => {
+    try { await svApi('POST', '/admin/mod-ai/encounters/brain', { enabled: b.checked }); showToast(b.checked ? '🧠 Verhaltens-Engine AN' : '🧠 Verhaltens-Engine AUS', 'success'); }
+    catch (e) { b.checked = !b.checked; showToast(e.message, 'error'); }
+  }; }
   el('svAiMaster').onchange = async () => {
     try { await svApi('PATCH', '/admin/mod-ai/encounters/status', { ai_encounters_enabled: el('svAiMaster').checked }); showToast(el('svAiMaster').checked ? '🤖 AI-Encounters AN' : '🤖 AI-Encounters AUS', 'success'); }
     catch (e) { el('svAiMaster').checked = !el('svAiMaster').checked; showToast(e.message, 'error'); }
