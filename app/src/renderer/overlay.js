@@ -937,6 +937,9 @@ async function init() {
   // 🧭 3D-Effektstärke
   const s3 = el('spatial3d');
   if (s3) { s3.value = String(Math.round(spatial3dStrength * 100)); s3.oninput = (e) => setSpatial3dStrength(parseInt(e.target.value)); }
+  // 🎛️ Kill-Switch für die Effekt-Kette (3D/Unterwasser/Gottstimme-Effekt) [BFT-287]
+  const fx = el('voiceFxChk');
+  if (fx) { fx.checked = voiceEffectsOn; fx.onchange = () => setVoiceEffects(fx.checked); }
 
   // Maustasten als Hotkey (für Push-to-Talk/Mute): während des Neubelegens Klick fangen
   window.addEventListener('mousedown', onRebindMouse, true);
@@ -1357,28 +1360,74 @@ function renderGodVoice() {
     : (godVoiceMine ? '● Läuft — du wirst server-weit gehört.' : '');
 }
 function ensureVoiceCtx() {
-  if (!voiceCtx) { try { voiceCtx = new (window.AudioContext || window.webkitAudioContext)(); } catch {} }
-  if (voiceCtx && voiceCtx.state === 'suspended') voiceCtx.resume().catch(() => {});
+  if (!voiceCtx) {
+    try {
+      voiceCtx = new (window.AudioContext || window.webkitAudioContext)();
+      // 🔊 Ausgabegerät auf den CONTEXT setzen: bei webAudioMix läuft der Ton über den AudioContext,
+      // setSinkId auf den <audio>-Elementen ist wirkungslos. Ohne das hörten User mit Nicht-Standard-
+      // Ausgabegerät (Headset) nichts bzw. auf dem falschen Gerät. [BFT-287]
+      if (spkDeviceId && voiceCtx.setSinkId) voiceCtx.setSinkId(spkDeviceId).catch(() => {});
+      // Autoplay-Gate: bleibt der Context „suspended" (startAudio fehlgeschlagen), wäre ALLES dauerhaft
+      // stumm. Per Geste + statechange entsperren und wach halten. [BFT-287]
+      voiceCtx.addEventListener('statechange', voiceCtxWake);
+      ['click', 'keydown', 'pointerdown'].forEach((ev) => window.addEventListener(ev, voiceCtxWake, { passive: true }));
+    } catch {}
+  }
+  voiceCtxWake();
   return voiceCtx;
 }
+function voiceCtxWake() { if (voiceCtx && voiceCtx.state === 'suspended') voiceCtx.resume().catch(() => {}); }
+// 🔀 Kill-Switch für die ganze Effekt-Kette (3D/Unterwasser/Gottstimme-Effekt). Default AN.
+// AUS = pures LiveKit-Playback wie vor 1.9 (Diagnose-/Rettungsschalter bei Knistern/Audio-Problemen).
+let voiceEffectsOn = localStorage.getItem('bf-voice-effects') !== '0';
+function setVoiceEffects(on) {
+  voiceEffectsOn = !!on;
+  try { localStorage.setItem('bf-voice-effects', voiceEffectsOn ? '1' : '0'); } catch {}
+  if (!voiceEffectsOn) {
+    for (const [, pl] of spatialPlugins) { try { pl.track.setWebAudioPlugins([]); } catch {} } // Ketten leeren → plain
+    spatialPlugins.clear();
+  } else if (room) {
+    for (const p of room.remoteParticipants.values()) {   // Ketten für alle aktiven Tracks neu aufbauen
+      for (const pub of p.audioTrackPublications.values()) { if (pub.track) attachSpatialPlugins(pub.track, p.identity); }
+    }
+  }
+  updateProximityVolumes();
+}
 function attachSpatialPlugins(track, identity) {
-  const ctx = voiceCtx; if (!ctx || !identity || typeof track.setWebAudioPlugins !== 'function') return;
+  const ctx = voiceCtx; if (!voiceEffectsOn || !ctx || !identity || typeof track.setWebAudioPlugins !== 'function') return;
+  // 'equalpower' statt HRTF: HRTF ist eine Faltung PRO QUELLE — bei ~36 Sprechern neben dem laufenden
+  // Spiel führte das zu Audio-Underruns (Knistern). equalpower liefert weiter klares L/R-Panning bei
+  // einem Bruchteil der CPU. [BFT-287]
   const panner = ctx.createPanner();
-  panner.panningModel = 'HRTF'; panner.distanceModel = 'linear';
+  panner.panningModel = 'equalpower'; panner.distanceModel = 'linear';
   panner.refDistance = 1; panner.maxDistance = 1e6; panner.rolloffFactor = 0; // Distanz-Gain macht setVolume, nicht der Panner
   const lowpass = ctx.createBiquadFilter(); lowpass.type = 'lowpass'; lowpass.frequency.value = OPEN_HZ;
-  ensureVoiceIRs(ctx);
-  const reverb = ctx.createConvolver(); reverb.normalize = false; reverb.buffer = identityIR; // Passthrough bis zur Gottstimme
-  // Brick-Wall-Limiter als letztes Glied: fängt nur Spitzen nahe 0 dBFS ab → normale Stimme transparent,
-  // aber die Gottstimme (voller Pegel, ohne Distanz-Abschwächung) kann NICHT mehr übersteuern.
-  const limiter = ctx.createDynamicsCompressor();
-  limiter.threshold.value = -2; limiter.knee.value = 0; limiter.ratio.value = 20; limiter.attack.value = 0.003; limiter.release.value = 0.12;
-  try { track.setWebAudioPlugins([panner, lowpass, reverb, limiter]); } catch { return; } // source→panner→lowpass→reverb→limiter→gain
-  spatialPlugins.set(identity, { panner, lowpass, reverb, limiter });
+  // Normale Sprecher = MINIMAL-Kette (nur Panner+Lowpass). Reverb+Limiter existieren NUR in der
+  // Gottstimme-Kette (godChain unten) — statt 36× Convolver+Compressor im Signalweg. [BFT-287]
+  try { track.setWebAudioPlugins([panner, lowpass]); } catch { return; } // source→panner→lowpass→gain
+  spatialPlugins.set(identity, { track, panner, lowpass, god: false, reverb: null, limiter: null });
+}
+// Gottstimme-Kette nur für den aktiven Durchsage-Sprecher ein-/aushängen (Reverb + Limiter).
+function setGodChain(pl, on) {
+  if (pl.god === on) return;
+  const ctx = voiceCtx; if (!ctx) return;
+  if (on && !pl.limiter) {
+    ensureVoiceIRs(ctx);
+    pl.reverb = ctx.createConvolver(); pl.reverb.normalize = false; pl.reverb.buffer = identityIR;
+    // Brick-Wall-Limiter: die Gottstimme läuft mit vollem Pegel ohne Distanz-Abschwächung → Spitzen
+    // nahe 0 dBFS abfangen, damit nichts übersteuert.
+    pl.limiter = ctx.createDynamicsCompressor();
+    pl.limiter.threshold.value = -2; pl.limiter.knee.value = 0; pl.limiter.ratio.value = 20; pl.limiter.attack.value = 0.003; pl.limiter.release.value = 0.12;
+  }
+  try {
+    pl.track.setWebAudioPlugins(on ? [pl.panner, pl.lowpass, pl.reverb, pl.limiter] : [pl.panner, pl.lowpass]);
+    pl.god = on;
+  } catch {}
 }
 // Panner-Richtung (z+heading) + Unterwasser-Lowpass je Sprecher aktualisieren. Gain/Deafen macht weiter setVolume.
 function updateSpatialPanners() {
   const ctx = voiceCtx; if (!ctx) { renderVoiceDbg([]); return; }
+  if (!voiceEffectsOn) { renderVoiceDbg(['3D/Effekte AUS (Audio-Einstellungen)']); return; }
   const now = ctx.currentTime;
   const hr = ((me && me.heading != null ? me.heading : 0) + SPATIAL_HEADING_OFF) * Math.PI / 180;
   const fx = Math.cos(hr), fy = Math.sin(hr);   // Forward (Welt)
@@ -1397,7 +1446,9 @@ function updateSpatialPanners() {
       pz = (-fwd * SPATIAL_SCALE) * s - (1 - s); // s→0 blendet nach (0,0,-1) = geradeaus
       dU = Math.hypot(dx, dy);
     }
-    try { pl.panner.positionX.setValueAtTime(px, now); pl.panner.positionY.setValueAtTime(0, now); pl.panner.positionZ.setValueAtTime(pz, now); }
+    // Weich zur neuen Position gleiten (setTargetAtTime) statt harter 100-ms-Sprünge (setValueAtTime):
+    // die Sprünge erzeugten hörbare Klick-/Zipper-Artefakte bei sich bewegenden Sprechern. [BFT-287]
+    try { pl.panner.positionX.setTargetAtTime(px, now, 0.05); pl.panner.positionY.setTargetAtTime(0, now, 0.05); pl.panner.positionZ.setTargetAtTime(pz, now, 0.05); }
     catch { try { pl.panner.setPosition(px, 0, pz); } catch {} }
     // Unterwasser-Muffel BEIDSEITIG: gedämpft, wenn ICH untergetaucht bin ODER der Sprecher es ist.
     // Gottstimme durchdringt Wasser (bleibt offen).
@@ -1405,6 +1456,7 @@ function updateSpatialPanners() {
     const uw = !isGod && (meUW || spkUW);
     const hz = isGod ? OPEN_HZ : (uw ? UNDERWATER_HZ : OPEN_HZ);
     try { pl.lowpass.frequency.setTargetAtTime(hz, now, 0.08); } catch { pl.lowpass.frequency.value = hz; }
+    setGodChain(pl, isGod); // Reverb+Limiter NUR am Durchsage-Sprecher (Ein-/Aushängen bei Statuswechsel)
     if (pl.reverb) { const want = (isGod && godVoiceReverbActive) ? godVoiceIR : identityIR; if (pl.reverb.buffer !== want) pl.reverb.buffer = want; } // Himmels-Hall nur bei Durchsage + wenn eingeschaltet
     const nm = (pos && (pos.name || pos.playerName)) || String(identity).slice(-4);
     const side = isGod ? '👑' : (px > 0.05 ? 'R' : px < -0.05 ? 'L' : 'C');
@@ -7444,6 +7496,8 @@ async function setMicDevice(id) {
 async function setSpkDevice(id) {
   spkDeviceId = id; localStorage.setItem('bf-spk-dev', id);
   try { if (room && id) await room.switchActiveDevice('audiooutput', id); } catch {}
+  // webAudioMix: der Ton läuft über den AudioContext → Gerätewechsel MUSS auch dort ankommen. [BFT-287]
+  try { if (voiceCtx && voiceCtx.setSinkId && id) voiceCtx.setSinkId(id).catch(() => {}); } catch {}
   for (const a of document.querySelectorAll('audio')) { if (a.setSinkId && id) a.setSinkId(id).catch(() => {}); }
 }
 
