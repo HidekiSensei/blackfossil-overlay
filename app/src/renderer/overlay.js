@@ -979,6 +979,7 @@ async function init() {
   // BlackFossil-Server ist (siehe applyServerState). Off-Server kein Voice.
   if (session) {
     sessionToken = session;
+    loadRoleUI();   // Rolle/Panels sofort laden → Team/Admin/Server auch off-server sichtbar (Voice bleibt server-only)
     startPositionPolling();
     // Zonen (und Kalibrierung) JETZT nachladen — der erste Load in init() lief noch OHNE
     // sessionToken (→ 401). Ohne das erscheinen die Zonen erst beim 60s-Auto-Refresh.
@@ -2819,7 +2820,64 @@ function showServerTab(t) {
   else if (t === 'server') { renderServer(); svRenderClassLimits(); }
   else if (t === 'godvoice') renderGodVoice();
   else if (t === 'teamaudit') renderTeamAudit();
+  else if (t === 'evrima') renderEvrima();
   bfScheduleFrameSync && bfScheduleFrameSync();
+}
+
+// ── Evrima-Versionen (Steam-Build-Infos, vom Backend gecacht — Quelle steamcmd.net/PICS) ──────
+// Der öffentliche evrima-Branch trägt keinen Semver → wir zeigen die Steam-Build-ID (wie SteamDB)
+// plus Last-Updated. Refresh bei jeder Tab-Anzeige (Backend cached 5 min).
+function evrimaAgo(unixSec) {
+  if (!unixSec) return '—';
+  const s = Math.max(0, Math.floor(Date.now() / 1000) - unixSec);
+  const d = Math.floor(s / 86400), h = Math.floor((s % 86400) / 3600), m = Math.floor((s % 3600) / 60);
+  if (d > 0) return `vor ${d} Tag${d === 1 ? '' : 'en'}`;
+  if (h > 0) return `vor ${h} Std`;
+  if (m > 0) return `vor ${m} Min`;
+  return 'gerade eben';
+}
+async function renderEvrima() {
+  const box = el('evrimaBody'); if (!box) return;
+  box.innerHTML = '<div class="dt-muted" style="padding:12px">Lade…</div>';
+  let d;
+  try {
+    const r = await fetch(`${config.tokenBase}/evrima-versions`, { headers: { Authorization: `Bearer ${sessionToken}` } });
+    if (!r.ok) throw new Error(r.status === 403 ? 'Nicht berechtigt.' : `Fehler ${r.status}`);
+    d = await r.json();
+  } catch (e) {
+    box.innerHTML = `<div class="dt-muted" style="padding:12px">Konnte Versionen nicht laden: ${escapeHtml(e.message)}</div>`;
+    return;
+  }
+  const td = 'padding:8px 10px;vertical-align:top';
+  const th = (l) => `<th style="padding:6px 10px;text-align:left;color:var(--muted);font-weight:600;white-space:nowrap">${l}</th>`;
+  const row = (label, icon, b) => {
+    const build = b && b.buildId ? b.buildId : '—';
+    const upd = b && b.updated ? new Date(b.updated * 1000) : null;
+    const tip = upd ? escapeHtml(upd.toLocaleString('de-DE')) : 'unbekannt';
+    const desc = b && b.desc ? `<div style="font-size:10px;opacity:.6">${escapeHtml(b.desc)}</div>` : '';
+    // Server hat i. d. R. eine lesbare ProjectVersion (0.21.738); Game nur die Steam-Build-ID.
+    const ver = b && b.version
+      ? `<b style="font-size:14px">${escapeHtml(b.version)}</b> <span style="font-family:monospace;opacity:.55;font-size:11px">Build ${escapeHtml(build)}</span>`
+      : `<span style="font-family:monospace">${escapeHtml(build)}</span>`;
+    return `<tr style="border-top:1px solid var(--border)">
+      <td style="${td}">${icon} <b>${label}</b>${desc}</td>
+      <td style="${td}">${ver}</td>
+      <td style="${td};white-space:nowrap" title="${tip}">${evrimaAgo(b && b.updated)}</td>
+    </tr>`;
+  };
+  const stand = d && d.fetchedAt ? `zuletzt geprüft ${evrimaAgo(d.fetchedAt)}` : 'noch nicht abgerufen';
+  box.innerHTML = `
+    <div class="sec-title">🏷️ Evrima — aktuelle Builds</div>
+    <table style="width:100%;border-collapse:collapse;font-size:13px;margin:8px 0">
+      <thead><tr>${th('')}${th('Version / Build')}${th('Zuletzt aktualisiert')}</tr></thead>
+      <tbody>
+        ${row('Server', '🖥️', d && d.server)}
+        ${row('Game', '🎮', d && d.game)}
+      </tbody>
+    </table>
+    <div class="dt-muted" style="font-size:11px;margin-top:6px">Server-Version = laufende ProjectVersion; Steam liefert nur die Build-ID (der evrima-Branch hat keinen Versionsnamen). Quelle: steamcmd.net (Steam PICS) + Server-Status · ${stand}</div>
+    <button id="evrimaRefresh" class="secondary" style="width:auto;padding:4px 12px;font-size:12px;margin-top:10px">🔄 Aktualisieren</button>`;
+  const rb = el('evrimaRefresh'); if (rb) rb.onclick = () => renderEvrima();
 }
 // Class-Limits im Server-Tab (dieselben /dino-limits-Endpoints wie das Admin-Panel; das Admin-Panel
 // bleibt unangetastet — hier eine eigene Ansicht in #svClassBody).
@@ -7403,6 +7461,36 @@ function refreshMicState() {
   if (!isMicOn()) { setMicState('muted'); return; }
   if (room.localParticipant.isSpeaking) { setMicState('speaking'); return; }
   setMicState('idle');
+}
+
+// Rollen/Rechte beim Overlay-Start laden — ENTKOPPELT vom Voice-Connect (der bleibt server-only,
+// siehe applyServerState/toggleConnect). Blendet Team/Admin/Server-Dock + Panels sofort ein, auch
+// wenn man (noch) nicht auf dem Spielserver ist. Startet KEIN Voice, KEINE Ingame-Poller — das
+// macht weiterhin connectWithSession beim Server-Join. /token liefert die Rolle Discord-basiert,
+// unabhängig von der Spielserver-Präsenz.
+async function loadRoleUI() {
+  if (!sessionToken) return;
+  try {
+    const res = await fetch(`${config.tokenBase}/token`, { headers: { Authorization: `Bearer ${sessionToken}` } });
+    if (res.status === 401) { window.bf.logout(); return; }
+    if (!res.ok) return;
+    const data = await res.json();
+    isAdmin = !!data.admin;
+    isIngame = !!data.ingame || isAdmin;
+    isTeam = !!data.team || isAdmin;
+    isStaff = isIngame || isTeam;
+    { const ab = el('openAdminBtn'); if (ab) ab.style.display = isStaff ? 'block' : 'none'; }
+    { const da = el('dockAdmin'); if (da) da.style.display = isStaff ? 'flex' : 'none'; }
+    { const ds = el('dockServer'); if (ds) ds.style.display = isAdmin ? 'flex' : 'none'; }
+    { const zb = el('zoneBtn'); if (zb) zb.style.display = isStaff ? 'block' : 'none'; }
+    if (data.name) el('hudName').textContent = data.name;
+    setTier(data.tier);
+    setAboTier((data.team || data.admin) ? 'Obsidian' : data.aboTier);
+    mySkinFree = !!data.skinFree;
+    setStaff(data.staff);
+    applyModerationGate();
+    if (isStaff) loadDutyState();
+  } catch {}
 }
 
 async function connectWithSession(session) {
