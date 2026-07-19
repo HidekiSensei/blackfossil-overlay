@@ -221,8 +221,13 @@
     .hk-row button { flex: none; padding: 4px 12px; font-size: 12px; background: var(--input-bg); border: 1px solid var(--border); color: #eee; min-width: 64px; }
     .hk-row button.listening { background: var(--warn); color: #000; }
 
-    /* Settings: 3-Spalten-Layout */
+    /* Settings: Tabs (Audio/Tastenbelegung/UI) */
     #settings.wide { width: clamp(760px, 82vw, 1120px); }
+    /* Feste Panel-Höhe: der Tab-Inhalt scrollt, das Fenster springt beim Tab-Wechsel NICHT. */
+    .settings-pane { height: 62vh; overflow: auto; padding-right: 4px; }
+    .settings-pane[hidden] { display: none; }
+    #settings .settings-cols { grid-template-columns: 1fr 1fr; max-height: none; overflow: visible; }
+    #hudVisToggles button { width: 100%; margin-top: 6px; }
     /* Admin-Panel: eigenständiges Modal wie Settings */
     #adminPanel, #serverPanel { position: absolute; top: 50%; left: 50%; transform: translate(-50%,-50%); display: none;
       background: var(--panel); border: 1px solid var(--border); border-radius: 16px; padding: 26px;
@@ -504,7 +509,10 @@
     body.bf-hide-hud #hud,
     body.bf-hide-hudHeart #hudHeart,
     body.bf-hide-minimapWrap #minimapWrap,
-    body.bf-hide-hudInfo #hudInfo { display: none !important; }
+    body.bf-hide-hudInfo #hudInfo,
+    body.bf-hide-eventPanel #eventPanel,
+    body.bf-hide-growTimer #growTimer,
+    body.bf-hide-goldenHud #goldenHud { display: none !important; }
     /* Dienst-/Admin-Modus: Lebensanzeige ausblenden */
     body.on-duty #hudHeart { display: none !important; }
     /* … im Edit-Mode bleiben sie (gedimmt) sichtbar, damit man sie wieder einblenden kann */
@@ -1098,6 +1106,15 @@
   <!-- Settings -->
   <div id="settings" class="wide">
     <h2>⚙️ Einstellungen</h2>
+    <div class="admin-tabs" id="settingsTabs">
+      <button data-sttab="audio">🎙️ Audio</button>
+      <button data-sttab="keys" class="secondary">⌨️ Tastenbelegung</button>
+      <button data-sttab="ui" class="secondary">🎨 UI</button>
+    </div>
+    <div class="settings-panes">
+
+    <!-- ── Audio ── -->
+    <div class="settings-pane" data-pane="audio">
     <div class="settings-cols">
 
       <!-- Spalte 1: Voicechat-Kontrolle -->
@@ -1212,11 +1229,6 @@
 
           <button id="micCompReset" class="secondary" style="width:100%;margin-top:6px;font-size:12px">↺ Standardwerte (Regler)</button>
         </details>
-        <div class="set-block">
-          <div class="set-label">🎨 Layout</div>
-          <button id="editModeBtn" style="width:100%">🎨 Edit-Mode (Panels verschieben)</button>
-          <div style="font-size:11px;color:var(--muted);margin-top:6px">Panels per Drag verschieben — Positionen werden lokal gespeichert.</div>
-        </div>
       </div>
 
       <!-- Spalte 2: Voicechat-Einstellungen -->
@@ -1244,21 +1256,22 @@
           <input id="voiceSearch" placeholder="🔍 Spieler suchen…" style="width:100%;margin-bottom:6px;padding:7px;border-radius:6px;border:1px solid var(--border);background:rgba(0,0,0,0.25);color:#eee;box-sizing:border-box">
           <div id="voiceUsers" style="max-height:220px;overflow:auto"></div>
         </div>
-        <div class="set-block">
-          <div class="set-label">⬆️ Updates</div>
-          <button id="checkUpdateBtn" style="width:100%">🔄 Nach Updates suchen</button>
-          <div id="updateBox" style="display:none;margin-top:10px">
-            <div id="updateInfo" style="font-size:12px;color:var(--muted);margin:6px 0">Eine neue Version ist verfügbar.</div>
-            <button id="updateBtn" style="width:100%">Update herunterladen</button>
-          </div>
-        </div>
       </div>
 
-      <!-- Spalte 3: Hotkeys -->
+    </div><!-- /settings-cols (audio) -->
+    </div><!-- /pane audio -->
+
+    <!-- ── Tastenbelegung ── -->
+    <div class="settings-pane" data-pane="keys" hidden>
+      <div class="col-head">⌨️ Tastenbelegung</div>
+      <div id="hotkeyList"></div>
+      <button id="resetHkBtn" class="secondary" style="margin-top:10px;width:100%">Tasten zurücksetzen</button>
+    </div>
+
+    <!-- ── UI ── -->
+    <div class="settings-pane" data-pane="ui" hidden>
+    <div class="settings-cols">
       <div class="settings-col">
-        <div class="col-head">⌨️ Hotkeys</div>
-        <div id="hotkeyList"></div>
-        <button id="resetHkBtn" class="secondary" style="margin-top:10px;width:100%">Tasten zurücksetzen</button>
         <div class="set-block">
           <div class="set-label">🎨 Farbthema</div>
           <div id="themePicker" style="display:flex;gap:8px;flex-wrap:wrap;margin-top:4px"></div>
@@ -1270,12 +1283,17 @@
           <div class="set-label">Einzeln einstellen</div>
           <button id="blurToggleBtn" style="width:100%;margin-top:4px">🌫️ Weichzeichner: An</button>
           <button id="fxToggleBtn" style="width:100%;margin-top:6px">⚡ Effekte: An</button>
-          <button id="miniToggleBtn" style="width:100%;margin-top:6px">🗺️ Minimap: An</button>
-          <button id="compassToggleBtn" style="width:100%;margin-top:6px">🧭 Kompass: An</button>
           <div style="font-size:11px;color:var(--muted);margin-top:8px">🌫️ Weichzeichner (Blur) = größter FPS-Kostenpunkt. ⚡ Effekte = Animationen/Leuchten. Beim <em>Spielen</em> (Overlay-Dock zu) sind viele Effekte ohnehin automatisch aus.</div>
           <div class="set-label" style="margin-top:14px">Experimentell</div>
           <button id="shrinkToggleBtn" style="width:100%;margin-top:4px">🪟 Fenster-Shrink: Aus</button>
           <div style="font-size:11px;color:var(--muted);margin-top:8px">🪟 Verkleinert das Overlay-Fenster beim Spielen (Dock zu) auf die HUD-Bereiche, statt den ganzen Bildschirm zu bedecken — gibt dem Spiel oft den schnellen Vollbild-Pfad zurück (mehr FPS). Wirkung ist GPU-/treiberabhängig: <em>ausprobieren</em>. Weniger sichtbares HUD (im Edit-Mode ausblenden) = stärkerer Effekt.</div>
+        </div>
+      </div>
+      <div class="settings-col">
+        <div class="set-block">
+          <div class="set-label">👁️ HUD-Sichtbarkeit</div>
+          <div id="hudVisToggles"></div>
+          <div style="font-size:11px;color:var(--muted);margin-top:8px">Blendet einzelne HUD-Elemente ein/aus (bleibt gespeichert).</div>
         </div>
         <div class="set-block">
           <div class="set-label">🗺️ Karten-Marker</div>
@@ -1285,9 +1303,24 @@
           <button id="markerResetBtn" class="secondary" style="width:100%;margin-top:8px">↩️ Marker zurücksetzen</button>
           <div style="font-size:11px;color:var(--muted);margin-top:8px">Farbe &amp; Größe des Wegpunkts sowie die Farbe deines eigenen Positions-Pfeils. Bleibt gespeichert.</div>
         </div>
+        <div class="set-block">
+          <div class="set-label">🎨 Layout</div>
+          <button id="editModeBtn" style="width:100%">🎨 Edit-Mode (Panels verschieben)</button>
+          <div style="font-size:11px;color:var(--muted);margin-top:6px">Panels per Drag verschieben — Positionen werden lokal gespeichert.</div>
+        </div>
+        <div class="set-block">
+          <div class="set-label">⬆️ Updates</div>
+          <button id="checkUpdateBtn" style="width:100%">🔄 Nach Updates suchen</button>
+          <div id="updateBox" style="display:none;margin-top:10px">
+            <div id="updateInfo" style="font-size:12px;color:var(--muted);margin:6px 0">Eine neue Version ist verfügbar.</div>
+            <button id="updateBtn" style="width:100%">Update herunterladen</button>
+          </div>
+        </div>
       </div>
 
-    </div>
+    </div><!-- /settings-cols (ui) -->
+    </div><!-- /pane ui -->
+    </div><!-- /settings-panes -->
     <div id="versionInfo" style="text-align:center;font-size:11px;color:var(--muted);margin:10px 0 4px">v…</div>
     <div class="btnrow">
       <button id="logoutBtn" class="secondary">Abmelden</button>

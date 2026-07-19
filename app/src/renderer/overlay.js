@@ -736,6 +736,7 @@ async function init() {
   setMicBtn();
   el('logoutBtn').onclick = () => window.bf.logout();
   el('closeBtn').onclick = () => toggleSettings(false);
+  document.querySelectorAll('#settingsTabs [data-sttab]').forEach((b) => { b.onclick = () => showSettingsTab(b.dataset.sttab); });
   el('heatBtn').onclick = () => {
     heatmapMode = !heatmapMode;
     el('heatBtn').style.background = heatmapMode ? 'var(--accent)' : 'var(--panel)';
@@ -6631,10 +6632,17 @@ function navTo(target) {
   updateInteractive();
 }
 
+let settingsTab = 'audio';
+function showSettingsTab(t) {
+  settingsTab = t;
+  document.querySelectorAll('#settingsTabs [data-sttab]').forEach((b) => b.classList.toggle('secondary', b.dataset.sttab !== t));
+  document.querySelectorAll('#settings .settings-pane').forEach((p) => { p.hidden = p.dataset.pane !== t; });
+  if (t === 'ui') renderHudToggles();
+}
 function toggleSettings(force) {
   settingsOpen = force !== undefined ? force : !settingsOpen;
   el('settings').style.display = settingsOpen ? 'block' : 'none';
-  if (settingsOpen) { renderVoiceUsers(); renderThemePicker(); }   // frisch rendern → korrekte Schlösser + Color-Input
+  if (settingsOpen) { renderVoiceUsers(); renderThemePicker(); showSettingsTab(settingsTab); }   // frisch rendern + Tab syncen
   updateInteractive();
 }
 
@@ -7152,7 +7160,32 @@ const HIDEABLE = [
   { id: 'hudHeart',    label: 'Lebensanzeige' },
   { id: 'minimapWrap', label: 'Minimap' },
   { id: 'hudInfo',     label: 'Voice-Infos' },   // Mikrofon / Reichweite / Zone
+  { id: 'eventPanel',  label: 'Aktive Events' },
+  { id: 'growTimer',   label: 'Grow-Timer' },
+  { id: 'goldenHud',   label: 'Goldene Zone' },
 ];
+
+// Einheitliche HUD-Sichtbarkeits-Toggles im Settings→UI-Tab. Minimap/Kompass haben eigene
+// Persistenz (miniHidden/compassHidden); der Rest läuft über das HIDEABLE-System (toggleHidden).
+const HUD_TOGGLES_UI = [
+  { id: 'minimapWrap', label: 'Minimap',       hidden: () => miniHidden,                toggle: toggleMinimap },
+  { id: 'compassWrap', label: 'Kompass',       hidden: () => compassHidden,             toggle: toggleCompass },
+  { id: 'eventPanel',  label: 'Aktive Events', hidden: () => hiddenEls.has('eventPanel'), toggle: () => toggleHidden('eventPanel') },
+  { id: 'hudHeart',    label: 'Lebensanzeige', hidden: () => hiddenEls.has('hudHeart'),   toggle: () => toggleHidden('hudHeart') },
+  { id: 'hudInfo',     label: 'Infoboxen',     hidden: () => hiddenEls.has('hudInfo'),    toggle: () => toggleHidden('hudInfo') },
+  { id: 'growTimer',   label: 'Grow-Timer',    hidden: () => hiddenEls.has('growTimer'),  toggle: () => toggleHidden('growTimer') },
+  { id: 'goldenHud',   label: 'Goldene Zone',  hidden: () => hiddenEls.has('goldenHud'),  toggle: () => toggleHidden('goldenHud') },
+];
+function renderHudToggles() {
+  const box = el('hudVisToggles'); if (!box) return;
+  box.innerHTML = HUD_TOGGLES_UI.map((t) => {
+    const off = t.hidden();
+    return `<button data-hudvis="${t.id}"${off ? ' class="secondary"' : ''}>${escapeHtml(t.label)}: ${off ? 'Aus' : 'An'}</button>`;
+  }).join('');
+  box.querySelectorAll('[data-hudvis]').forEach((b) => b.onclick = () => {
+    const t = HUD_TOGGLES_UI.find((x) => x.id === b.dataset.hudvis); if (t) { t.toggle(); renderHudToggles(); }
+  });
+}
 let hiddenEls = new Set();
 try { hiddenEls = new Set(JSON.parse(localStorage.getItem('bf-hidden-els') || '[]')); } catch { hiddenEls = new Set(); }
 function saveHiddenEls() { try { localStorage.setItem('bf-hidden-els', JSON.stringify([...hiddenEls])); } catch {} }
