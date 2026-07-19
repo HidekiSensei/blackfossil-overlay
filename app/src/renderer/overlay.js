@@ -720,6 +720,8 @@ let micEnabled = false;
 let settingsOpen = false;
 let deafened = false;                                   // eingehenden Ton stummschalten
 let amDead = false;                                     // tot / kein Dino → Voice komplett aus (weder hören noch senden)
+let godVoiceId = '';                                    // steamId des aktiven Gottstimme-Sprechers ('' = keine Durchsage) — aus /positions
+let godVoiceMine = false;                               // ob ICH gerade die Gottstimme sende (Admin-Button-Zustand)
 let micDeviceId = localStorage.getItem('bf-mic-dev') || '';   // gewähltes Mikrofon
 let spkDeviceId = localStorage.getItem('bf-spk-dev') || '';   // gewähltes Ausgabegerät
 // serverVoice (aus /token): Das Backend steuert die Proximity-Subscriptions selbst → Client verbindet
@@ -877,6 +879,7 @@ async function init() {
   el('adminCloseBtn').onclick = () => closeAdminPanel();
   { const b = el('serverCloseBtn'); if (b) b.onclick = () => closeServerPanel(); }
   document.querySelectorAll('#serverTabs [data-stab]').forEach((b) => { b.onclick = () => showServerTab(b.dataset.stab); });
+  { const b = el('godVoiceBtn'); if (b) b.onclick = () => toggleGodVoice(); }
   el('admUserLoad').onclick = () => admLoadUserInfo();
   el('admLightningBtn').onclick = () => admLightning();
   { const b = el('msgSendBtn'); if (b) b.onclick = () => admSendToast(); }
@@ -1008,7 +1011,11 @@ function startPositionPolling() {
       if (res.ok) {
         const data = await res.json();
         players = data.players || [];
+        godVoiceId = data.godVoice || ''; // Gottstimme-Durchsage aktiv? (steamId des Sprechers)
         me = players.find((p) => p.isYou) || null;
+        // Button-Zustand an die Server-Wahrheit angleichen (Reconnect / Fremd-Abschaltung).
+        const gvMine = !!(godVoiceId && me && godVoiceId === me.steamId);
+        if (gvMine !== godVoiceMine) { godVoiceMine = gvMine; if (serverOpen && serverTab === 'godvoice') renderGodVoice(); }
         // Tot / kein Dino → Voice komplett aus (weder hören noch senden). Wechsel → Mic umschalten + Hinweis.
         const wasDead = amDead;
         amDead = !me || !!me.isDead;
@@ -1130,6 +1137,10 @@ function updateProximityVolumes() {
   if (!room) return;
   // STABIL: LiveKit-Wiedergabe (webAudioMix) + setVolume. Deafen/Tot über factor=0. Der 3D-Graph
   // (updateSpatial) ist vorerst deaktiviert — wird später sauber isoliert wieder aufgesetzt.
+  // Gottstimme nur „aktiv", wenn der Sprecher WIRKLICH präsent ist (ich selbst = Sprecher, oder er ist
+  // ein Remote-Teilnehmer) — sonst würde ein voreilig gesetztes Flag alle anderen grundlos ducken.
+  const iAmGod = !!(godVoiceId && me && godVoiceId === me.steamId);
+  const godActive = !!godVoiceId && (iAmGod || [...room.remoteParticipants.values()].some((rp) => rp.identity === godVoiceId));
   for (const p of room.remoteParticipants.values()) {
     const pos = players.find((pl) => pl.steamId === p.identity);
     let vol = 1;
@@ -1139,10 +1150,18 @@ function updateProximityVolumes() {
       vol = Math.max(0, Math.min(1, 1 - d / Rw));
     }
     const g = userGain[p.identity] ?? 1;
-    const factor = (deafened || amDead) ? 0 : masterGain;
-    try { p.setVolume(vol * g * factor); } catch {}
+    let out;
+    if (godActive && p.identity === godVoiceId) {
+      // Gottstimme: voll & reichweiten-unabhängig, durchdringt Deafen; respektiert Master + Tot.
+      out = amDead ? 0 : GODVOICE_GAIN * masterGain;
+    } else {
+      const factor = (deafened || amDead) ? 0 : masterGain;
+      out = vol * g * factor;
+      if (godActive) out *= GODVOICE_DUCK; // während einer Durchsage alle anderen absenken
+    }
+    try { p.setVolume(out); } catch {}
   }
-  updateSpatialPanners(); // 3D-Richtung + Unterwasser (hängt in LiveKits Kette; Gain macht setVolume oben)
+  updateSpatialPanners(); // 3D-Richtung + Unterwasser + Gottstimme-Effekt (hängt in LiveKits Kette; Gain macht setVolume oben)
 }
 
 // ── 🧭 Räumlicher Ton (IMMER an) ─────────────────────────────────────────────
@@ -1156,6 +1175,17 @@ const SPATIAL_SCALE = 0.001;           // Welt-Einheiten → Audio-Meter (nur Ri
 const SPATIAL_HEADING_OFF = 0;         // Grad: Blickrichtung→Panner. 0 (Test: +90 lag 90° zu weit rechts → 0°)
 const UNDERWATER_HZ = 700;             // Lowpass-Grenzfrequenz unter Wasser (dumpf)
 const OPEN_HZ = 20000;                 // offen (keine Dämpfung)
+// ── Gottstimme-Durchsage (Admin) ─────────────────────────────────────────────
+const GODVOICE_GAIN = 1;               // Wiedergabe-Pegel des Durchsage-Sprechers (× Master)
+const GODVOICE_DUCK = 0.15;            // Faktor, auf den alle ANDEREN Sprecher während der Durchsage abgesenkt werden
+const GODVOICE_DISTORT = 12;           // WaveShaper-Stärke für den „von oben"-Verzerr-Effekt (0 = keine)
+// WaveShaper-Kurve für die leichte Gottstimme-Verzerrung (klassische tanh-artige Kurve, Sprache bleibt verständlich).
+function makeDistortionCurve(amount) {
+  const k = amount, n = 8192, curve = new Float32Array(n), deg = Math.PI / 180;
+  for (let i = 0; i < n; i++) { const x = (i * 2) / n - 1; curve[i] = ((3 + k) * x * 20 * deg) / (Math.PI + k * Math.abs(x)); }
+  return curve;
+}
+const GODVOICE_CURVE = makeDistortionCurve(GODVOICE_DISTORT);
 function spatialWake() { if (spatialCtx && spatialCtx.state === 'suspended') spatialCtx.resume().catch(() => {}); }
 function ensureSpatialCtx() {
   if (!spatialCtx) {
@@ -1267,6 +1297,35 @@ function setSpatial3dStrength(pct) {
   const lbl = el('spatial3dVal'); if (lbl) lbl.textContent = `${Math.round(spatial3dStrength * 100)}%`;
   updateProximityVolumes(); // sofort wirksam (kein Neuverbinden)
 }
+// ── Gottstimme-Durchsage (Admin, im Admin-Tab „📣 Gottstimme") ────────────────
+// Startet/beendet die server-weite Durchsage über POST /voice/godvoice. Der echte Zustand kommt über
+// /positions (data.godVoice) zurück und steuert bei allen Clients Effekt + Ducken (updateProximityVolumes).
+async function setGodVoice(on) {
+  if (!sessionToken) return;
+  if (on && !voiceConnected) { showToast('⚠️ Erst dem Voice beitreten — sonst hört dich niemand.', 'warn'); return; }
+  try {
+    const res = await fetch(`${config.tokenBase}/voice/godvoice`, {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${sessionToken}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ on: !!on }),
+    });
+    if (!res.ok) { showToast('Gottstimme fehlgeschlagen', 'error'); return; }
+    const data = await res.json().catch(() => ({}));
+    godVoiceMine = !!data.on;          // optimistisch; der nächste /positions-Poll bestätigt
+    renderGodVoice();
+    showToast(godVoiceMine ? '📣 Gottstimme AN — alle hören dich.' : 'Gottstimme aus.', godVoiceMine ? 'success' : 'info');
+  } catch { showToast('Gottstimme fehlgeschlagen', 'error'); }
+}
+function toggleGodVoice() { setGodVoice(!godVoiceMine); }
+function renderGodVoice() {
+  const btn = el('godVoiceBtn'); if (!btn) return;
+  btn.textContent = godVoiceMine ? '⏹️ Gottstimme beenden' : '📣 Gottstimme starten';
+  btn.classList.toggle('secondary', godVoiceMine);
+  const hint = el('godVoiceHint');
+  if (hint) hint.textContent = !voiceConnected
+    ? '⚠️ Nicht im Voice verbunden — die Durchsage wird nicht übertragen.'
+    : (godVoiceMine ? '● Läuft — du wirst server-weit gehört.' : '');
+}
 function ensureVoiceCtx() {
   if (!voiceCtx) { try { voiceCtx = new (window.AudioContext || window.webkitAudioContext)(); } catch {} }
   if (voiceCtx && voiceCtx.state === 'suspended') voiceCtx.resume().catch(() => {});
@@ -1278,8 +1337,9 @@ function attachSpatialPlugins(track, identity) {
   panner.panningModel = 'HRTF'; panner.distanceModel = 'linear';
   panner.refDistance = 1; panner.maxDistance = 1e6; panner.rolloffFactor = 0; // Distanz-Gain macht setVolume, nicht der Panner
   const lowpass = ctx.createBiquadFilter(); lowpass.type = 'lowpass'; lowpass.frequency.value = OPEN_HZ;
-  try { track.setWebAudioPlugins([panner, lowpass]); } catch { return; } // SDK verbindet source→panner→lowpass→gain
-  spatialPlugins.set(identity, { panner, lowpass });
+  const shaper = ctx.createWaveShaper(); shaper.curve = null; // curve=null → Passthrough; Gottstimme setzt die Verzerr-Kurve
+  try { track.setWebAudioPlugins([panner, lowpass, shaper]); } catch { return; } // SDK verbindet source→panner→lowpass→shaper→gain
+  spatialPlugins.set(identity, { panner, lowpass, shaper });
 }
 // Panner-Richtung (z+heading) + Unterwasser-Lowpass je Sprecher aktualisieren. Gain/Deafen macht weiter setVolume.
 function updateSpatialPanners() {
@@ -1291,8 +1351,9 @@ function updateSpatialPanners() {
   const dbg = [`me:${me ? `h${Math.round(me.heading || 0)}` : 'NULL'} ctx:${ctx.state} spk:${spatialPlugins.size}`];
   for (const [identity, pl] of spatialPlugins) {
     const pos = players.find((p) => p.steamId === identity);
+    const isGod = !!godVoiceId && identity === godVoiceId; // Gottstimme: zentriert, offen, verzerrt — ohne Richtung/Muffling
     let px = 0, pz = -1, dU = 0;
-    if (me && pos) {
+    if (me && pos && !isGod) {
       const dx = pos.x - me.x, dy = pos.y - me.y;
       const fwd = dx * fx + dy * fy, right = dx * rx + dy * ry;
       const s = spatial3dStrength; // eine persönliche 3D-Stärke für alle, die man hört
@@ -1302,11 +1363,12 @@ function updateSpatialPanners() {
     }
     try { pl.panner.positionX.setValueAtTime(px, now); pl.panner.positionY.setValueAtTime(0, now); pl.panner.positionZ.setValueAtTime(pz, now); }
     catch { try { pl.panner.setPosition(px, 0, pz); } catch {} }
-    const hz = (pos && pos.isUnderwater) ? UNDERWATER_HZ : OPEN_HZ;
+    const hz = isGod ? OPEN_HZ : ((pos && pos.isUnderwater) ? UNDERWATER_HZ : OPEN_HZ);
     try { pl.lowpass.frequency.setTargetAtTime(hz, now, 0.08); } catch { pl.lowpass.frequency.value = hz; }
+    if (pl.shaper) { const want = isGod ? GODVOICE_CURVE : null; if (pl.shaper.curve !== want) pl.shaper.curve = want; } // Verzerrung nur bei Durchsage
     const nm = (pos && (pos.name || pos.playerName)) || String(identity).slice(-4);
-    const side = px > 0.05 ? 'R' : px < -0.05 ? 'L' : 'C';
-    dbg.push(`${pos ? '' : '?'}${nm} d=${Math.round(dU / UNITS_PER_M)}m pan=${side}(${px.toFixed(2)})${(pos && pos.isUnderwater) ? ' UW' : ''}`);
+    const side = isGod ? '👑' : (px > 0.05 ? 'R' : px < -0.05 ? 'L' : 'C');
+    dbg.push(`${pos ? '' : '?'}${nm} d=${Math.round(dU / UNITS_PER_M)}m pan=${side}(${px.toFixed(2)})${isGod ? ' GOD' : (pos && pos.isUnderwater) ? ' UW' : ''}`);
   }
   renderVoiceDbg(dbg);
 }
@@ -2604,6 +2666,7 @@ function showServerTab(t) {
   else if (t === 'objects') renderSvObjects();
   else if (t === 'karte') { loadTeleports(); renderAdminTpList(); }
   else if (t === 'server') { renderServer(); svRenderClassLimits(); }
+  else if (t === 'godvoice') renderGodVoice();
   bfScheduleFrameSync && bfScheduleFrameSync();
 }
 // Class-Limits im Server-Tab (dieselben /dino-limits-Endpoints wie das Admin-Panel; das Admin-Panel
