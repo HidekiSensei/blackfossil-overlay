@@ -298,9 +298,8 @@ const DEFAULT_RANGE = 10;     // bis Reichweite empfangen wird
 // Mikros aus. Lokal pro Hörer gespeichert, unabhängig vom Distanz-Verhalten.
 let userGain = {};            // identity(steamId) -> Faktor
 try { userGain = JSON.parse(localStorage.getItem('bf-user-gain') || '{}'); } catch { userGain = {}; }
-// Pro-User-3D-Stärke (identity -> 0..1.5). Überschreibt den globalen 3D-Regler für einzelne Spieler.
-let userSpatial = {};
-try { userSpatial = JSON.parse(localStorage.getItem('bf-user-3d') || '{}'); } catch { userSpatial = {}; }
+// 3D-Stärke ist EINE persönliche Einstellung für alle, die man hört (globaler Regler
+// `spatial3dStrength`) — bewusst KEIN Pro-Spieler-Override mehr (war zu fummelig).
 // Master-Lautstärke für ALLE Spieler (0..2) — Regler über der Spielerliste.
 let masterGain = (parseFloat(localStorage.getItem('bf-master-gain')) || 1);
 // Eigene Mikrofon-Verstärkung (0..2) — wird per Web-Audio-GainNode auf den
@@ -1296,7 +1295,7 @@ function updateSpatialPanners() {
     if (me && pos) {
       const dx = pos.x - me.x, dy = pos.y - me.y;
       const fwd = dx * fx + dy * fy, right = dx * rx + dy * ry;
-      const s = userSpatial[identity] ?? spatial3dStrength; // Pro-User-Override, sonst globaler Regler
+      const s = spatial3dStrength; // eine persönliche 3D-Stärke für alle, die man hört
       px = right * SPATIAL_SCALE * s;
       pz = (-fwd * SPATIAL_SCALE) * s - (1 - s); // s→0 blendet nach (0,0,-1) = geradeaus
       dU = Math.hypot(dx, dy);
@@ -1367,12 +1366,6 @@ function setUserGain(identity, factor) {
   try { localStorage.setItem('bf-user-gain', JSON.stringify(userGain)); } catch {}
   updateProximityVolumes();
 }
-// Pro-User-3D-Stärke setzen (überschreibt global). Sofort wirksam.
-function setUserSpatial(identity, val) {
-  userSpatial[identity] = Math.max(0, Math.min(1.5, val));
-  try { localStorage.setItem('bf-user-3d', JSON.stringify(userSpatial)); } catch {}
-  updateProximityVolumes();
-}
 
 // Master-Lautstärke für alle Spieler (Regler über der Spielerliste)
 function setMasterGain(pct) {
@@ -1400,25 +1393,17 @@ function renderVoiceUsers() {
   box.innerHTML = '';
   for (const { p, name } of list) {
     const g = userGain[p.identity] ?? 1;
-    const s3 = userSpatial[p.identity] ?? spatial3dStrength; // Pro-User-3D, sonst global als Startwert
     const row = document.createElement('div');
     row.style.cssText = 'margin-bottom:8px';
     row.innerHTML =
       `<div style="font-size:12px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;margin-bottom:3px">👤 ${name}</div>` +
-      `<div style="display:flex;align-items:center;gap:6px;margin-bottom:3px">` +
+      `<div style="display:flex;align-items:center;gap:6px">` +
         `<span title="Lautstärke" style="width:16px">🔊</span>` +
         `<input class="u-vol" type="range" min="0" max="200" step="5" value="${Math.round(g * 100)}" style="flex:1;accent-color:var(--accent)">` +
         `<span class="u-vol-l" style="width:40px;text-align:right;font-size:11px;color:var(--muted)">${Math.round(g * 100)}%</span>` +
-      `</div>` +
-      `<div style="display:flex;align-items:center;gap:6px">` +
-        `<span title="3D-Stärke" style="width:16px">🧭</span>` +
-        `<input class="u-3d" type="range" min="0" max="150" step="5" value="${Math.round(s3 * 100)}" style="flex:1;accent-color:var(--accent)">` +
-        `<span class="u-3d-l" style="width:40px;text-align:right;font-size:11px;color:var(--muted)">${Math.round(s3 * 100)}%</span>` +
       `</div>`;
     const uv = row.querySelector('.u-vol'), uvl = row.querySelector('.u-vol-l');
     uv.addEventListener('input', () => { uvl.textContent = `${uv.value}%`; setUserGain(p.identity, parseInt(uv.value) / 100); });
-    const u3 = row.querySelector('.u-3d'), u3l = row.querySelector('.u-3d-l');
-    u3.addEventListener('input', () => { u3l.textContent = `${u3.value}%`; setUserSpatial(p.identity, parseInt(u3.value) / 100); });
     box.appendChild(row);
   }
 }
