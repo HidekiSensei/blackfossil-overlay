@@ -226,7 +226,10 @@
     #dutyGlow.on { display: block; animation: dutyGlowPulse 2.4s ease-in-out infinite; }
     @keyframes dutyGlowPulse { 0%,100% { opacity: 0.75; } 50% { opacity: 1; } }
     .settings-cols { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 20px; max-height: 66vh; overflow: auto; padding-right: 4px; }
-    #adminPanel .settings-cols { grid-template-columns: repeat(4, 1fr); }
+    #adminPanel .settings-cols { grid-template-columns: repeat(2, 1fr); }
+    /* Buttons in den Spalten NICHT vertikal strecken (Basis-button hat flex:1) — sonst wird der
+       letzte Button (z. B. „Vergeben") riesig, wenn die Spalte auf die Nachbarhöhe streckt. */
+    .settings-col > button { flex: none; }
     .dlimit-row { display: flex; align-items: center; gap: 8px; margin-bottom: 5px; }
     .dlimit-row span { flex: 1; font-size: 12px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
     .dlimit-row input { width: 56px; flex: none; }
