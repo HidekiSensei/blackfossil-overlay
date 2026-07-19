@@ -893,6 +893,7 @@ async function init() {
   { const oab = el('openAdminBtn'); if (oab) oab.onclick = () => openAdminPanel(); }
   el('adminCloseBtn').onclick = () => closeAdminPanel();
   { const b = el('serverCloseBtn'); if (b) b.onclick = () => closeServerPanel(); }
+  { const b = el('srvCloseBtn'); if (b) b.onclick = () => closeSrvPanel(); }
   document.querySelectorAll('#serverTabs [data-stab]').forEach((b) => { b.onclick = () => showServerTab(b.dataset.stab); });
   { const b = el('godVoiceBtn'); if (b) b.onclick = () => toggleGodVoice(); }
   { const c = el('godVoiceReverbChk'); if (c) { c.checked = godVoiceReverbPref; c.onchange = () => setGodVoiceReverbPref(c.checked); } }
@@ -2818,6 +2819,68 @@ function closeServerPanel() {
   el('serverPanel').style.display = 'none';
   updateInteractive();
 }
+
+// ── 🖥️ Server-Steuerung: eigenständiger Dock-Bereich (aus dem Admin-Untermenü herausgelöst) ──
+let srvOpen = false;
+function openSrvPanel() {
+  if (!isAdmin) { showToast('Nur für Admins', 'error'); return; }
+  srvOpen = true;
+  el('srvPanel').style.display = 'flex';
+  updateInteractive();
+  renderSrv();
+  // Live-Status alle 5 s aktualisieren, nur solange offen (Selbstabschaltung).
+  if (!openSrvPanel._t) openSrvPanel._t = setInterval(() => {
+    if (!srvOpen) { clearInterval(openSrvPanel._t); openSrvPanel._t = null; return; }
+    srvLoadStatus(); renderSrvPlayers();
+  }, 5000);
+}
+function closeSrvPanel() {
+  srvOpen = false;
+  el('srvPanel').style.display = 'none';
+  updateInteractive();
+}
+// Baut den Server-Bereich einmal auf (Status + Class-Limits laden, Spielerliste rendern).
+function renderSrv() {
+  srvLoadStatus();
+  renderSrvPlayers();
+  svRenderClassLimits(); // schreibt weiter in #svClassBody (jetzt im Server-Panel)
+  { const b = el('srvAnnounce'); if (b && !b._w) { b._w = 1; b.onclick = () => { const m = el('srvMsg').value.trim(); if (!m) { showToast('Nachricht eingeben', 'error'); return; } apiAction('/admin/server/announce', { message: m }, '📢 Ansage gesendet', () => { el('srvMsg').value = ''; }); }; } }
+  { const b = el('srvWipe'); if (b && !b._w) { b._w = 1; b.onclick = () => svArmConfirm(b, 'Sicher? Kadaver leeren', () => apiAction('/admin/server/wipecorpses', {}, '🧹 Kadaver geleert', null)); } }
+  { const b = el('srvStart'); if (b && !b._w) { b._w = 1; b.onclick = () => apiAction('/admin/server/control', { action: 'start' }, '▶️ Server-Start ausgelöst', srvLoadStatus); } }
+  { const b = el('srvRestart'); if (b && !b._w) { b._w = 1; b.onclick = () => svArmConfirm(b, 'Sicher? Restart', () => apiAction('/admin/server/control', { action: 'restart' }, '🔁 Restart ausgelöst', srvLoadStatus)); } }
+  { const b = el('srvStop'); if (b && !b._w) { b._w = 1; b.onclick = () => svArmConfirm(b, 'Sicher? Stop', () => apiAction('/admin/server/control', { action: 'stop' }, '⏹️ Stop ausgelöst', srvLoadStatus)); } }
+}
+// Live-Status: Prozess-Zustand + (falls erreichbar) Ops-Health für Game-Box-Details.
+async function srvLoadStatus() {
+  const box = el('srvStatus'); if (!box) return;
+  let running = null, detail = '';
+  try { const d = await svApi('GET', '/admin/server/status'); running = !!d.running; } catch { detail = ' · Status nicht abrufbar'; }
+  // Optional: Game-Box-Disk + Spielerzahl aus der Ops-Health (nur wenn Betrieb-Backend erreichbar).
+  let extra = '';
+  try {
+    const h = await svApi('GET', '/admin/ops/health');
+    const gc = (h.checks || []).find((c) => c.id === 'control_server');
+    const gp = (h.checks || []).find((c) => c.id === 'game_process');
+    if (gp && gp.detail) extra += ` · ${escapeHtml(gp.detail)}`;
+    if (gc && gc.detail) extra += ` · 💾 ${escapeHtml(gc.detail)}`;
+  } catch {}
+  const dot = running === null ? '⚪' : (running ? '🟢' : '🔴');
+  const txt = running === null ? 'unbekannt' : (running ? 'läuft' : 'AUS');
+  box.innerHTML = `<div style="font-size:14px">${dot} <b>Server ${txt}</b><span style="color:var(--muted);font-size:12px">${extra}${detail}</span></div>`;
+}
+// Online-Spieler aus dem laufenden Positions-Poll (read-only Liste; Kick gibt es serverseitig (noch) nicht).
+function renderSrvPlayers() {
+  const box = el('srvPlayers'), cnt = el('srvPlayerCount'); if (!box) return;
+  const list = (players || []).filter((p) => p.steamId);
+  if (cnt) cnt.textContent = String(list.length);
+  if (!list.length) { box.innerHTML = '<div class="dt-muted">Keine Spieler online (oder Game-Server nicht erreichbar).</div>'; return; }
+  box.innerHTML = list.slice().sort((a, b) => (a.name || a.playerName || '').localeCompare(b.name || b.playerName || ''))
+    .map((p) => {
+      const nm = p.name || p.playerName || p.steamId;
+      const dino = p.dino ? ` <span style="color:var(--muted)">· ${escapeHtml(p.dino)}</span>` : '';
+      return `<div style="padding:3px 0;border-bottom:1px solid rgba(255,255,255,0.06)">👤 ${escapeHtml(nm)}${dino}${p.isDead ? ' <span style="color:#f87171">†</span>' : ''}</div>`;
+    }).join('');
+}
 let serverTab = 'welt';
 function showServerTab(t) {
   serverTab = t;
@@ -2828,7 +2891,6 @@ function showServerTab(t) {
   else if (t === 'polymorph') renderSvPoly();
   else if (t === 'objects') renderSvObjects();
   else if (t === 'karte') { loadTeleports(); renderAdminTpList(); }
-  else if (t === 'server') { renderServer(); svRenderClassLimits(); }
   else if (t === 'godvoice') renderGodVoice();
   else if (t === 'teamaudit') renderTeamAudit();
   else if (t === 'evrima') renderEvrima();
@@ -7287,7 +7349,7 @@ function bfEnsureRO() {
 function bfLightningTargets() {
   const out = [];
   document.querySelectorAll('.feature-panel').forEach((e) => out.push({ el: e, round: false }));
-  for (const id of ['settings', 'adminPanel', 'serverPanel', 'bigMap']) { const e = el(id); if (e) out.push({ el: e, round: false }); }
+  for (const id of ['settings', 'adminPanel', 'serverPanel', 'srvPanel', 'bigMap']) { const e = el(id); if (e) out.push({ el: e, round: false }); }
   const ddBox = document.querySelector('#dinoDetail .box'); if (ddBox) out.push({ el: ddBox, round: false });
   const mm = el('minimap'); if (mm) out.push({ el: mm, round: true });
   return out;
@@ -7348,6 +7410,7 @@ function closeAllPanels() {
   if (settingsOpen) toggleSettings(false);
   if (adminOpen) closeAdminPanel();
   if (serverOpen) closeServerPanel();
+  if (srvOpen) closeSrvPanel();
 }
 
 // Dock-Icons (Lucide, stroke = currentColor → erbt Button-Farbe)
@@ -7366,6 +7429,7 @@ const DOCK_ICONS = {
   settings: dockSvg('<circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.6 1.6 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.6 1.6 0 0 0-1.8-.3 1.6 1.6 0 0 0-1 1.5V21a2 2 0 0 1-4 0v-.1a1.6 1.6 0 0 0-1-1.5 1.6 1.6 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.6 1.6 0 0 0 .3-1.8 1.6 1.6 0 0 0-1.5-1H3a2 2 0 0 1 0-4h.1a1.6 1.6 0 0 0 1.5-1 1.6 1.6 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.6 1.6 0 0 0 1.8.3H9a1.6 1.6 0 0 0 1-1.5V3a2 2 0 0 1 4 0v.1a1.6 1.6 0 0 0 1 1.5 1.6 1.6 0 0 0 1.8-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.6 1.6 0 0 0-.3 1.8V9a1.6 1.6 0 0 0 1.5 1H21a2 2 0 0 1 0 4h-.1a1.6 1.6 0 0 0-1.5 1z"/>'),
   admin:    dockSvg('<path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10"/>'),
   server:   dockSvg('<rect x="2" y="3" width="20" height="6" rx="1"/><rect x="2" y="12" width="20" height="6" rx="1"/><path d="M6 6h.01M6 15h.01"/>'),
+  srvctl:   dockSvg('<rect x="2" y="3" width="20" height="14" rx="2"/><path d="M8 21h8M12 17v4"/>'),
   quests:   dockSvg('<path d="M4 22V4a1 1 0 0 1 1-1h12l-2 4 2 4H6"/><line x1="4" y1="22" x2="4" y2="15"/>'),
   notifications: dockSvg('<path d="M6 8a6 6 0 0 1 12 0c0 7 3 9 3 9H3s3-2 3-9"/><path d="M10.3 21a1.94 1.94 0 0 0 3.4 0"/>'),
   close:    dockSvg('<line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/>'),
@@ -7376,6 +7440,7 @@ function activeNav() {
   if (settingsOpen) return 'settings';
   if (mapOpen) return 'map';
   if (serverOpen) return 'server';
+  if (srvOpen) return 'srvctl';
   if (adminOpen) return 'admin';
   if (featureOpen === 'skinEditor') return 'skin';
   if (featureOpen === 'dinoInfo') return 'dino';
@@ -7390,13 +7455,14 @@ function updateDockActive() {
 // Klick aufs bereits aktive Icon schließt es wieder (zurück zum reinen Dock).
 function navTo(target) {
   if (target === 'admin' && !isStaff) { showToast('Nur für Staff (Supporter/Moderator+)', 'error'); return; }
-  if (target === 'server' && !isAdmin) { showToast('Nur für Admins', 'error'); return; }
+  if ((target === 'server' || target === 'srvctl') && !isAdmin) { showToast('Nur für Admins', 'error'); return; }
   const wasActive = activeNav() === target;
   closeAllPanels();
   if (!wasActive) {
     if (target === 'map') toggleMap(true);
     else if (target === 'settings') toggleSettings(true);
     else if (target === 'server') openServerPanel();
+    else if (target === 'srvctl') openSrvPanel();
     else if (target === 'admin') openAdminPanel();
     else if (target === 'skin') toggleFeature('skinEditor');
     else if (target === 'dino') toggleFeature('dinoInfo');
@@ -7684,6 +7750,7 @@ async function loadRoleUI() {
     { const ab = el('openAdminBtn'); if (ab) ab.style.display = isStaff ? 'block' : 'none'; }
     { const da = el('dockAdmin'); if (da) da.style.display = isStaff ? 'flex' : 'none'; }
     { const ds = el('dockServer'); if (ds) ds.style.display = isAdmin ? 'flex' : 'none'; }
+    { const dsc = el('dockSrvCtl'); if (dsc) dsc.style.display = isAdmin ? 'flex' : 'none'; }
     { const zb = el('zoneBtn'); if (zb) zb.style.display = isStaff ? 'block' : 'none'; }
     if (data.name) el('hudName').textContent = data.name;
     setTier(data.tier);
@@ -7709,6 +7776,7 @@ async function connectWithSession(session) {
     { const ab = el('openAdminBtn'); if (ab) ab.style.display = isStaff ? 'block' : 'none'; }
     { const da = el('dockAdmin'); if (da) da.style.display = isStaff ? 'flex' : 'none'; }
     { const ds = el('dockServer'); if (ds) ds.style.display = isAdmin ? 'flex' : 'none'; }
+    { const dsc = el('dockSrvCtl'); if (dsc) dsc.style.display = isAdmin ? 'flex' : 'none'; }
     if (isStaff) loadDutyState(); // Dienst-Status beim Start holen → Rand-Glow ohne Panel-Öffnen
     // Tickets/Events/Overlay-Gruppe laden + periodisch (Benachrichtigungen)
     loadMyTickets(); loadMyEvents(); loadOvGroup();

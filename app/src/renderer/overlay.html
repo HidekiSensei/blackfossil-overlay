@@ -243,7 +243,7 @@
     /* Feste Panel-Höhe: der Tab-Inhalt scrollt, das Fenster springt beim Tab-Wechsel NICHT. */
     /* Alle drei Dialoge (Settings / Team / Admin) EXAKT gleich groß: feste Höhe, Pane füllt den Rest —
        unabhängig davon, ob die Tab-Leiste ein- oder zweizeilig ist. */
-    #settings, #adminPanel, #serverPanel { flex-direction: column; height: min(80vh, 860px); }
+    #settings, #adminPanel, #serverPanel, #srvPanel { flex-direction: column; height: min(80vh, 860px); }
     #settings > h2, #adminPanel > h2, #serverPanel > h2,
     #settingsTabs, #adminTabs, #serverTabs, #settings .btnrow { flex: none; }
     .settings-panes, .admin-panes { flex: 1 1 auto; min-height: 0; display: flex; flex-direction: column; }
@@ -379,7 +379,7 @@
       backdrop-filter: none; -webkit-backdrop-filter: none;
     }
     /* Admin-Panel: eigenständiges Modal wie Settings */
-    #adminPanel, #serverPanel { position: absolute; top: 50%; left: 50%; transform: translate(-50%,-50%); display: none;
+    #adminPanel, #serverPanel, #srvPanel { position: absolute; top: 50%; left: 50%; transform: translate(-50%,-50%); display: none;
       background: var(--panel); border: 1px solid var(--border); border-radius: 16px; padding: 26px;
       box-shadow: var(--glow-strong); width: clamp(760px, 82vw, 1120px); z-index: 60; }
     #adminPanel h2 { font-size: 16px; margin-bottom: 14px; }
@@ -1517,7 +1517,6 @@
       <button data-stab="polymorph" class="secondary">🦖 Polymorph</button>
       <button data-stab="objects" class="secondary">🧱 Objekte</button>
       <button data-stab="karte" class="secondary">🗺️ Karte</button>
-      <button data-stab="server" class="secondary">📢 Server</button>
       <button data-stab="godvoice" class="secondary">📣 Gottstimme</button>
       <button data-stab="teamaudit" class="secondary">🛡️ Team-Audit</button>
       <button data-stab="evrima" class="secondary">🏷️ Evrima</button>
@@ -1548,7 +1547,6 @@
           <div id="adminTpList" style="max-height:200px;overflow:auto;margin-top:8px;font-size:12px"></div>
         </div>
       </div>
-      <div class="admin-pane" data-pane="server" hidden><div id="svBody"><div class="dt-muted">Lade…</div></div><div id="svClassBody" style="margin-top:18px"></div></div>
       <div class="admin-pane" data-pane="evrima" hidden><div id="evrimaBody"><div class="dt-muted">Lade…</div></div></div>
       <div class="admin-pane" data-pane="ops" hidden>
         <div class="sec-title">🚦 Status-Matrix</div>
@@ -1584,6 +1582,40 @@
       </div>
       <div class="admin-pane" data-pane="teamaudit" hidden>
         <div id="taBody"><div class="dt-muted">Lade…</div></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- 🖥️ Server-Steuerung: eigenständiger Dock-Bereich (Owner&Admins) -->
+  <div id="srvPanel">
+    <button id="srvCloseBtn" class="secondary" style="position:absolute;top:16px;right:18px;flex:none;width:auto;padding:6px 12px">✕</button>
+    <h2>🖥️ Server <span style="font-weight:400;font-size:12px;color:var(--muted)">— Steuerung &amp; Live-Status</span></h2>
+    <div class="admin-pane">
+      <div id="srvStatus" style="margin-bottom:16px"><div class="dt-muted">Lade Status…</div></div>
+
+      <div class="dt-sec">📢 Ansage (ingame)</div>
+      <div class="dt-form" style="margin-bottom:16px">
+        <input id="srvMsg" class="tm-input" placeholder="z.B. Event startet in 10 Min!">
+        <button id="srvAnnounce" style="width:100%;margin-top:8px">📢 Ansage senden</button>
+      </div>
+
+      <div class="dt-sec">👥 Spieler online (<span id="srvPlayerCount">–</span>)</div>
+      <div id="srvPlayers" style="max-height:200px;overflow:auto;margin:6px 0 16px;font-size:12px"></div>
+
+      <div class="dt-sec">🦖 Class-Limits</div>
+      <div id="svClassBody" style="margin:6px 0 16px"></div>
+
+      <div class="dt-sec">🧹 Wartung</div>
+      <div class="dt-form" style="margin-bottom:16px"><button id="srvWipe" class="secondary" style="width:100%">🧹 Kadaver leeren (wipecorpses)</button></div>
+
+      <div class="dt-sec" style="color:#f87171">⚙️ Server-Steuerung (gefährlich)</div>
+      <div class="dt-form">
+        <div class="dt-row" style="display:flex;gap:6px">
+          <button id="srvStart" style="flex:1;background:#16a34a">▶️ Start</button>
+          <button id="srvRestart" class="secondary" style="flex:1">🔁 Restart</button>
+          <button id="srvStop" style="flex:1;background:#b91c1c">⏹️ Stop</button>
+        </div>
+        <div class="dt-muted" style="margin-top:4px">Stop/Restart trennt ALLE Spieler!</div>
       </div>
     </div>
   </div>
@@ -1796,6 +1828,7 @@
       <button class="dock-btn" data-act="settings" aria-label="Einstellungen"><span>Settings</span></button>
       <button class="dock-btn" id="dockAdmin" data-act="admin" aria-label="Team" style="display:none"><span>Team</span></button>
       <button class="dock-btn" id="dockServer" data-act="server" aria-label="Admin" style="display:none"><span>Admin</span></button>
+      <button class="dock-btn" id="dockSrvCtl" data-act="srvctl" aria-label="Server" style="display:none"><span>Server</span></button>
       <div class="dock-sep"></div>
       <button class="dock-btn dock-close" id="dockClose" aria-label="Schließen & weiterspielen"><span>Schließen</span></button>
     </div>
