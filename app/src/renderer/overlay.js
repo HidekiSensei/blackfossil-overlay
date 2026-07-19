@@ -1290,15 +1290,17 @@ function updateSpatial() {
   renderVoiceDbg(dbg);
 }
 // F9-Debug-Panel: exakte Zahlen (Distanz/Gain/Pan je Sprecher) zum Tunen von Reichweite & 3D.
-let voiceDbgOn = true;
+let voiceDbgOn = false; // NUR für Admins, per F9 einblendbar — normale Spieler sehen das Panel NIE
 function renderVoiceDbg(rows) {
   const box = el('voiceDbg'); if (!box) return;
-  if (!voiceDbgOn || !voiceConnected) { box.style.display = 'none'; return; }
+  if (!voiceDbgOn || !voiceConnected || !isAdmin) { box.style.display = 'none'; return; } // Admin-Gate
   box.style.display = 'block';
   box.textContent = rows.join('\n');
 }
 window.addEventListener('keydown', (e) => {
-  if (e.key === 'F9') { voiceDbgOn = !voiceDbgOn; const b = el('voiceDbg'); if (b && !voiceDbgOn) b.style.display = 'none'; }
+  if (e.key !== 'F9' || !isAdmin) return; // F9-Toggle nur für Admins
+  voiceDbgOn = !voiceDbgOn;
+  const b = el('voiceDbg'); if (b && !voiceDbgOn) b.style.display = 'none';
 });
 
 // ── 🧭 Räumlicher Ton v2 (weniger invasiv) ───────────────────────────────────
