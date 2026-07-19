@@ -84,6 +84,14 @@
     #growTimer .gt-track { height: 6px; border-radius: 4px; background: rgba(255,255,255,.14); overflow: hidden; }
     #growTimer .gt-fill { height: 100%; width: 0%; border-radius: 4px;
       background: linear-gradient(90deg, var(--accent), var(--accent-2)); transition: width .5s linear; }
+    /* Event-Timer-Panel: default links, etwa mittig (unter der Lebensanzeige), verschieb-/skalierbar. */
+    #eventPanel { position: fixed; left: 16px; top: 45%; display: none; transform-origin: top left;
+      background: var(--panel); border: 1px solid var(--border); border-radius: 14px; padding: 8px 12px;
+      box-shadow: var(--glow); min-width: 150px; max-width: 260px; font-size: 12px; z-index: 6; }
+    #eventPanel .ev-head { font-weight: 800; color: var(--accent); font-size: 11px; letter-spacing: .3px; margin-bottom: 6px; }
+    #eventPanel .ev-row { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 2px 0; }
+    #eventPanel .ev-name { font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    #eventPanel .ev-time { font-variant-numeric: tabular-nums; color: var(--accent-2); font-weight: 700; white-space: nowrap; }
     /* Grow-Seitenmenü (ausklappbar) rechts am Dino-Tab */
     #dinoInfo.di-wide { overflow: visible; }
     /* Dino-Info-Inhalt scrollt bei Overflow (passt sonst nicht aufs Panel und steht unten über).
@@ -276,10 +284,10 @@
 
     /* Timer-Anzeigen (Grow · Goldene Zone · PvE-Park): verschiebbar + skalierbar.
        Skalierung wächst vom Anker nach rechts/unten (kein Springen beim Skalieren). */
-    #growTimer, #goldenHud, #parkWarn { transform-origin: top left; }
+    #growTimer, #goldenHud, #parkWarn, #eventPanel { transform-origin: top left; }
     /* Im Edit-Modus auch inaktive Timer zeigen, damit man sie platzieren kann
        (überschreibt das inline gesetzte display:none der Render-Funktionen). */
-    body.bf-edit #growTimer, body.bf-edit #goldenHud, body.bf-edit #parkWarn { display: block !important; }
+    body.bf-edit #growTimer, body.bf-edit #goldenHud, body.bf-edit #parkWarn, body.bf-edit #eventPanel { display: block !important; }
 
     /* Dock (Overlay-/Nav-Modus, „^") */
     /* #dock = transparenter Anker; #dockInner = sichtbares Panel, das beim Öffnen vom Blitz auseinandergeschoben wird */
@@ -958,6 +966,9 @@
     <div class="gt-head"><span id="gtIcon">📈</span><span id="gtLabel" class="gt-label">Grow-Boost</span><span id="gtTime" class="gt-time">--:--</span></div>
     <div class="gt-track"><div id="gtFill" class="gt-fill"></div></div>
   </div>
+
+  <!-- Event-Timer (nur sichtbar, wenn ein Event aktiv ist) — default links, mittig -->
+  <div id="eventPanel"></div>
 
   <!-- Toast-Container -->
   <div id="toasts"></div>
