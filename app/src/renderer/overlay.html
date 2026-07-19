@@ -232,6 +232,14 @@
       box-shadow: none; transform: none; filter: none; transition: color .12s, background .12s, border-color .12s; }
     #settingsTabs button:hover { color: #f0edff; background: rgba(255,255,255,0.04); transform: none; box-shadow: none; filter: none; }
     #settingsTabs button:not(.secondary) { color: var(--accent-2); border-bottom-color: var(--accent); background: rgba(var(--accent-rgb),0.10); }
+    /* Gleiche Reiter-Optik im Team-Panel (#adminTabs) und Admin-Panel (#serverTabs). */
+    #adminTabs, #serverTabs { gap: 2px; margin: 10px -26px 18px; padding: 0 22px; border-bottom: 1px solid var(--border); flex-wrap: wrap; }
+    #adminTabs button, #serverTabs button { flex: none; background: transparent; border: 0; border-bottom: 2px solid transparent;
+      border-radius: 8px 8px 0 0; color: var(--muted); padding: 9px 14px; margin-bottom: -1px; font-weight: 600;
+      box-shadow: none; transform: none; filter: none; transition: color .12s, background .12s, border-color .12s; }
+    #adminTabs button::before, #serverTabs button::before { content: none; }
+    #adminTabs button:hover, #serverTabs button:hover { color: #f0edff; background: rgba(255,255,255,0.04); transform: none; box-shadow: none; filter: none; }
+    #adminTabs button:not(.secondary), #serverTabs button:not(.secondary) { color: var(--accent-2); border-bottom-color: var(--accent); background: rgba(var(--accent-rgb),0.10); }
     /* Feste Panel-Höhe: der Tab-Inhalt scrollt, das Fenster springt beim Tab-Wechsel NICHT. */
     .settings-pane { height: 62vh; overflow: auto; padding-right: 6px; }
     .settings-pane[hidden] { display: none; }
@@ -301,6 +309,26 @@
     #settings input[type=checkbox]::after { content: ''; position: absolute; top: 2px; left: 2px; width: 16px; height: 16px; border-radius: 50%; background: #bfb6d8; transition: transform .16s, background .16s; }
     #settings input[type=checkbox]:checked { background: linear-gradient(135deg, var(--accent), var(--accent-d)); border-color: var(--accent); }
     #settings input[type=checkbox]:checked::after { transform: translateX(18px); background: #fff; }
+    /* ── Gleiche Dropdown-/Slider-Optik in Team- & Admin-Panel ──────────────────── */
+    #adminPanel .admin-pane select, #serverPanel .admin-pane select {
+      -webkit-appearance: none; appearance: none; min-height: 34px; padding: 8px 32px 8px 12px; border-radius: 9px;
+      border: 1px solid var(--border); background-color: var(--input-bg); color: #e9e4f7; font-size: 13px; cursor: pointer;
+      background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 12 12'%3E%3Cpath d='M2 4l4 4 4-4' stroke='%23b3a9cc' stroke-width='1.6' fill='none' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E");
+      background-repeat: no-repeat; background-position: right 12px center; background-size: 12px; }
+    #adminPanel .admin-pane select:hover, #serverPanel .admin-pane select:hover { border-color: var(--accent); }
+    #adminPanel .admin-pane input[type=range], #serverPanel .admin-pane input[type=range] {
+      -webkit-appearance: none; appearance: none; height: 22px; background: transparent; cursor: pointer; }
+    #adminPanel .admin-pane input[type=range]::-webkit-slider-runnable-track,
+    #serverPanel .admin-pane input[type=range]::-webkit-slider-runnable-track { height: 6px; border-radius: 999px; background: rgba(255,255,255,0.14); }
+    #adminPanel .admin-pane input[type=range]::-webkit-slider-thumb,
+    #serverPanel .admin-pane input[type=range]::-webkit-slider-thumb {
+      -webkit-appearance: none; width: 16px; height: 16px; margin-top: -5px; border-radius: 50%;
+      background: linear-gradient(135deg, var(--accent), var(--accent-d)); border: 2px solid rgba(255,255,255,0.85); box-shadow: 0 1px 4px rgba(0,0,0,.45); }
+    #adminPanel .admin-pane input[type=range]::-moz-range-track,
+    #serverPanel .admin-pane input[type=range]::-moz-range-track { height: 6px; border-radius: 999px; background: rgba(255,255,255,0.14); }
+    #adminPanel .admin-pane input[type=range]::-moz-range-thumb,
+    #serverPanel .admin-pane input[type=range]::-moz-range-thumb {
+      width: 16px; height: 16px; border: 2px solid rgba(255,255,255,0.85); border-radius: 50%; background: var(--accent); }
     /* Abmelden = rot (Gefahr/Sitzung beenden). */
     #settings #logoutBtn { background: rgba(239,68,68,0.16); border: 1px solid rgba(239,68,68,0.55); color: #ff6b6b; }
     #settings #logoutBtn:hover { background: linear-gradient(135deg, #ef4444, #b91c1c); border-color: #ef4444; color: #fff; box-shadow: none; filter: none; }
