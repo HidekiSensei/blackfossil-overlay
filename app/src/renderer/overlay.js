@@ -1137,6 +1137,7 @@ function updateProximityVolumes() {
     const factor = (deafened || amDead) ? 0 : masterGain;
     try { p.setVolume(vol * g * factor); } catch {}
   }
+  updateSpatialPanners(); // 3D-Richtung + Unterwasser (hängt in LiveKits Kette; Gain macht setVolume oben)
 }
 
 // ── 🧭 Räumlicher Ton (IMMER an) ─────────────────────────────────────────────
@@ -1244,6 +1245,55 @@ function renderVoiceDbg(rows) {
 window.addEventListener('keydown', (e) => {
   if (e.key === 'F9') { voiceDbgOn = !voiceDbgOn; const b = el('voiceDbg'); if (b && !voiceDbgOn) b.style.display = 'none'; }
 });
+
+// ── 🧭 Räumlicher Ton v2 (weniger invasiv) ───────────────────────────────────
+// webAudioMix BLEIBT AN (stabil, kein Rauschen). Wir hängen NUR einen PannerNode + Lowpass über
+// LiveKits offizielle setWebAudioPlugins-API in die bestehende Kette:
+//   source → [panner → lowpass] → gainNode(setVolume) → out
+// Kein eigener Graph, kein eigenes Element, keine Autoplay-Bastelei — LiveKit managt Quelle/Gain/
+// Lifecycle. LiveKit nutzt UNSEREN AudioContext (voiceCtx), damit die Nodes zusammenpassen.
+let voiceCtx = null;
+const spatialPlugins = new Map(); // identity → { panner, lowpass }
+function ensureVoiceCtx() {
+  if (!voiceCtx) { try { voiceCtx = new (window.AudioContext || window.webkitAudioContext)(); } catch {} }
+  if (voiceCtx && voiceCtx.state === 'suspended') voiceCtx.resume().catch(() => {});
+  return voiceCtx;
+}
+function attachSpatialPlugins(track, identity) {
+  const ctx = voiceCtx; if (!ctx || !identity || typeof track.setWebAudioPlugins !== 'function') return;
+  const panner = ctx.createPanner();
+  panner.panningModel = 'HRTF'; panner.distanceModel = 'linear';
+  panner.refDistance = 1; panner.maxDistance = 1e6; panner.rolloffFactor = 0; // Distanz-Gain macht setVolume, nicht der Panner
+  const lowpass = ctx.createBiquadFilter(); lowpass.type = 'lowpass'; lowpass.frequency.value = OPEN_HZ;
+  try { track.setWebAudioPlugins([panner, lowpass]); } catch { return; } // SDK verbindet source→panner→lowpass→gain
+  spatialPlugins.set(identity, { panner, lowpass });
+}
+// Panner-Richtung (z+heading) + Unterwasser-Lowpass je Sprecher aktualisieren. Gain/Deafen macht weiter setVolume.
+function updateSpatialPanners() {
+  const ctx = voiceCtx; if (!ctx) { renderVoiceDbg([]); return; }
+  const now = ctx.currentTime;
+  const hr = ((me && me.heading != null ? me.heading : 0) + SPATIAL_HEADING_OFF) * Math.PI / 180;
+  const fx = Math.cos(hr), fy = Math.sin(hr);   // Forward (Welt)
+  const rx = fy, ry = -fx;                        // Right = Forward um -90° gedreht
+  const dbg = [`me:${me ? `h${Math.round(me.heading || 0)}` : 'NULL'} ctx:${ctx.state} spk:${spatialPlugins.size}`];
+  for (const [identity, pl] of spatialPlugins) {
+    const pos = players.find((p) => p.steamId === identity);
+    let px = 0, pz = -1, dU = 0;
+    if (me && pos) {
+      const dx = pos.x - me.x, dy = pos.y - me.y;
+      const fwd = dx * fx + dy * fy, right = dx * rx + dy * ry;
+      px = right * SPATIAL_SCALE; pz = -fwd * SPATIAL_SCALE; dU = Math.hypot(dx, dy);
+    }
+    try { pl.panner.positionX.setValueAtTime(px, now); pl.panner.positionY.setValueAtTime(0, now); pl.panner.positionZ.setValueAtTime(pz, now); }
+    catch { try { pl.panner.setPosition(px, 0, pz); } catch {} }
+    const hz = (pos && pos.isUnderwater) ? UNDERWATER_HZ : OPEN_HZ;
+    try { pl.lowpass.frequency.setTargetAtTime(hz, now, 0.08); } catch { pl.lowpass.frequency.value = hz; }
+    const nm = (pos && (pos.name || pos.playerName)) || String(identity).slice(-4);
+    const side = px > 0.05 ? 'R' : px < -0.05 ? 'L' : 'C';
+    dbg.push(`${pos ? '' : '?'}${nm} d=${Math.round(dU / UNITS_PER_M)}m pan=${side}(${px.toFixed(2)})${(pos && pos.isUnderwater) ? ' UW' : ''}`);
+  }
+  renderVoiceDbg(dbg);
+}
 
 // ── Info-Box: Namen der Spieler, die man gerade hört (active speakers) ───────
 // Kurzer Nachlauf (1,5 s) gegen Flackern bei Sprechpausen. Wird per
@@ -7121,15 +7171,17 @@ async function connectWithSession(session) {
 
 async function connect({ token, url }) {
   setMicState('connecting');
+  ensureVoiceCtx(); // eigener AudioContext für webAudioMix — Panner/Lowpass hängen später hier ein
   // webAudioMix: leitet alle Remote-Audios über einen gemeinsamen AudioContext +
   //   GainNodes → setVolume kann >1.0 (Einzel- & Master-Regler wirken wirklich) und
   //   der Context wird auch auf den lokalen Teilnehmer gesetzt (Mikro-Gain-Processor).
   // adaptiveStream/dynacast: nur für Video sinnvoll; für reines Audio aus (vermeidet
   //   pausierte Subscriptions → Cutouts).
   room = new Room({
-    // webAudioMix AN (stabil): LiveKit mischt alle Remote-Audios über einen gemeinsamen AudioContext +
-    // GainNodes → setVolume (Proximity/Deafen) wirkt zuverlässig. (3D-Eigen-Graph vorerst deaktiviert.)
-    adaptiveStream: false, dynacast: false, webAudioMix: true,
+    // webAudioMix AN (stabil): LiveKit mischt alle Remote-Audios über UNSEREN AudioContext + GainNodes →
+    // setVolume (Proximity/Deafen) wirkt zuverlässig, und wir hängen je Track Panner+Lowpass via
+    // setWebAudioPlugins in die Kette (3D + Unterwasser), ohne LiveKits stabile Pipeline zu ersetzen.
+    adaptiveStream: false, dynacast: false, webAudioMix: voiceCtx ? { audioContext: voiceCtx } : true,
     // 🎧 Bandbreite senken (Voice-Server-Fanout war ~5 Mbit/s/User → Jitter/„roboterhaft"):
     //  • red:false  — keine redundanten Audio-Kopien (halbiert die Audio-Bitrate; Paketverlust ist
     //                 ohnehin minimal, RED bringt hier kaum was).
@@ -7164,11 +7216,13 @@ async function connect({ token, url }) {
         const a = track.attach(); a.autoplay = true;
         if (spkDeviceId && a.setSinkId) a.setSinkId(spkDeviceId).catch(() => {});
         document.body.appendChild(a);
+        attachSpatialPlugins(track, participant && participant.identity); // Panner+Lowpass in die Kette (3D)
         updateProximityVolumes();
       }
     })
-    .on(RoomEvent.TrackUnsubscribed, (track, _pub, _participant) => {
+    .on(RoomEvent.TrackUnsubscribed, (track, _pub, participant) => {
       if (track.kind === Track.Kind.Audio) {
+        if (participant) spatialPlugins.delete(participant.identity);
         track.detach().forEach((el) => el.remove());
         updateProximityVolumes();
       }
@@ -7183,8 +7237,9 @@ async function connect({ token, url }) {
     room = null; voiceConnected = false;
     throw e;   // connectWithSession zeigt den Fehler-Toast
   }
-  // LiveKit-Audio entsperren (Autoplay-Policy).
+  // LiveKit-Audio + unseren Mix-Context entsperren (Autoplay-Policy).
   try { await room.startAudio(); } catch {}
+  try { if (voiceCtx && voiceCtx.state === 'suspended') await voiceCtx.resume(); } catch {}
   // Gewählte Audio-Geräte anwenden (falls gesetzt)
   try { if (micDeviceId) await room.switchActiveDevice('audioinput', micDeviceId); } catch {}
   try { if (spkDeviceId) await room.switchActiveDevice('audiooutput', spkDeviceId); } catch {}
