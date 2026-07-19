@@ -1093,7 +1093,20 @@ function updateGoldenHud() {
 // R = Reichweite des Sprechers (m). Rw = R*100 Welt-Einheiten. vol = clamp(2*(1 - d/Rw)).
 function updateProximityVolumes() {
   if (!room) return;
-  updateSpatial(); // 3D-Pfad ist jetzt der EINZIGE (webAudioMix:false, immer an) — Panner/Lowpass/Gain
+  // STABIL: LiveKit-Wiedergabe (webAudioMix) + setVolume. Deafen/Tot über factor=0. Der 3D-Graph
+  // (updateSpatial) ist vorerst deaktiviert — wird später sauber isoliert wieder aufgesetzt.
+  for (const p of room.remoteParticipants.values()) {
+    const pos = players.find((pl) => pl.steamId === p.identity);
+    let vol = 1;
+    if (me && pos) {
+      const Rw = (remoteRanges[p.identity] ?? DEFAULT_RANGE) * UNITS_PER_M;
+      const d = Math.hypot(pos.x - me.x, pos.y - me.y);
+      vol = Math.max(0, Math.min(1, 2 * (1 - d / Rw)));
+    }
+    const g = userGain[p.identity] ?? 1;
+    const factor = (deafened || amDead) ? 0 : masterGain;
+    try { p.setVolume(vol * g * factor); } catch {}
+  }
 }
 
 // ── 🧭 Räumlicher Ton (IMMER an) ─────────────────────────────────────────────
@@ -7060,16 +7073,15 @@ async function connectWithSession(session) {
 
 async function connect({ token, url }) {
   setMicState('connecting');
-  ensureSpatialCtx(); // AudioContext JETZT (im Klick-Kontext des Verbinden-Buttons) entsperren
   // webAudioMix: leitet alle Remote-Audios über einen gemeinsamen AudioContext +
   //   GainNodes → setVolume kann >1.0 (Einzel- & Master-Regler wirken wirklich) und
   //   der Context wird auch auf den lokalen Teilnehmer gesetzt (Mikro-Gain-Processor).
   // adaptiveStream/dynacast: nur für Video sinnvoll; für reines Audio aus (vermeidet
   //   pausierte Subscriptions → Cutouts).
   room = new Room({
-    // webAudioMix AUS: das Overlay baut den WebAudio-Graph selbst (Panner/Lowpass/Gain je Sprecher,
-    // gemeinsamer Master-Gate für Deafen) — räumlicher Ton ist immer an.
-    adaptiveStream: false, dynacast: false, webAudioMix: false,
+    // webAudioMix AN (stabil): LiveKit mischt alle Remote-Audios über einen gemeinsamen AudioContext +
+    // GainNodes → setVolume (Proximity/Deafen) wirkt zuverlässig. (3D-Eigen-Graph vorerst deaktiviert.)
+    adaptiveStream: false, dynacast: false, webAudioMix: true,
     // 🎧 Bandbreite senken (Voice-Server-Fanout war ~5 Mbit/s/User → Jitter/„roboterhaft"):
     //  • red:false  — keine redundanten Audio-Kopien (halbiert die Audio-Bitrate; Paketverlust ist
     //                 ohnehin minimal, RED bringt hier kaum was).
@@ -7100,13 +7112,16 @@ async function connect({ token, url }) {
     })
     .on(RoomEvent.TrackSubscribed, (track, _pub, participant) => {
       if (track.kind === Track.Kind.Audio) {
-        spatialAttach(track, participant && participant.identity); // eigener 3D-Graph (immer)
+        // webAudioMix: LiveKit spielt über den gemeinsamen Context; Lautstärke/Deafen via setVolume.
+        const a = track.attach(); a.autoplay = true;
+        if (spkDeviceId && a.setSinkId) a.setSinkId(spkDeviceId).catch(() => {});
+        document.body.appendChild(a);
         updateProximityVolumes();
       }
     })
-    .on(RoomEvent.TrackUnsubscribed, (track, _pub, participant) => {
+    .on(RoomEvent.TrackUnsubscribed, (track, _pub, _participant) => {
       if (track.kind === Track.Kind.Audio) {
-        spatialDetach(participant && participant.identity);
+        track.detach().forEach((el) => el.remove());
         updateProximityVolumes();
       }
     });
@@ -7120,8 +7135,7 @@ async function connect({ token, url }) {
     room = null; voiceConnected = false;
     throw e;   // connectWithSession zeigt den Fehler-Toast
   }
-  // LiveKit-Audio + eigenen AudioContext entsperren (Autoplay-Policy) — sonst bleibt der Graph stumm.
-  spatialWake();
+  // LiveKit-Audio entsperren (Autoplay-Policy).
   try { await room.startAudio(); } catch {}
   // Gewählte Audio-Geräte anwenden (falls gesetzt)
   try { if (micDeviceId) await room.switchActiveDevice('audioinput', micDeviceId); } catch {}
