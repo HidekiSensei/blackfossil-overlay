@@ -1159,14 +1159,16 @@ function updateSpatial() {
   const hr = ((me && me.heading != null ? me.heading : 0) + SPATIAL_HEADING_OFF) * Math.PI / 180;
   const fx = Math.cos(hr), fy = Math.sin(hr);   // Forward (Welt)
   const rx = fy, ry = -fx;                        // Right = Forward um -90° gedreht
+  const dbg = [`me:${me ? `x${me.x | 0} y${me.y | 0} h${Math.round(me.heading || 0)}` : 'NULL'} ctx:${ctx.state} master:${master.toFixed(2)} spk:${spatialNodes.size}`];
   for (const [identity, n] of spatialNodes) {
     const pos = players.find((pl) => pl.steamId === identity);
     // Richtung relativ zu meiner Blickrichtung (WebAudio: +x rechts, -z vorn, +y oben).
-    let px = 0, pz = -1;
+    let px = 0, pz = -1, dU = 0;
     if (me && pos) {
       const dx = pos.x - me.x, dy = pos.y - me.y;
       const fwd = dx * fx + dy * fy, right = dx * rx + dy * ry;
       px = right * SPATIAL_SCALE; pz = -fwd * SPATIAL_SCALE;
+      dU = Math.hypot(dx, dy);
     }
     try { n.panner.positionX.setValueAtTime(px, now); n.panner.positionY.setValueAtTime(0, now); n.panner.positionZ.setValueAtTime(pz, now); }
     catch { try { n.panner.setPosition(px, 0, pz); } catch {} }
@@ -1177,13 +1179,28 @@ function updateSpatial() {
     let vol = 1;
     if (me && pos) {
       const Rw = (remoteRanges[identity] ?? DEFAULT_RANGE) * UNITS_PER_M;
-      const d = Math.hypot(pos.x - me.x, pos.y - me.y);
-      vol = Math.max(0, Math.min(1, 2 * (1 - d / Rw)));
+      vol = Math.max(0, Math.min(1, 2 * (1 - dU / Rw)));
     }
     const g = userGain[identity] ?? 1;
     try { n.gain.gain.setTargetAtTime(vol * g, now, 0.05); } catch { n.gain.gain.value = vol * g; }
+    const nm = (pos && (pos.name || pos.playerName)) || String(identity).slice(-4);
+    const side = px > 0.05 ? 'R' : px < -0.05 ? 'L' : 'C';
+    const frb = pz < -0.05 ? 'F' : pz > 0.05 ? 'B' : '·';
+    dbg.push(`${pos ? '' : '?'}${nm}  d=${Math.round(dU / UNITS_PER_M)}m vol=${vol.toFixed(2)} pan=${side}${frb}(${px.toFixed(2)})${(pos && pos.isUnderwater) ? ' UW' : ''}`);
   }
+  renderVoiceDbg(dbg);
 }
+// F9-Debug-Panel: exakte Zahlen (Distanz/Gain/Pan je Sprecher) zum Tunen von Reichweite & 3D.
+let voiceDbgOn = true;
+function renderVoiceDbg(rows) {
+  const box = el('voiceDbg'); if (!box) return;
+  if (!voiceDbgOn || !voiceConnected) { box.style.display = 'none'; return; }
+  box.style.display = 'block';
+  box.textContent = rows.join('\n');
+}
+window.addEventListener('keydown', (e) => {
+  if (e.key === 'F9') { voiceDbgOn = !voiceDbgOn; const b = el('voiceDbg'); if (b && !voiceDbgOn) b.style.display = 'none'; }
+});
 
 // ── Info-Box: Namen der Spieler, die man gerade hört (active speakers) ───────
 // Kurzer Nachlauf (1,5 s) gegen Flackern bei Sprechpausen. Wird per
