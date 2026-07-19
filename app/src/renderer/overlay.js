@@ -1107,34 +1107,47 @@ const SPATIAL_SCALE = 0.001;           // Welt-Einheiten → Audio-Meter (nur Ri
 const SPATIAL_HEADING_OFF = -90;       // Grad: Blickrichtung→Welt-Vektor (wie Karte/Kompass, COMPASS_NORTH_OFF)
 const UNDERWATER_HZ = 700;             // Lowpass-Grenzfrequenz unter Wasser (dumpf)
 const OPEN_HZ = 20000;                 // offen (keine Dämpfung)
+function spatialWake() { if (spatialCtx && spatialCtx.state === 'suspended') spatialCtx.resume().catch(() => {}); }
 function ensureSpatialCtx() {
   if (!spatialCtx) {
     try {
       spatialCtx = new (window.AudioContext || window.webkitAudioContext)();
       spatialMaster = spatialCtx.createGain();
       spatialMaster.connect(spatialCtx.destination);
+      // Autoplay-Policy: der Context startet „suspended" → per Geste entsperren und wach HALTEN,
+      // sonst bleibt der ganze Graph stumm (man hört niemanden).
+      spatialCtx.addEventListener('statechange', spatialWake);
+      ['click', 'keydown', 'pointerdown'].forEach((ev) => window.addEventListener(ev, spatialWake, { passive: true }));
     } catch {}
   }
-  if (spatialCtx && spatialCtx.state === 'suspended') spatialCtx.resume().catch(() => {});
+  spatialWake();
   return spatialCtx;
 }
 function spatialAttach(track, identity) {
   const ctx = ensureSpatialCtx(); if (!ctx || !identity) return;
   spatialDetach(identity); // evtl. alten Graph derselben identity räumen
+  // track.attach() erzeugt ein <audio>-Element, das die WebRTC-Pipeline TREIBT; createMediaElementSource
+  // leitet dessen Ton IN den Graph um (Element gibt dann nicht mehr direkt auf die Boxen). Reines
+  // MediaStreamSource bleibt bei Remote-Tracks in Chromium oft still — daher der Element-Weg.
+  const el = track.attach(); el.autoplay = true;
+  document.body.appendChild(el);
   let src;
-  try { src = ctx.createMediaStreamSource(new MediaStream([track.mediaStreamTrack])); } catch { return; }
+  try { src = ctx.createMediaElementSource(el); } catch { try { el.remove(); } catch {} return; }
   const panner = ctx.createPanner();
   panner.panningModel = 'HRTF'; panner.distanceModel = 'linear';
   panner.refDistance = 1; panner.maxDistance = 1e6; panner.rolloffFactor = 0; // Distanz-Gain macht perGain, nicht der Panner
   const lowpass = ctx.createBiquadFilter(); lowpass.type = 'lowpass'; lowpass.frequency.value = OPEN_HZ;
   const gain = ctx.createGain(); gain.gain.value = 0;
   src.connect(panner); panner.connect(lowpass); lowpass.connect(gain); gain.connect(spatialMaster);
-  spatialNodes.set(identity, { src, panner, lowpass, gain });
+  spatialNodes.set(identity, { el, src, panner, lowpass, gain });
   if (spkDeviceId && ctx.setSinkId) ctx.setSinkId(spkDeviceId).catch(() => {}); // Ausgabegerät (falls Browser es kann)
 }
 function spatialDetach(identity) {
   const n = identity && spatialNodes.get(identity);
-  if (n) { try { n.src.disconnect(); n.panner.disconnect(); n.lowpass.disconnect(); n.gain.disconnect(); } catch {} spatialNodes.delete(identity); }
+  if (!n) return;
+  try { n.src.disconnect(); n.panner.disconnect(); n.lowpass.disconnect(); n.gain.disconnect(); } catch {}
+  try { if (n.el) n.el.remove(); } catch {}
+  spatialNodes.delete(identity);
 }
 function updateSpatial() {
   const ctx = spatialCtx; if (!ctx || !spatialMaster) return;
@@ -7030,6 +7043,7 @@ async function connectWithSession(session) {
 
 async function connect({ token, url }) {
   setMicState('connecting');
+  ensureSpatialCtx(); // AudioContext JETZT (im Klick-Kontext des Verbinden-Buttons) entsperren
   // webAudioMix: leitet alle Remote-Audios über einen gemeinsamen AudioContext +
   //   GainNodes → setVolume kann >1.0 (Einzel- & Master-Regler wirken wirklich) und
   //   der Context wird auch auf den lokalen Teilnehmer gesetzt (Mikro-Gain-Processor).
@@ -7089,6 +7103,9 @@ async function connect({ token, url }) {
     room = null; voiceConnected = false;
     throw e;   // connectWithSession zeigt den Fehler-Toast
   }
+  // LiveKit-Audio + eigenen AudioContext entsperren (Autoplay-Policy) — sonst bleibt der Graph stumm.
+  spatialWake();
+  try { await room.startAudio(); } catch {}
   // Gewählte Audio-Geräte anwenden (falls gesetzt)
   try { if (micDeviceId) await room.switchActiveDevice('audioinput', micDeviceId); } catch {}
   try { if (spkDeviceId) await room.switchActiveDevice('audiooutput', spkDeviceId); } catch {}
