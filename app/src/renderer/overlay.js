@@ -3277,7 +3277,7 @@ function renderEncEditor() {
   box.querySelector('.ee-pt-map').onclick = () => {
     svEncSyncDraft();
     encWpMode = !encWpMode;
-    if (encWpMode) { if (!mapOpen) openBigMap(); showToast('🗺️ Karte: jeder Klick = Wegpunkt. Button erneut = beenden.', 'info'); }
+    if (encWpMode) { if (!mapOpen) toggleMap(true); showToast('🗺️ Karte: jeder Klick = Wegpunkt. Button erneut = beenden.', 'info'); }
     renderEncEditor();
   };
   box.querySelector('.ee-cancel').onclick = () => { svEncEditId = null; svEncDraft = null; encWpMode = false; renderEncEditor(); };
