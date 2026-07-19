@@ -7,6 +7,7 @@
     :root {
       --accent:#8b5cf6; --accent-2:#a78bfa; --accent-d:#7c3aed; --accent-rgb:139,92,246; --on:#22c55e; --off:#ef4444; --warn:#f59e0b;
       --panel:rgba(20,13,38,0.82); --border:rgba(139,92,246,0.32); --muted:#b3a9cc; --input-bg:#160d28;
+      --solid-base:#0c0917;
       --mini-size: clamp(200px, 15vw, 320px);
       --glow: 0 8px 32px rgba(0,0,0,0.45), 0 0 0 1px rgba(var(--accent-rgb),0.10), 0 0 24px rgba(var(--accent-rgb),0.12);
       --glow-strong: 0 10px 40px rgba(0,0,0,0.5), 0 0 0 1px rgba(var(--accent-rgb),0.18), 0 0 36px rgba(var(--accent-rgb),0.22);
@@ -221,8 +222,162 @@
     .hk-row button { flex: none; padding: 4px 12px; font-size: 12px; background: var(--input-bg); border: 1px solid var(--border); color: #eee; min-width: 64px; }
     .hk-row button.listening { background: var(--warn); color: #000; }
 
-    /* Settings: 3-Spalten-Layout */
+    /* Settings: Tabs (Audio/Tastenbelegung/UI) */
     #settings.wide { width: clamp(760px, 82vw, 1120px); }
+    #settings h2 { margin-bottom: 4px; }
+    /* Echte Reiter-Tabs (Unterstrich statt Buttons). Full-bleed über das Modal-Padding (26px). */
+    #settingsTabs { gap: 2px; margin: 10px -26px 20px; padding: 0 22px; border-bottom: 1px solid var(--border); flex-wrap: nowrap; }
+    #settingsTabs button { flex: none; background: transparent; border: 0; border-bottom: 2px solid transparent;
+      border-radius: 8px 8px 0 0; color: var(--muted); padding: 10px 18px; margin-bottom: -1px; font-weight: 600;
+      box-shadow: none; transform: none; filter: none; transition: color .12s, background .12s, border-color .12s; }
+    #settingsTabs button:hover { color: #f0edff; background: rgba(255,255,255,0.04); transform: none; box-shadow: none; filter: none; }
+    #settingsTabs button:not(.secondary) { color: var(--accent-2); border-bottom-color: var(--accent); background: rgba(var(--accent-rgb),0.10); }
+    /* Gleiche Reiter-Optik im Team-Panel (#adminTabs) und Admin-Panel (#serverTabs). */
+    #adminTabs, #serverTabs { gap: 2px; margin: 10px -26px 18px; padding: 0 22px; border-bottom: 1px solid var(--border); flex-wrap: wrap; }
+    #adminTabs button, #serverTabs button { flex: none; background: transparent; border: 0; border-bottom: 2px solid transparent;
+      border-radius: 8px 8px 0 0; color: var(--muted); padding: 9px 14px; margin-bottom: -1px; font-weight: 600;
+      box-shadow: none; transform: none; filter: none; transition: color .12s, background .12s, border-color .12s; }
+    #adminTabs button::before, #serverTabs button::before { content: none; }
+    #adminTabs button:hover, #serverTabs button:hover { color: #f0edff; background: rgba(255,255,255,0.04); transform: none; box-shadow: none; filter: none; }
+    #adminTabs button:not(.secondary), #serverTabs button:not(.secondary) { color: var(--accent-2); border-bottom-color: var(--accent); background: rgba(var(--accent-rgb),0.10); }
+    /* Feste Panel-Höhe: der Tab-Inhalt scrollt, das Fenster springt beim Tab-Wechsel NICHT. */
+    /* Alle drei Dialoge (Settings / Team / Admin) EXAKT gleich groß: feste Höhe, Pane füllt den Rest —
+       unabhängig davon, ob die Tab-Leiste ein- oder zweizeilig ist. */
+    #settings, #adminPanel, #serverPanel { flex-direction: column; height: min(80vh, 860px); }
+    #settings > h2, #adminPanel > h2, #serverPanel > h2,
+    #settingsTabs, #adminTabs, #serverTabs, #settings .btnrow { flex: none; }
+    .settings-panes, .admin-panes { flex: 1 1 auto; min-height: 0; display: flex; flex-direction: column; }
+    /* Multi-Select-Popup (Player-Audit „Aktion" u. a.): durchsuchbare Checkbox-Liste statt frickeligem <select multiple>. */
+    .pa-msel { position: relative; }
+    .pa-msel-btn { width: 100%; box-sizing: border-box; text-align: left; padding: 7px 8px; border-radius: 8px; border: 1px solid var(--border); background: var(--input-bg); color: #eee; font-size: 12px; cursor: pointer; min-height: 0; }
+    .pa-msel-btn:hover { border-color: var(--accent); }
+    .pa-msel-btn.active { border-color: var(--accent); color: #fff; }
+    .pa-msel-pop { position: absolute; z-index: 80; top: calc(100% + 4px); left: 0; width: max(240px, 100%);
+      background: var(--input-bg); border: 1px solid var(--accent); border-radius: 10px; box-shadow: var(--glow-strong); padding: 8px; }
+    .pa-msel-search { width: 100%; box-sizing: border-box; padding: 6px 8px; border-radius: 7px; border: 1px solid var(--border); background: rgba(0,0,0,.3); color: #eee; font-size: 12px; margin-bottom: 6px; }
+    .pa-msel-bar { display: flex; justify-content: space-between; align-items: center; margin-bottom: 4px; }
+    .pa-msel-count { font-size: 11px; color: var(--muted); }
+    .pa-msel-clear { background: none; border: 0; color: var(--accent-2); font-size: 11px; cursor: pointer; padding: 2px 4px; width: auto; min-height: 0; }
+    .pa-msel-clear:hover { text-decoration: underline; filter: none; box-shadow: none; }
+    .pa-msel-list { max-height: 220px; overflow: auto; display: flex; flex-direction: column; gap: 1px; }
+    .pa-msel-opt { display: flex; align-items: center; gap: 8px; padding: 6px; border-radius: 6px; font-size: 12px; color: #ddd; cursor: pointer; user-select: none; }
+    .pa-msel-opt:hover { background: rgba(var(--accent-rgb),0.16); }
+    .pa-msel-opt input { flex: none; width: auto; cursor: pointer; }
+    .pa-msel-empty { font-size: 12px; color: var(--muted); padding: 8px; text-align: center; }
+    .settings-pane { flex: 1 1 auto; min-height: 0; overflow: auto; padding-right: 6px; }
+    .settings-pane[hidden] { display: none; }
+    #settings .settings-cols { grid-template-columns: 1fr 1fr; gap: 24px; max-height: none; overflow: visible; }
+    /* Aufgeräumte Karten-Optik: jede Sektion als dezente Karte statt loser Liste. */
+    #settings .settings-col > .set-block { background: rgba(255,255,255,0.025); border: 1px solid rgba(255,255,255,0.07);
+      border-radius: 12px; padding: 14px 16px; margin-top: 12px; }
+    #settings .settings-col > .set-block:first-child { margin-top: 0; }
+    #settings .settings-col > details.set-block[open] { background: rgba(255,255,255,0.04); }
+    #settings .settings-col .col-head { border-bottom: 0; padding-bottom: 0; margin-bottom: 10px; text-transform: uppercase; font-size: 12px; letter-spacing: .6px; }
+    /* ── Einheitliches, modernes Bedien-Design im Settings-Dialog ─────────────────
+       Ein Look für alle Buttons, Dropdowns, Slider und Toggles. */
+    /* Buttons: EIN neutraler Stil (Akzent nur im Aktiv-Zustand); kein Shimmer-Streif. */
+    #settings .settings-pane button:not(.bf-switch):not(.theme-sw) {
+      background: rgba(255,255,255,0.05); border: 1px solid var(--border); color: #e9e4f7;
+      border-radius: 9px; padding: 9px 14px; min-height: 38px; font-size: 13px; font-weight: 600;
+      box-shadow: none; filter: none; }
+    #settings .settings-pane button:not(.bf-switch):not(.theme-sw)::before { content: none; }
+    #settings .settings-pane button:not(.bf-switch):not(.theme-sw):hover {
+      background: rgba(var(--accent-rgb),0.16); border-color: var(--accent); color: #fff;
+      transform: none; box-shadow: none; filter: none; }
+    #settings .settings-pane button:not(.bf-switch):not(.theme-sw):active { transform: translateY(1px); }
+    #settings .settings-pane button.active, #settings .settings-pane .vmode.active {
+      background: linear-gradient(135deg, var(--accent), var(--accent-d)); border-color: var(--accent); color: #fff; }
+    /* Voicechat-Kontrolle: aktive Status-Buttons (Verbinden/Mikro an/Ton an/Alles stumm) farbig hervorheben. */
+    #settings .settings-pane .vcol-btns button:not(.secondary):not(.bf-switch) {
+      background: linear-gradient(135deg, var(--accent), var(--accent-d)); border-color: var(--accent); color: #fff; }
+    #settings .settings-pane .vcol-btns button:not(.secondary):not(.bf-switch):hover { filter: brightness(1.08); }
+    /* Dropdowns: einheitlich mit Chevron. */
+    #settings .settings-pane select {
+      -webkit-appearance: none; appearance: none; width: 100%; min-height: 38px;
+      padding: 9px 34px 9px 12px; border-radius: 9px; border: 1px solid var(--border);
+      background-color: var(--input-bg); color: #e9e4f7; font-size: 13px; cursor: pointer;
+      background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 12 12'%3E%3Cpath d='M2 4l4 4 4-4' stroke='%23b3a9cc' stroke-width='1.6' fill='none' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E");
+      background-repeat: no-repeat; background-position: right 12px center; background-size: 12px; }
+    #settings .settings-pane select:hover { border-color: var(--accent); }
+    /* Slider: einheitlicher Track + Knopf (webkit + moz). */
+    #settings .settings-pane input[type=range] {
+      -webkit-appearance: none; appearance: none; width: 100%; height: 22px; background: transparent; cursor: pointer; }
+    #settings .settings-pane input[type=range]::-webkit-slider-runnable-track { height: 6px; border-radius: 999px; background: rgba(255,255,255,0.14); }
+    #settings .settings-pane input[type=range]::-webkit-slider-thumb {
+      -webkit-appearance: none; width: 16px; height: 16px; margin-top: -5px; border-radius: 50%;
+      background: linear-gradient(135deg, var(--accent), var(--accent-d)); border: 2px solid rgba(255,255,255,0.85); box-shadow: 0 1px 4px rgba(0,0,0,.45); }
+    #settings .settings-pane input[type=range]::-moz-range-track { height: 6px; border-radius: 999px; background: rgba(255,255,255,0.14); }
+    #settings .settings-pane input[type=range]::-moz-range-thumb {
+      width: 16px; height: 16px; border: 2px solid rgba(255,255,255,0.85); border-radius: 50%; background: var(--accent); }
+    /* Farbwähler: einheitliche Kachel. */
+    #settings .settings-pane input[type=color] { width: 42px; height: 28px; padding: 2px; border: 1px solid var(--border); border-radius: 8px; background: var(--input-bg); cursor: pointer; }
+    /* Toggle-Switch (einheitlich) + Zeilen-Layout. */
+    .bf-toggle-row { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 8px 0; }
+    .bf-toggle-row + .bf-toggle-row { border-top: 1px solid rgba(255,255,255,0.06); }
+    .bf-toggle-row .bf-tg-lbl { font-size: 13px; color: #e9e4f7; font-weight: 600; }
+    .bf-toggle-row .bf-tg-txt { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+    .bf-toggle-row .bf-tg-desc { font-size: 11px; color: var(--muted); font-weight: 400; line-height: 1.25; }
+    #settings .bf-switch { position: relative; flex: none; width: 46px; height: 26px; min-height: 0; padding: 0;
+      border-radius: 999px; background: rgba(255,255,255,0.14); border: 1px solid var(--border); cursor: pointer;
+      overflow: visible; transition: background .16s, border-color .16s, box-shadow .16s; }
+    #settings .bf-switch::before { content: none; }
+    #settings .bf-switch::after { content: ''; position: absolute; top: 2px; left: 2px; width: 20px; height: 20px;
+      border-radius: 50%; background: #bfb6d8; transition: transform .16s, background .16s; }
+    #settings .bf-switch:not(.secondary) { background: linear-gradient(135deg, var(--accent), var(--accent-d)); border-color: var(--accent); }
+    #settings .bf-switch:not(.secondary)::after { transform: translateX(20px); background: #fff; }
+    #settings .bf-switch:hover { transform: none; filter: none; box-shadow: 0 0 0 3px rgba(var(--accent-rgb),0.18); }
+    /* Checkboxen im Audio-Abschnitt ebenfalls als Switch. */
+    #settings input[type=checkbox] { -webkit-appearance: none; appearance: none; position: relative; flex: none;
+      width: 40px; height: 22px; border-radius: 999px; background: rgba(255,255,255,0.14); border: 1px solid var(--border); cursor: pointer; transition: background .16s; }
+    #settings input[type=checkbox]::after { content: ''; position: absolute; top: 2px; left: 2px; width: 16px; height: 16px; border-radius: 50%; background: #bfb6d8; transition: transform .16s, background .16s; }
+    #settings input[type=checkbox]:checked { background: linear-gradient(135deg, var(--accent), var(--accent-d)); border-color: var(--accent); }
+    #settings input[type=checkbox]:checked::after { transform: translateX(18px); background: #fff; }
+    /* ── Software-Tab ─────────────────────────────────────────────────────────── */
+    #settings .sw-row { display: flex; align-items: center; justify-content: space-between; gap: 12px; font-size: 13px; color: #e9e4f7; }
+    #settings .sw-vernum { font-variant-numeric: tabular-nums; font-weight: 700; color: var(--accent-2); }
+    #settings .sw-rel-meta { font-size: 12px; font-weight: 700; color: var(--accent-2); margin-bottom: 8px; }
+    #settings .sw-rel-notes { font-size: 12px; color: #d8d2ea; line-height: 1.45; max-height: 46vh; overflow: auto; padding-right: 4px; }
+    #settings .sw-rel-notes .sw-md-h { font-weight: 700; color: #f0edff; margin: 10px 0 4px; }
+    #settings .sw-rel-notes .sw-md-h:first-child { margin-top: 0; }
+    #settings .sw-rel-notes .sw-md-ul { margin: 0 0 6px; padding-left: 18px; }
+    #settings .sw-rel-notes .sw-md-ul li { margin: 2px 0; }
+    #settings .sw-rel-notes .sw-md-p { margin: 4px 0; color: var(--muted); }
+    #settings .sw-rel-notes strong { color: #f0edff; font-weight: 700; }
+    #settings .sw-rel-notes .sw-lnk { color: var(--accent-2); cursor: pointer; text-decoration: none; border-bottom: 1px solid rgba(var(--accent-rgb),0.4); }
+    #settings .sw-rel-notes .sw-lnk:hover { color: #fff; border-bottom-color: var(--accent); }
+    /* ── Gleiche Dropdown-/Slider-Optik in Team- & Admin-Panel ──────────────────── */
+    #adminPanel .admin-pane select, #serverPanel .admin-pane select {
+      -webkit-appearance: none; appearance: none; min-height: 34px; padding: 8px 32px 8px 12px; border-radius: 9px;
+      border: 1px solid var(--border); background-color: var(--input-bg); color: #e9e4f7; font-size: 13px; cursor: pointer;
+      background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 12 12'%3E%3Cpath d='M2 4l4 4 4-4' stroke='%23b3a9cc' stroke-width='1.6' fill='none' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E");
+      background-repeat: no-repeat; background-position: right 12px center; background-size: 12px; }
+    #adminPanel .admin-pane select:hover, #serverPanel .admin-pane select:hover { border-color: var(--accent); }
+    #adminPanel .admin-pane input[type=range], #serverPanel .admin-pane input[type=range] {
+      -webkit-appearance: none; appearance: none; height: 22px; background: transparent; cursor: pointer; }
+    #adminPanel .admin-pane input[type=range]::-webkit-slider-runnable-track,
+    #serverPanel .admin-pane input[type=range]::-webkit-slider-runnable-track { height: 6px; border-radius: 999px; background: rgba(255,255,255,0.14); }
+    #adminPanel .admin-pane input[type=range]::-webkit-slider-thumb,
+    #serverPanel .admin-pane input[type=range]::-webkit-slider-thumb {
+      -webkit-appearance: none; width: 16px; height: 16px; margin-top: -5px; border-radius: 50%;
+      background: linear-gradient(135deg, var(--accent), var(--accent-d)); border: 2px solid rgba(255,255,255,0.85); box-shadow: 0 1px 4px rgba(0,0,0,.45); }
+    #adminPanel .admin-pane input[type=range]::-moz-range-track,
+    #serverPanel .admin-pane input[type=range]::-moz-range-track { height: 6px; border-radius: 999px; background: rgba(255,255,255,0.14); }
+    #adminPanel .admin-pane input[type=range]::-moz-range-thumb,
+    #serverPanel .admin-pane input[type=range]::-moz-range-thumb {
+      width: 16px; height: 16px; border: 2px solid rgba(255,255,255,0.85); border-radius: 50%; background: var(--accent); }
+    /* Abmelden = rot (Gefahr/Sitzung beenden). */
+    #settings #logoutBtn { background: rgba(239,68,68,0.16); border: 1px solid rgba(239,68,68,0.55); color: #ff6b6b; }
+    #settings #logoutBtn:hover { background: linear-gradient(135deg, #ef4444, #b91c1c); border-color: #ef4444; color: #fff; box-shadow: none; filter: none; }
+    /* Blickdichte Haupt-Dialoge (über das Dock geöffnet): Panel-Tönung über opake Basis =
+       theme-treu, aber 0% durchsichtig. Gilt NICHT für Minimap/Kompass/HUD/Toasts. */
+    body.bf-solid-dialogs .feature-panel,
+    body.bf-solid-dialogs #settings,
+    body.bf-solid-dialogs #adminPanel,
+    body.bf-solid-dialogs #serverPanel,
+    body.bf-solid-dialogs #bigMap {
+      background: linear-gradient(var(--panel), var(--panel)), var(--solid-base);
+      backdrop-filter: none; -webkit-backdrop-filter: none;
+    }
     /* Admin-Panel: eigenständiges Modal wie Settings */
     #adminPanel, #serverPanel { position: absolute; top: 50%; left: 50%; transform: translate(-50%,-50%); display: none;
       background: var(--panel); border: 1px solid var(--border); border-radius: 16px; padding: 26px;
@@ -401,7 +556,8 @@
     .tm-input { padding: 9px; border-radius: 8px; border: 1px solid var(--border); background: var(--input-bg); color: #eee; font-size: 13px; }
     /* Admin-Panel: Tab-Leiste + Panes */
     .admin-tabs { display: flex; gap: 6px; flex-wrap: wrap; margin-bottom: 14px; }
-    .admin-pane { max-height: 66vh; overflow: auto; padding-right: 4px; }
+    /* Füllt den Rest des (fest hohen) Panels — springt beim Tab-Wechsel NICHT. */
+    .admin-pane { flex: 1 1 auto; min-height: 0; overflow: auto; padding-right: 6px; }
     .admin-pane[hidden] { display: none; }
     .dt-muted { color: var(--muted); font-size: 12px; }
     .dt-form { display: flex; flex-direction: column; gap: 6px; }
@@ -504,7 +660,10 @@
     body.bf-hide-hud #hud,
     body.bf-hide-hudHeart #hudHeart,
     body.bf-hide-minimapWrap #minimapWrap,
-    body.bf-hide-hudInfo #hudInfo { display: none !important; }
+    body.bf-hide-hudInfo #hudInfo,
+    body.bf-hide-eventPanel #eventPanel,
+    body.bf-hide-growTimer #growTimer,
+    body.bf-hide-goldenHud #goldenHud { display: none !important; }
     /* Dienst-/Admin-Modus: Lebensanzeige ausblenden */
     body.on-duty #hudHeart { display: none !important; }
     /* … im Edit-Mode bleiben sie (gedimmt) sichtbar, damit man sie wieder einblenden kann */
@@ -1100,6 +1259,16 @@
   <!-- Settings -->
   <div id="settings" class="wide">
     <h2>⚙️ Einstellungen</h2>
+    <div class="admin-tabs" id="settingsTabs">
+      <button data-sttab="audio">🎙️ Audio</button>
+      <button data-sttab="keys" class="secondary">⌨️ Tastenbelegung</button>
+      <button data-sttab="ui" class="secondary">🎨 UI</button>
+      <button data-sttab="software" class="secondary">💾 Software</button>
+    </div>
+    <div class="settings-panes">
+
+    <!-- ── Audio ── -->
+    <div class="settings-pane" data-pane="audio">
     <div class="settings-cols">
 
       <!-- Spalte 1: Voicechat-Kontrolle -->
@@ -1214,11 +1383,6 @@
 
           <button id="micCompReset" class="secondary" style="width:100%;margin-top:6px;font-size:12px">↺ Standardwerte (Regler)</button>
         </details>
-        <div class="set-block">
-          <div class="set-label">🎨 Layout</div>
-          <button id="editModeBtn" style="width:100%">🎨 Edit-Mode (Panels verschieben)</button>
-          <div style="font-size:11px;color:var(--muted);margin-top:6px">Panels per Drag verschieben — Positionen werden lokal gespeichert.</div>
-        </div>
       </div>
 
       <!-- Spalte 2: Voicechat-Einstellungen -->
@@ -1248,44 +1412,49 @@
             <input id="spatial3d" type="range" min="0" max="150" step="5" value="100" style="flex:1;accent-color:var(--accent)">
             <span id="spatial3dVal" style="width:42px;text-align:right;font-size:12px;color:var(--muted)">100%</span>
           </div>
-          <label style="display:flex;align-items:center;gap:8px;margin-bottom:8px;font-size:12px;cursor:pointer;user-select:none" title="Bei Knistern/Audio-Problemen ausschalten — Voice läuft dann ohne 3D/Unterwasser-Effekte weiter">
-            <input id="voiceFxChk" type="checkbox" style="width:auto;cursor:pointer" checked> 🎛️ 3D &amp; Effekte (bei Audio-Problemen ausschalten)
+          <label class="bf-toggle-row" style="margin:2px 0 8px" title="Bei Knistern/Audio-Problemen ausschalten — Voice läuft dann ohne 3D/Unterwasser-Effekte weiter">
+            <div class="bf-tg-txt"><span class="bf-tg-lbl">🎛️ 3D &amp; Effekte</span><span class="bf-tg-desc">Bei Audio-Problemen (Knistern) ausschalten — Voice läuft dann ohne 3D/Unterwasser.</span></div>
+            <input id="voiceFxChk" type="checkbox" checked>
           </label>
           <input id="voiceSearch" placeholder="🔍 Spieler suchen…" style="width:100%;margin-bottom:6px;padding:7px;border-radius:6px;border:1px solid var(--border);background:rgba(0,0,0,0.25);color:#eee;box-sizing:border-box">
           <div id="voiceUsers" style="max-height:220px;overflow:auto"></div>
         </div>
-        <div class="set-block">
-          <div class="set-label">⬆️ Updates</div>
-          <button id="checkUpdateBtn" style="width:100%">🔄 Nach Updates suchen</button>
-          <div id="updateBox" style="display:none;margin-top:10px">
-            <div id="updateInfo" style="font-size:12px;color:var(--muted);margin:6px 0">Eine neue Version ist verfügbar.</div>
-            <button id="updateBtn" style="width:100%">Update herunterladen</button>
-          </div>
-        </div>
       </div>
 
-      <!-- Spalte 3: Hotkeys -->
+    </div><!-- /settings-cols (audio) -->
+    </div><!-- /pane audio -->
+
+    <!-- ── Tastenbelegung ── -->
+    <div class="settings-pane" data-pane="keys" hidden>
+      <div class="col-head">⌨️ Tastenbelegung</div>
+      <div id="hotkeyList"></div>
+      <button id="resetHkBtn" class="secondary" style="margin-top:10px;width:100%">Tasten zurücksetzen</button>
+    </div>
+
+    <!-- ── UI ── -->
+    <div class="settings-pane" data-pane="ui" hidden>
+    <div class="settings-cols">
       <div class="settings-col">
-        <div class="col-head">⌨️ Hotkeys</div>
-        <div id="hotkeyList"></div>
-        <button id="resetHkBtn" class="secondary" style="margin-top:10px;width:100%">Tasten zurücksetzen</button>
         <div class="set-block">
           <div class="set-label">🎨 Farbthema</div>
           <div id="themePicker" style="display:flex;gap:8px;flex-wrap:wrap;margin-top:4px"></div>
         </div>
         <div class="set-block">
           <div class="set-label">⚡ Low-Spec / Performance</div>
-          <button id="lowSpecBtn" style="width:100%">⚡ Low-Spec-Modus aktivieren</button>
-          <div style="font-size:11px;color:var(--muted);margin:6px 0 12px">Schaltet Weichzeichner + alle Effekte auf einmal aus — für schwächere PCs / mehr FPS.</div>
-          <div class="set-label">Einzeln einstellen</div>
-          <button id="blurToggleBtn" style="width:100%;margin-top:4px">🌫️ Weichzeichner: An</button>
-          <button id="fxToggleBtn" style="width:100%;margin-top:6px">⚡ Effekte: An</button>
-          <button id="miniToggleBtn" style="width:100%;margin-top:6px">🗺️ Minimap: An</button>
-          <button id="compassToggleBtn" style="width:100%;margin-top:6px">🧭 Kompass: An</button>
+          <div class="bf-toggle-row"><div class="bf-tg-txt"><span class="bf-tg-lbl">⚡ Low-Spec-Modus</span><span class="bf-tg-desc">Weichzeichner + alle Effekte auf einmal aus — für schwächere PCs / mehr FPS.</span></div><button id="lowSpecBtn" class="bf-switch secondary" role="switch" aria-label="Low-Spec-Modus"></button></div>
+          <div class="set-label" style="margin-top:12px">Einzeln einstellen</div>
+          <div class="bf-toggle-row"><span class="bf-tg-lbl">🌫️ Weichzeichner</span><button id="blurToggleBtn" class="bf-switch" role="switch" aria-label="Weichzeichner"></button></div>
+          <div class="bf-toggle-row"><span class="bf-tg-lbl">⚡ Effekte</span><button id="fxToggleBtn" class="bf-switch" role="switch" aria-label="Effekte"></button></div>
           <div style="font-size:11px;color:var(--muted);margin-top:8px">🌫️ Weichzeichner (Blur) = größter FPS-Kostenpunkt. ⚡ Effekte = Animationen/Leuchten. Beim <em>Spielen</em> (Overlay-Dock zu) sind viele Effekte ohnehin automatisch aus.</div>
           <div class="set-label" style="margin-top:14px">Experimentell</div>
-          <button id="shrinkToggleBtn" style="width:100%;margin-top:4px">🪟 Fenster-Shrink: Aus</button>
+          <div class="bf-toggle-row"><span class="bf-tg-lbl">🪟 Fenster-Shrink</span><button id="shrinkToggleBtn" class="bf-switch secondary" role="switch" aria-label="Fenster-Shrink"></button></div>
           <div style="font-size:11px;color:var(--muted);margin-top:8px">🪟 Verkleinert das Overlay-Fenster beim Spielen (Dock zu) auf die HUD-Bereiche, statt den ganzen Bildschirm zu bedecken — gibt dem Spiel oft den schnellen Vollbild-Pfad zurück (mehr FPS). Wirkung ist GPU-/treiberabhängig: <em>ausprobieren</em>. Weniger sichtbares HUD (im Edit-Mode ausblenden) = stärkerer Effekt.</div>
+        </div>
+      </div>
+      <div class="settings-col">
+        <div class="set-block">
+          <div class="set-label">👁️ HUD-Sichtbarkeit</div>
+          <div id="hudVisToggles"></div>
         </div>
         <div class="set-block">
           <div class="set-label">🗺️ Karten-Marker</div>
@@ -1295,12 +1464,45 @@
           <button id="markerResetBtn" class="secondary" style="width:100%;margin-top:8px">↩️ Marker zurücksetzen</button>
           <div style="font-size:11px;color:var(--muted);margin-top:8px">Farbe &amp; Größe des Wegpunkts sowie die Farbe deines eigenen Positions-Pfeils. Bleibt gespeichert.</div>
         </div>
+        <div class="set-block">
+          <div class="set-label">🎨 Layout</div>
+          <button id="editModeBtn" style="width:100%">🎨 Edit-Mode (Panels verschieben)</button>
+          <div style="font-size:11px;color:var(--muted);margin-top:6px">Panels per Drag verschieben — Positionen werden lokal gespeichert.</div>
+        </div>
       </div>
 
-    </div>
-    <div id="versionInfo" style="text-align:center;font-size:11px;color:var(--muted);margin:10px 0 4px">v…</div>
+    </div><!-- /settings-cols (ui) -->
+    </div><!-- /pane ui -->
+
+    <!-- ── Software ── -->
+    <div class="settings-pane" data-pane="software" hidden>
+    <div class="settings-cols">
+      <div class="settings-col">
+        <div class="set-block">
+          <div class="col-head">ℹ️ Version</div>
+          <div class="sw-row"><span>Installierte Version</span><span id="swVersion" class="sw-vernum">…</span></div>
+          <button id="checkUpdateBtn" style="width:100%;margin-top:10px">🔄 Nach Updates suchen</button>
+          <div id="updateBox" style="display:none;margin-top:10px">
+            <div id="updateInfo" style="font-size:12px;color:var(--muted);margin:6px 0">Eine neue Version ist verfügbar.</div>
+            <button id="updateBtn" style="width:100%">Update herunterladen</button>
+          </div>
+        </div>
+        <div class="set-block">
+          <div class="col-head">👤 Sitzung</div>
+          <button id="logoutBtn" style="width:100%">Abmelden</button>
+        </div>
+      </div>
+      <div class="settings-col">
+        <div class="set-block">
+          <div class="col-head">📝 Letzte Änderungen</div>
+          <div id="swRelMeta" class="sw-rel-meta"></div>
+          <div id="swRelNotes" class="sw-rel-notes">Lade Release-Notes…</div>
+        </div>
+      </div>
+    </div><!-- /settings-cols (software) -->
+    </div><!-- /pane software -->
+    </div><!-- /settings-panes -->
     <div class="btnrow">
-      <button id="logoutBtn" class="secondary">Abmelden</button>
       <button id="closeBtn" class="secondary">Schließen</button>
     </div>
   </div>
@@ -1317,6 +1519,7 @@
       <button data-stab="karte" class="secondary">🗺️ Karte</button>
       <button data-stab="server" class="secondary">📢 Server</button>
       <button data-stab="godvoice" class="secondary">📣 Gottstimme</button>
+      <button data-stab="teamaudit" class="secondary">🛡️ Team-Audit</button>
     </div>
     <div class="admin-panes">
       <div class="admin-pane" data-pane="welt"><div id="svWeltBody"><div class="dt-muted">Lade…</div></div></div>
@@ -1355,6 +1558,9 @@
           <div id="godVoiceHint" style="font-size:11px;color:var(--muted);margin-top:8px"></div>
         </div>
       </div>
+      <div class="admin-pane" data-pane="teamaudit" hidden>
+        <div id="taBody"><div class="dt-muted">Lade…</div></div>
+      </div>
     </div>
   </div>
 
@@ -1368,13 +1574,13 @@
     </div>
     <div class="admin-tabs" id="adminTabs">
       <button data-atab="tools">🛠️ Tools</button>
+      <button data-atab="ansage" class="secondary">📢 Ansage</button>
       <button data-atab="dtoken" class="secondary">🦕 Dino-Token</button>
       <button data-atab="pvp" class="secondary">🏆 PvP / Prime</button>
       <button data-atab="account" class="secondary admin-only">🔗 Accounts</button>
       <button data-atab="lootbox" class="secondary admin-only">🎁 Lootbox</button>
       <button data-atab="warn" class="secondary">⚠️ Verwarnungen</button>
       <button data-atab="audit" class="secondary">📋 Player-Audit</button>
-      <button data-atab="teamaudit" class="secondary admin-only">🛡️ Team-Audit</button>
       <button data-atab="handbuch" class="secondary">📖 Handbuch</button>
     </div>
     <div class="admin-panes">
@@ -1478,8 +1684,15 @@
       <div id="paBody"><div class="dt-muted">Lade…</div></div>
     </div>
 
-    <div class="admin-pane" data-pane="teamaudit" hidden>
-      <div id="taBody"><div class="dt-muted">Lade…</div></div>
+    <div class="admin-pane" data-pane="ansage" hidden>
+      <div class="settings-col">
+        <div class="col-head">📢 Server-Ansage (ingame)</div>
+        <div class="set-block">
+          <div style="font-size:12px;color:var(--muted);margin-bottom:8px">Sendet eine Nachricht an ALLE Spieler auf dem Server (z. B. Event-Hinweis, Restart-Warnung).</div>
+          <input id="svMsg" class="tm-input" style="width:100%;box-sizing:border-box" placeholder="z.B. Event startet in 10 Min!">
+          <button id="svAnnounce" style="width:100%;margin-top:8px">📢 Ansage senden</button>
+        </div>
+      </div>
     </div>
 
     <!-- Staff-Handbuch -->
