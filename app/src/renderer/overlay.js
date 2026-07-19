@@ -297,7 +297,8 @@ function renderUpdateUI() {
     btn.textContent = '📥 Installer herunterladen'; btn.disabled = false;
   }
 }
-const RELEASES_URL = 'https://github.com/HidekiSensei/blackfossil-overlay/releases/latest';
+// Manueller Download-Fallback: eigene Backend-Download-Seite (folgt der API-Base) statt GitHub.
+// URL wird zur Laufzeit aus config.tokenBase gebaut (config ist beim Modul-Eval evtl. noch leer).
 
 // Proximity: Sprechreichweiten in Metern (1 m = 100 Welt-Einheiten/cm).
 // Maßgeblich ist die Reichweite des SPRECHERS — andere hören dich so weit.
@@ -817,7 +818,7 @@ async function init() {
   el('updateBtn').onclick = () => {
     if (updateState === 'available') { updateState = 'downloading'; window.bf.updateDownload?.(); renderUpdateUI(); }
     else if (updateState === 'ready') { window.bf.updateInstall?.(); }
-    else if (updateState === 'error') { window.bf.openExternal?.(RELEASES_URL); }   // manueller Download-Fallback
+    else if (updateState === 'error') { window.bf.openExternal?.(`${config.tokenBase}/overlay/`); }   // manueller Download-Fallback (Backend-Download-Seite)
   };
   window.bf.onUpdateAvailable?.((version) => {
     updateVersion = version || ''; updateState = 'available'; renderUpdateUI();
@@ -7154,8 +7155,8 @@ function showSettingsTab(t) {
   if (t === 'software') loadSoftwareTab();
 }
 
-// Software-Tab: Version + letzte Release-Notes von GitHub (öffentliches Releases-API).
-const GH_RELEASES_URL = 'https://api.github.com/repos/HidekiSensei/blackfossil-overlay/releases/latest';
+// Software-Tab: Version + letzte Release-Notes vom eigenen Backend (folgt der API-Base → test zeigt
+// api-test-Notes, prod api-Notes). Format: [{ version, date, notes, channel }], neueste zuerst.
 let _swNotesLoaded = false;
 function mdLinkLabel(u) {
   if (/\/compare\//.test(u)) return 'Vergleich ansehen ↗';
@@ -7190,13 +7191,15 @@ async function loadSoftwareTab() {
   const meta = el('swRelMeta'), notes = el('swRelNotes');
   if (!notes) return;
   try {
-    const r = await fetch(GH_RELEASES_URL, { headers: { Accept: 'application/vnd.github+json' } });
+    const r = await fetch(`${config.tokenBase}/overlay/releases.json`, { headers: { Accept: 'application/json' } });
     if (!r.ok) throw new Error('HTTP ' + r.status);
-    const d = await r.json();
+    const list = await r.json();
+    const d = Array.isArray(list) ? list[0] : null;
+    if (!d) throw new Error('leere Release-Liste');
     let dstr = '';
-    try { dstr = new Date(d.published_at).toLocaleDateString('de-DE', { day: '2-digit', month: 'short', year: 'numeric' }); } catch {}
-    if (meta) meta.textContent = `${d.name || d.tag_name || ''}${dstr ? ' · ' + dstr : ''}`;
-    notes.innerHTML = mdLiteToHtml(String(d.body || '').trim() || 'Keine Notizen.');
+    try { dstr = new Date(d.date).toLocaleDateString('de-DE', { day: '2-digit', month: 'short', year: 'numeric' }); } catch {}
+    if (meta) meta.textContent = `v${d.version || '?'}${dstr ? ' · ' + dstr : ''}`;
+    notes.innerHTML = mdLiteToHtml(String(d.notes || '').trim() || 'Keine Notizen.');
     notes.querySelectorAll('.sw-lnk').forEach((a) => { a.onclick = (e) => { e.preventDefault(); const h = a.dataset.href; if (h) { try { window.bf.openExternal?.(h); } catch {} } }; });
     _swNotesLoaded = true;
   } catch (e) {
