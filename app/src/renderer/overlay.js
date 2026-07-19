@@ -250,8 +250,11 @@ let tpIsAdmin = false;
 let tpConfirmTarget = null;
 let appVersion = '?';
 function updateVersionInfo() {
+  const txt = `v${appVersion}${tpIsAdmin ? ' · Team ✓' : ''}`;
   const v = el('versionInfo');
-  if (v) v.textContent = `v${appVersion}${tpIsAdmin ? ' · Team ✓' : ''}`;
+  if (v) v.textContent = txt;
+  const sv = el('swVersion');
+  if (sv) sv.textContent = txt;
 }
 let sessionToken = null;
 let calibPairs = [];
@@ -896,6 +899,7 @@ async function init() {
   el('admLightningBtn').onclick = () => admLightning();
   { const b = el('msgSendBtn'); if (b) b.onclick = () => admSendToast(); }
   { const b = el('followToggleBtn'); if (b) b.onclick = () => admToggleFollow(); }
+  { const b = el('svAnnounce'); if (b) b.onclick = () => { const m = el('svMsg').value.trim(); if (!m) { showToast('Nachricht eingeben', 'error'); return; } apiAction('/admin/server/announce', { message: m }, '📢 Ansage gesendet', () => { el('svMsg').value = ''; }); }; }
   { const b = el('dutyToggleBtn'); if (b) b.onclick = () => toggleDuty(); }
   document.querySelectorAll('#adminTabs [data-atab]').forEach((b) => { b.onclick = () => showAdminTab(b.dataset.atab); });
   { const b = el('dtTabGive'); if (b) b.onclick = () => { dtTab = 'give'; renderDtTab(); }; }
@@ -2125,7 +2129,7 @@ document.addEventListener('focusin', (e) => { const t = e.target; if (t && t.id 
 function openAdminPanel() {
   if (!isStaff) { showToast('Nur für Staff (Supporter/Moderator+)', 'error'); return; }
   adminOpen = true;
-  el('adminPanel').style.display = 'block';
+  el('adminPanel').style.display = 'flex';
   // Spalten nach Rang einblenden: admin-only nur Admin, ingame-only nur Moderator+.
   // Supporter (Team) sehen Spieler-Verwaltung (Info/Lightning) + Dino-Token-Tools.
   document.querySelectorAll('#adminPanel .admin-only').forEach((c) => { c.style.display = isAdmin ? '' : 'none'; });
@@ -2169,7 +2173,6 @@ function showAdminTab(t) {
   else if (t === 'lootbox') ensureLootboxCfgLoaded();
   else if (t === 'warn') renderWarnPane();
   else if (t === 'audit') renderAudit();
-  else if (t === 'teamaudit') renderTeamAudit();
   else if (t === 'handbuch') renderHandbuch();
   bfScheduleFrameSync && bfScheduleFrameSync();
 }
@@ -2192,6 +2195,33 @@ const PA_COLS = [ // key = Sort-Whitelist des Backends; null = nicht sortierbar
 ];
 const PA_VIA = { overlay: ['🎮', 'Spieler'], staff: ['🛡️', 'Staff'], system: ['⚙️', 'System'], service: ['🤖', 'Bot'] };
 let paState = { built: false, items: [], total: 0, sort: 'time', order: 'desc', limit: 100, offset: 0, loading: false, fromMs: 0, toMs: 0 };
+// Aktion-Filter: durchsuchbares Multi-Select-Popup statt <select multiple>.
+let paActionSel = new Set();   // aktuell gewählte Aktionen
+let paAllActions = [];         // alle verfügbaren Aktionen (vom Backend)
+function paUpdateActionBtn() {
+  const b = el('paActionBtn'); if (!b) return;
+  const n = paActionSel.size;
+  b.textContent = (n === 0 ? 'Alle Aktionen' : n === 1 ? [...paActionSel][0] : `${n} Aktionen gewählt`) + ' ▾';
+  b.classList.toggle('active', n > 0);
+  const c = el('paActionCount'); if (c) c.textContent = n ? `${n} gewählt` : '';
+}
+function paRenderActionList(filter) {
+  const wrap = el('paActionList'); if (!wrap) return;
+  const q = (filter || '').trim().toLowerCase();
+  const list = paAllActions.filter((a) => !q || a.toLowerCase().includes(q));
+  wrap.innerHTML = list.length
+    ? list.map((a) => `<label class="pa-msel-opt"><input type="checkbox" value="${escapeHtml(a)}"${paActionSel.has(a) ? ' checked' : ''}><span>${escapeHtml(a)}</span></label>`).join('')
+    : '<div class="pa-msel-empty">Keine Treffer</div>';
+  wrap.querySelectorAll('input[type=checkbox]').forEach((c) => {
+    c.onchange = () => { if (c.checked) paActionSel.add(c.value); else paActionSel.delete(c.value); paUpdateActionBtn(); paLoad(true); };
+  });
+}
+function paToggleActionPop(show) {
+  const pop = el('paActionPop'); if (!pop) return;
+  const open = show !== undefined ? show : pop.hidden;
+  pop.hidden = !open;
+  if (open) { const s = el('paActionSearch'); if (s) { s.value = ''; } paRenderActionList(''); if (s) s.focus(); }
+}
 
 const paVal = (id) => (el(id)?.value || '').trim();
 // ms -> Wert für <input type="datetime-local"> (lokale Zeit, nicht UTC)
@@ -2201,8 +2231,7 @@ function paToLocalInput(ms) {
 }
 function paQuery() {
   const p = new URLSearchParams();
-  const sel = el('paAction');
-  const acts = sel ? [...sel.selectedOptions].map((o) => o.value).filter(Boolean) : [];
+  const acts = [...paActionSel].filter(Boolean);
   if (acts.length) p.set('action', acts.join(',')); // Backend nimmt mehrere Aktionen als CSV
   for (const [id, key] of [['paName', 'name'], ['paSteam', 'steamId'], ['paDino', 'dinoClass'], ['paVia', 'via']]) {
     if (paVal(id)) p.set(key, paVal(id));
@@ -2323,8 +2352,15 @@ async function renderAudit() {
       <div style="flex:1;min-width:130px"><label style="${lab}">SteamID</label><input id="paSteam" style="${inp}" placeholder="7656…"></div>
       <div style="flex:1;min-width:110px"><label style="${lab}">Dino</label><input id="paDino" style="${inp}" placeholder="Teil, z. B. Allo"></div>
       <div style="min-width:110px"><label style="${lab}">Via</label><select id="paVia" style="${inp}"><option value="">alle</option>${vias.map((v) => `<option value="${escapeHtml(v)}">${(PA_VIA[v] || ['', v])[1]}</option>`).join('')}</select></div>
-      <div style="min-width:150px"><label style="${lab}">Aktion <span style="opacity:.7">(Strg/Cmd = mehrere)</span></label>
-        <select id="paAction" multiple size="4" style="${inp};height:auto">${actions.map((a) => `<option value="${escapeHtml(a)}">${escapeHtml(a)}</option>`).join('')}</select></div>
+      <div style="min-width:170px"><label style="${lab}">Aktion</label>
+        <div class="pa-msel" id="paActionMsel">
+          <button type="button" id="paActionBtn" class="pa-msel-btn">Alle Aktionen ▾</button>
+          <div id="paActionPop" class="pa-msel-pop" hidden>
+            <input id="paActionSearch" class="pa-msel-search" placeholder="🔍 Aktion suchen…">
+            <div class="pa-msel-bar"><span id="paActionCount" class="pa-msel-count"></span><button type="button" id="paActionClear" class="pa-msel-clear">Alle abwählen</button></div>
+            <div id="paActionList" class="pa-msel-list"></div>
+          </div>
+        </div></div>
       <div style="min-width:158px"><label style="${lab}">Von</label><input id="paFrom" type="datetime-local" style="${inp}"></div>
       <div style="min-width:158px"><label style="${lab}">Bis</label><input id="paTo" type="datetime-local" style="${inp}"></div>
     </div>
@@ -2344,7 +2380,7 @@ async function renderAudit() {
   el('paReset').onclick = () => {
     ['paName', 'paSteam', 'paDino', 'paFrom', 'paTo'].forEach((id) => { const e = el(id); if (e) e.value = ''; });
     el('paVia').value = '';
-    [...el('paAction').options].forEach((o) => { o.selected = false; });
+    paActionSel.clear(); paUpdateActionBtn(); paRenderActionList('');
     paState.sort = 'time'; paState.order = 'desc';
     paLoad(true);
   };
@@ -2359,7 +2395,21 @@ async function renderAudit() {
   ['paName', 'paSteam', 'paDino'].forEach((id) => {
     const e = el(id); if (e) e.onkeydown = (ev) => { if (ev.key === 'Enter') { ev.preventDefault(); paLoad(true); } };
   });
-  ['paVia', 'paAction', 'paFrom', 'paTo'].forEach((id) => { const e = el(id); if (e) e.onchange = () => paLoad(true); });
+  ['paVia', 'paFrom', 'paTo'].forEach((id) => { const e = el(id); if (e) e.onchange = () => paLoad(true); });
+
+  // Aktion-Multi-Select-Popup initialisieren
+  paAllActions = actions.slice();
+  paActionSel.clear();
+  paUpdateActionBtn();
+  paRenderActionList('');
+  el('paActionBtn').onclick = (ev) => { ev.stopPropagation(); paToggleActionPop(); };
+  el('paActionSearch').oninput = () => paRenderActionList(el('paActionSearch').value);
+  el('paActionSearch').onkeydown = (ev) => { if (ev.key === 'Escape') paToggleActionPop(false); };
+  el('paActionClear').onclick = () => { paActionSel.clear(); paUpdateActionBtn(); paRenderActionList(el('paActionSearch').value); paLoad(true); };
+  document.addEventListener('click', (ev) => {
+    const m = el('paActionMsel'), pop = el('paActionPop');
+    if (m && pop && !pop.hidden && !m.contains(ev.target)) paToggleActionPop(false);
+  });
 
   paState.built = true;
   paLoad(true);
@@ -2646,7 +2696,7 @@ const HANDBUCH = [
     short: 'Tickets übernehmen (claim), übergeben (forward) und schließen.', details: 'Support-Tickets der Spieler bearbeiten: übernehmen, an ein anderes Team-Mitglied übergeben, oder mit Grund schließen (Transcript wird archiviert).', steps: ['Ticket öffnen', 'Übernehmen / Übergeben / Schließen'], caveat: '' },
   // 🖥️ Server & KI
   { id: 'announce', cat: '🖥️ Server & KI', title: 'Ingame-Ankündigung', need: 'staff',
-    where: ['Overlay → Admin → 📢 Server', 'Discord → Support-Panel → ANNOUNCEMENT'],
+    where: ['Overlay → Team → 🛠️ Tools', 'Discord → Support-Panel → ANNOUNCEMENT'],
     short: 'Nachricht an alle Spieler ingame senden.', details: 'Sendet einen Broadcast an alle Spieler auf dem Server (z. B. Event-Hinweis, Restart-Warnung).', steps: ['Text eingeben', 'Senden'], caveat: '' },
   { id: 'srv_status', cat: '🖥️ Server & KI', title: 'Server-Status', need: 'staff',
     where: ['Overlay → Admin → 📢 Server'],
@@ -2747,7 +2797,7 @@ function closeAdminPanel() {
 function openServerPanel() {
   if (!isAdmin) { showToast('Nur für Admins', 'error'); return; }
   serverOpen = true;
-  el('serverPanel').style.display = 'block';
+  el('serverPanel').style.display = 'flex';
   updateInteractive();
   showServerTab('welt');
 }
@@ -2768,6 +2818,7 @@ function showServerTab(t) {
   else if (t === 'karte') { loadTeleports(); renderAdminTpList(); }
   else if (t === 'server') { renderServer(); svRenderClassLimits(); }
   else if (t === 'godvoice') renderGodVoice();
+  else if (t === 'teamaudit') renderTeamAudit();
   bfScheduleFrameSync && bfScheduleFrameSync();
 }
 // Class-Limits im Server-Tab (dieselben /dino-limits-Endpoints wie das Admin-Panel; das Admin-Panel
@@ -6844,13 +6895,7 @@ function svArmConfirm(btn, label, fn) {
 }
 function renderServer() {
   let html = `
-    <div class="dt-sec">📢 Ansage (ingame)</div>
-    <div class="dt-form">
-      <label>Nachricht an alle Spieler</label>
-      <input id="svMsg" class="tm-input" placeholder="z.B. Event startet in 10 Min!">
-      <button id="svAnnounce" style="width:100%;margin-top:8px">📢 Ansage senden</button>
-    </div>
-    <div class="dt-sec" style="margin-top:18px">📊 Server-Status</div>
+    <div class="dt-sec">📊 Server-Status</div>
     <div class="dt-form">
       <div id="svStatus" class="dt-muted">…</div>
       <button id="svStatusBtn" class="secondary" style="width:100%;margin-top:6px">🔄 Aktualisieren</button>
@@ -6866,7 +6911,6 @@ function renderServer() {
       <button id="svStop" style="flex:1;background:#b91c1c">⏹️ Stop</button>
     </div><div class="dt-muted" style="margin-top:4px">Stop/Restart trennt alle Spieler!</div></div>`;
   el('svBody').innerHTML = html;
-  el('svAnnounce').onclick = () => { const m = el('svMsg').value.trim(); if (!m) { showToast('Nachricht eingeben', 'error'); return; } apiAction('/admin/server/announce', { message: m }, '📢 Ansage gesendet', () => { el('svMsg').value = ''; }); };
   el('svStatusBtn').onclick = svLoadStatus;
   if (el('svWipe')) el('svWipe').onclick = () => svArmConfirm(el('svWipe'), 'Sicher? Kadaver leeren', () => apiAction('/admin/server/wipecorpses', {}, '🧹 Kadaver geleert', null));
   if (el('svStart')) el('svStart').onclick = () => apiAction('/admin/server/control', { action: 'start' }, '▶️ Server-Start ausgelöst', svLoadStatus);
@@ -7107,10 +7151,62 @@ function showSettingsTab(t) {
   document.querySelectorAll('#settingsTabs [data-sttab]').forEach((b) => b.classList.toggle('secondary', b.dataset.sttab !== t));
   document.querySelectorAll('#settings .settings-pane').forEach((p) => { p.hidden = p.dataset.pane !== t; });
   if (t === 'ui') renderHudToggles();
+  if (t === 'software') loadSoftwareTab();
+}
+
+// Software-Tab: Version + letzte Release-Notes von GitHub (öffentliches Releases-API).
+const GH_RELEASES_URL = 'https://api.github.com/repos/HidekiSensei/blackfossil-overlay/releases/latest';
+let _swNotesLoaded = false;
+function mdLinkLabel(u) {
+  if (/\/compare\//.test(u)) return 'Vergleich ansehen ↗';
+  try { return new URL(u).hostname + ' ↗'; } catch { return u; }
+}
+function mdInline(text) {
+  // Zuerst escapen (XSS), dann Inline-Markup: Links, dann bare URLs, dann **fett**.
+  let s = text.replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+  s = s.replace(/\[([^\]]+)\]\((https?:\/\/[^\s)]+)\)/g, (m, t, u) => `<a class="sw-lnk" data-href="${u}">${t}</a>`);
+  s = s.replace(/(^|[\s(])(https?:\/\/[^\s)<]+)/g, (m, pre, u) => `${pre}<a class="sw-lnk" data-href="${u}">${mdLinkLabel(u)}</a>`);
+  s = s.replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>');
+  return s;
+}
+function mdLiteToHtml(md) {
+  // Minimaler Markdown-Renderer für unsere eigenen Release-Bodies.
+  const lines = md.replace(/\r/g, '').split('\n');
+  let html = '', inList = false;
+  for (const raw of lines) {
+    const line = raw.trimEnd();
+    const closeList = () => { if (inList) { html += '</ul>'; inList = false; } };
+    if (/^#{1,6}\s+/.test(line)) { closeList(); html += `<div class="sw-md-h">${mdInline(line.replace(/^#{1,6}\s+/, ''))}</div>`; }
+    else if (/^[-*]\s+/.test(line)) { if (!inList) { html += '<ul class="sw-md-ul">'; inList = true; } html += `<li>${mdInline(line.replace(/^[-*]\s+/, ''))}</li>`; }
+    else if (line === '') { closeList(); }
+    else { closeList(); html += `<div class="sw-md-p">${mdInline(line)}</div>`; }
+  }
+  if (inList) html += '</ul>';
+  return html;
+}
+async function loadSoftwareTab() {
+  updateVersionInfo();          // aktuelle Version in #swVersion spiegeln
+  if (_swNotesLoaded) return;
+  const meta = el('swRelMeta'), notes = el('swRelNotes');
+  if (!notes) return;
+  try {
+    const r = await fetch(GH_RELEASES_URL, { headers: { Accept: 'application/vnd.github+json' } });
+    if (!r.ok) throw new Error('HTTP ' + r.status);
+    const d = await r.json();
+    let dstr = '';
+    try { dstr = new Date(d.published_at).toLocaleDateString('de-DE', { day: '2-digit', month: 'short', year: 'numeric' }); } catch {}
+    if (meta) meta.textContent = `${d.name || d.tag_name || ''}${dstr ? ' · ' + dstr : ''}`;
+    notes.innerHTML = mdLiteToHtml(String(d.body || '').trim() || 'Keine Notizen.');
+    notes.querySelectorAll('.sw-lnk').forEach((a) => { a.onclick = (e) => { e.preventDefault(); const h = a.dataset.href; if (h) { try { window.bf.openExternal?.(h); } catch {} } }; });
+    _swNotesLoaded = true;
+  } catch (e) {
+    if (meta) meta.textContent = '';
+    notes.textContent = 'Release-Notes konnten nicht geladen werden (offline?).';
+  }
 }
 function toggleSettings(force) {
   settingsOpen = force !== undefined ? force : !settingsOpen;
-  el('settings').style.display = settingsOpen ? 'block' : 'none';
+  el('settings').style.display = settingsOpen ? 'flex' : 'none';
   if (settingsOpen) { renderVoiceUsers(); renderThemePicker(); showSettingsTab(settingsTab); }   // frisch rendern + Tab syncen
   updateInteractive();
 }
