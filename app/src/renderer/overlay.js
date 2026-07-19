@@ -694,6 +694,9 @@ let spkDeviceId = localStorage.getItem('bf-spk-dev') || '';   // gewähltes Ausg
 // Pfad (webAudioMix + setVolume). Bei AN baut das Overlay je Sprecher einen eigenen WebAudio-Graph
 // (source→panner→lowpass→gain). Wird beim Verbinden gelesen (webAudioMix wird dann abgeschaltet).
 let voiceSpatial = localStorage.getItem('bf-voice-spatial') === '1';
+// serverVoice (aus /token): Das Backend steuert die Proximity-Subscriptions selbst → Client verbindet
+// mit autoSubscribe:false, „wer hört wen" liegt beim Backend. AUS = bisher (Client abonniert alle).
+let serverVoice = false;
 let aiSpawnMode = false;                                // Karten-Klick-Spawn aktiv
 let mapOpen = false;
 
@@ -7026,6 +7029,7 @@ async function connectWithSession(session) {
     // Abo bzw. falls die Discord-Rollen-Auflösung serverseitig mal nicht greift (sonst Schlösser für Teamler).
     setAboTier((data.team || data.admin) ? 'Obsidian' : data.aboTier);
     mySkinFree = !!data.skinFree;   // 🎨 Skin-Creator gratis (ab Knochen ODER Beta-Tester)
+    serverVoice = !!data.serverVoice; // Backend steuert Proximity-Subscriptions → autoSubscribe:false
     setStaff(data.staff);
     pollHud();
     if (!pollHud._timer) pollHud._timer = setInterval(pollHud, 6000);
@@ -7103,7 +7107,9 @@ async function connect({ token, url }) {
       }
     });
   try {
-    await room.connect(url, token);
+    // autoSubscribe:false, wenn das Backend die Proximity-Subscriptions steuert (serverVoice) → der
+    // Server abonniert je Hörer nur die In-Range-Nachbarn. Sonst (Prod/Flag AUS) wie bisher: alle abonnieren.
+    await room.connect(url, token, { autoSubscribe: !serverVoice });
   } catch (e) {
     // Fehlversuch sauber zurückrollen, sonst bleibt ein toter Room hängen
     try { room.disconnect(); } catch {}
