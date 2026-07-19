@@ -1173,19 +1173,33 @@ let spatialMaster = null;              // gemeinsamer Master-GainNode: Deafen/To
 const spatialNodes = new Map();        // identity → { src, panner, lowpass, gain }
 const SPATIAL_SCALE = 0.001;           // Welt-Einheiten → Audio-Meter (nur Richtung zählt, Rolloff=0)
 const SPATIAL_HEADING_OFF = 0;         // Grad: Blickrichtung→Panner. 0 (Test: +90 lag 90° zu weit rechts → 0°)
-const UNDERWATER_HZ = 700;             // Lowpass-Grenzfrequenz unter Wasser (dumpf)
+const UNDERWATER_HZ = 380;             // Lowpass-Grenzfrequenz unter Wasser — deutlich dumpf/gedämpft
 const OPEN_HZ = 20000;                 // offen (keine Dämpfung)
 // ── Gottstimme-Durchsage (Admin) ─────────────────────────────────────────────
-const GODVOICE_GAIN = 1;               // Wiedergabe-Pegel des Durchsage-Sprechers (× Master)
+const GODVOICE_GAIN = 0.85;            // Wiedergabe-Pegel des Durchsage-Sprechers (× Master), Headroom für den Hall
 const GODVOICE_DUCK = 0.15;            // Faktor, auf den alle ANDEREN Sprecher während der Durchsage abgesenkt werden
-const GODVOICE_DISTORT = 12;           // WaveShaper-Stärke für den „von oben"-Verzerr-Effekt (0 = keine)
-// WaveShaper-Kurve für die leichte Gottstimme-Verzerrung (klassische tanh-artige Kurve, Sprache bleibt verständlich).
-function makeDistortionCurve(amount) {
-  const k = amount, n = 8192, curve = new Float32Array(n), deg = Math.PI / 180;
-  for (let i = 0; i < n; i++) { const x = (i * 2) / n - 1; curve[i] = ((3 + k) * x * 20 * deg) / (Math.PI + k * Math.abs(x)); }
-  return curve;
+// „Gott spricht vom Himmel": KEIN Verzerrer (klang übersteuert), sondern ein großer, weicher Hall.
+// Umgesetzt als ConvolverNode-Impulsantwort, die das Direktsignal (Dry-Spike bei t=0) UND einen langen,
+// exponentiell abklingenden Rausch-Schweif enthält → Reverb OHNE Parallel-Mix (passt in die Serien-Kette).
+let godVoiceIR = null;   // Impulsantwort für den Himmels-Hall (lazy je AudioContext)
+let identityIR = null;   // Ein-Sample-Impuls = Passthrough (Convolver „aus")
+function ensureVoiceIRs(ctx) {
+  if (godVoiceIR && identityIR) return;
+  identityIR = ctx.createBuffer(1, 1, ctx.sampleRate);
+  identityIR.getChannelData(0)[0] = 1; // trockener Durchlass
+  const dur = 2.8, n = Math.max(1, Math.floor(ctx.sampleRate * dur));
+  const pre = Math.floor(ctx.sampleRate * 0.045); // ~45ms Predelay → Raum/Weite („von oben")
+  godVoiceIR = ctx.createBuffer(2, n, ctx.sampleRate);
+  for (let ch = 0; ch < 2; ch++) {
+    const d = godVoiceIR.getChannelData(ch);
+    d[0] = 0.92; // Direktsignal (Sprache bleibt klar verständlich)
+    for (let i = 1; i < n; i++) {
+      if (i < pre) { d[i] = 0; continue; }
+      const t = (i - pre) / (n - pre);
+      d[i] = (Math.random() * 2 - 1) * Math.pow(1 - t, 2.4) * 0.32; // weich abklingender Kathedralen-Schweif
+    }
+  }
 }
-const GODVOICE_CURVE = makeDistortionCurve(GODVOICE_DISTORT);
 function spatialWake() { if (spatialCtx && spatialCtx.state === 'suspended') spatialCtx.resume().catch(() => {}); }
 function ensureSpatialCtx() {
   if (!spatialCtx) {
@@ -1337,9 +1351,10 @@ function attachSpatialPlugins(track, identity) {
   panner.panningModel = 'HRTF'; panner.distanceModel = 'linear';
   panner.refDistance = 1; panner.maxDistance = 1e6; panner.rolloffFactor = 0; // Distanz-Gain macht setVolume, nicht der Panner
   const lowpass = ctx.createBiquadFilter(); lowpass.type = 'lowpass'; lowpass.frequency.value = OPEN_HZ;
-  const shaper = ctx.createWaveShaper(); shaper.curve = null; // curve=null → Passthrough; Gottstimme setzt die Verzerr-Kurve
-  try { track.setWebAudioPlugins([panner, lowpass, shaper]); } catch { return; } // SDK verbindet source→panner→lowpass→shaper→gain
-  spatialPlugins.set(identity, { panner, lowpass, shaper });
+  ensureVoiceIRs(ctx);
+  const reverb = ctx.createConvolver(); reverb.normalize = false; reverb.buffer = identityIR; // Passthrough bis zur Gottstimme
+  try { track.setWebAudioPlugins([panner, lowpass, reverb]); } catch { return; } // SDK verbindet source→panner→lowpass→reverb→gain
+  spatialPlugins.set(identity, { panner, lowpass, reverb });
 }
 // Panner-Richtung (z+heading) + Unterwasser-Lowpass je Sprecher aktualisieren. Gain/Deafen macht weiter setVolume.
 function updateSpatialPanners() {
@@ -1365,7 +1380,7 @@ function updateSpatialPanners() {
     catch { try { pl.panner.setPosition(px, 0, pz); } catch {} }
     const hz = isGod ? OPEN_HZ : ((pos && pos.isUnderwater) ? UNDERWATER_HZ : OPEN_HZ);
     try { pl.lowpass.frequency.setTargetAtTime(hz, now, 0.08); } catch { pl.lowpass.frequency.value = hz; }
-    if (pl.shaper) { const want = isGod ? GODVOICE_CURVE : null; if (pl.shaper.curve !== want) pl.shaper.curve = want; } // Verzerrung nur bei Durchsage
+    if (pl.reverb) { const want = isGod ? godVoiceIR : identityIR; if (pl.reverb.buffer !== want) pl.reverb.buffer = want; } // Himmels-Hall nur bei Durchsage
     const nm = (pos && (pos.name || pos.playerName)) || String(identity).slice(-4);
     const side = isGod ? '👑' : (px > 0.05 ? 'R' : px < -0.05 ? 'L' : 'C');
     dbg.push(`${pos ? '' : '?'}${nm} d=${Math.round(dU / UNITS_PER_M)}m pan=${side}(${px.toFixed(2)})${isGod ? ' GOD' : (pos && pos.isUnderwater) ? ' UW' : ''}`);
