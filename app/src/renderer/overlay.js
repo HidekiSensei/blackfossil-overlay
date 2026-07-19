@@ -298,6 +298,8 @@ const DEFAULT_RANGE = 10;     // bis Reichweite empfangen wird
 // Mikros aus. Lokal pro Hörer gespeichert, unabhängig vom Distanz-Verhalten.
 let userGain = {};            // identity(steamId) -> Faktor
 try { userGain = JSON.parse(localStorage.getItem('bf-user-gain') || '{}'); } catch { userGain = {}; }
+// 3D-Stärke ist EINE persönliche Einstellung für alle, die man hört (globaler Regler
+// `spatial3dStrength`) — bewusst KEIN Pro-Spieler-Override mehr (war zu fummelig).
 // Master-Lautstärke für ALLE Spieler (0..2) — Regler über der Spielerliste.
 let masterGain = (parseFloat(localStorage.getItem('bf-master-gain')) || 1);
 // Eigene Mikrofon-Verstärkung (0..2) — wird per Web-Audio-GainNode auf den
@@ -547,9 +549,22 @@ let compassHd = null;   // gleitend interpolierte Anzeige-Blickrichtung (60fps) 
 let compassRAF = 0;
 // 60fps-Render-Loop: gleitet die angezeigte Blickrichtung weich zur echten (die alle 100ms per Poll
 // kommt) — so dreht sich der Kompass flüssig statt in 10fps-Stufen. Läuft rein clientseitig.
+// Kompass an/aus (Settings-Toggle, persistent) + Auto-Aus im Fly-/Admin-Modus (keine Blickrichtung).
+let compassHidden = localStorage.getItem('bf-hide-compass') === '1';
+let compassHideState = null;
+function compassSetHidden(h) { if (h === compassHideState) return; compassHideState = h; const w = el('compassWrap'); if (w) w.style.display = h ? 'none' : ''; }
+function applyCompassToggle() {
+  const b = el('compassToggleBtn');
+  if (b) { b.textContent = compassHidden ? '🧭 Kompass: Aus' : '🧭 Kompass: An'; b.classList.toggle('secondary', compassHidden); }
+  compassHideState = null; // beim nächsten Frame neu anwenden
+}
+function toggleCompass() { compassHidden = !compassHidden; localStorage.setItem('bf-hide-compass', compassHidden ? '1' : '0'); applyCompassToggle(); }
 function compassLoop() {
   compassRAF = requestAnimationFrame(compassLoop);
   const online = me && typeof me.heading === 'number';
+  const hide = compassHidden || (me && me.isFlying); // Fly-Mode: keine Blickrichtung → Kompass aus
+  compassSetHidden(hide);
+  if (hide) { compassHd = null; return; }
   if (!online) { compassHd = null; renderCompass(); return; }
   if (compassHd == null) {
     compassHd = me.heading;
@@ -669,14 +684,51 @@ function tickGrowTimer() {
   renderGrowTimer();
 }
 
+// ── Event-Timer-Panel (server-weite Events mit Countdown) ────────────────────
+let activeEventsList = []; // [{ key, name, expiresAtMs }]
+async function loadActiveEvents() {
+  if (!sessionToken) return;
+  try {
+    const r = await fetch(`${config.tokenBase}/events`, { headers: { Authorization: `Bearer ${sessionToken}` } });
+    if (r.ok) { const d = await r.json(); activeEventsList = d.events || []; }
+  } catch {}
+  renderEventPanel();
+}
+// Countdown in EINER Einheit (Tage → Stunden → Minuten), kein Mix.
+function fmtEventCountdown(expiresAtMs) {
+  if (!expiresAtMs) return '∞';
+  const ms = expiresAtMs - Date.now();
+  if (ms <= 0) return '0m';
+  const min = Math.floor(ms / 60000);
+  if (min >= 1440) return Math.floor(min / 1440) + ' Tage';   // ≥ 1 Tag
+  if (min >= 60) return Math.floor(min / 60) + ' Std';        // ≥ 1 Stunde
+  return Math.max(1, min) + ' Min';                           // sonst Minuten (min. 1)
+}
+function renderEventPanel() {
+  const box = el('eventPanel'); if (!box) return;
+  const evs = (activeEventsList || []).filter((e) => !e.expiresAtMs || e.expiresAtMs > Date.now()); // lokal abgelaufene raus
+  if (!evs.length) { box.style.display = 'none'; box.innerHTML = ''; return; }
+  box.style.display = 'block';
+  box.innerHTML = `<div class="ev-head">🎉 Aktive Events</div>` + evs.map((e) =>
+    `<div class="ev-row"><span class="ev-name">${escapeHtml(e.name || e.key)}</span><span class="ev-time">${fmtEventCountdown(e.expiresAtMs)}</span></div>`).join('');
+  ensureTimerLayout('eventPanel'); // nach display → Breite messbar (Rand-Klemmung, wie growTimer)
+}
+
 let config = { hotkeys: {} };
 let room = null;
 let micEnabled = false;
 let settingsOpen = false;
 let deafened = false;                                   // eingehenden Ton stummschalten
 let amDead = false;                                     // tot / kein Dino → Voice komplett aus (weder hören noch senden)
+let godVoiceId = '';                                    // steamId des aktiven Gottstimme-Sprechers ('' = keine Durchsage) — aus /positions
+let godVoiceMine = false;                               // ob ICH gerade die Gottstimme sende (Admin-Button-Zustand)
+let godVoiceReverbActive = false;                       // Himmels-Hall bei der AKTIVEN Durchsage an? (aus /positions, für alle konsistent)
+let godVoiceReverbPref = localStorage.getItem('bf-godvoice-reverb') !== '0'; // Admin-Wahl beim Starten (Default an); wird mitgesendet
 let micDeviceId = localStorage.getItem('bf-mic-dev') || '';   // gewähltes Mikrofon
 let spkDeviceId = localStorage.getItem('bf-spk-dev') || '';   // gewähltes Ausgabegerät
+// serverVoice (aus /token): Das Backend steuert die Proximity-Subscriptions selbst → Client verbindet
+// mit autoSubscribe:false, „wer hört wen" liegt beim Backend. AUS = bisher (Client abonniert alle).
+let serverVoice = false;
 let aiSpawnMode = false;                                // Karten-Klick-Spawn aktiv
 let mapOpen = false;
 
@@ -794,6 +846,7 @@ async function init() {
   await loadMapImage('assets/map.jpg');
   await loadServerCalibration();
   await loadServerZones();
+  loadFreeGenderSwap();
   // Zonen periodisch nachladen, damit von Admins neu gezeichnete Zonen OHNE Neustart
   // bei allen erscheinen. NICHT während man selbst editiert (sonst würden ungespeicherte
   // Punkte vom Server-Stand überschrieben).
@@ -826,9 +879,14 @@ async function init() {
   // Admin-Panel (eigenständiges Modal, nur Admins) — Einstieg läuft übers Dock (Admin-Button)
   { const oab = el('openAdminBtn'); if (oab) oab.onclick = () => openAdminPanel(); }
   el('adminCloseBtn').onclick = () => closeAdminPanel();
+  { const b = el('serverCloseBtn'); if (b) b.onclick = () => closeServerPanel(); }
+  document.querySelectorAll('#serverTabs [data-stab]').forEach((b) => { b.onclick = () => showServerTab(b.dataset.stab); });
+  { const b = el('godVoiceBtn'); if (b) b.onclick = () => toggleGodVoice(); }
+  { const c = el('godVoiceReverbChk'); if (c) { c.checked = godVoiceReverbPref; c.onchange = () => setGodVoiceReverbPref(c.checked); } }
   el('admUserLoad').onclick = () => admLoadUserInfo();
   el('admLightningBtn').onclick = () => admLightning();
   { const b = el('msgSendBtn'); if (b) b.onclick = () => admSendToast(); }
+  { const b = el('followToggleBtn'); if (b) b.onclick = () => admToggleFollow(); }
   { const b = el('dutyToggleBtn'); if (b) b.onclick = () => toggleDuty(); }
   document.querySelectorAll('#adminTabs [data-atab]').forEach((b) => { b.onclick = () => showAdminTab(b.dataset.atab); });
   { const b = el('dtTabGive'); if (b) b.onclick = () => { dtTab = 'give'; renderDtTab(); }; }
@@ -838,16 +896,6 @@ async function init() {
   el('giftSubmit').onclick = () => admGift();
   el('adminCalibBtn').onclick = () => adminCalibrate();
   el('tpCreateBtn').onclick = () => createTp();
-
-  // AI-Dinos (Team)
-  populateAiSpecies();
-  el('aiSpawnMapBtn').onclick = () => toggleAiSpawnMode();
-  el('aiStartBtn').onclick = () => aiControl('start', 'Auto-Spawn gestartet');
-  el('aiStopBtn').onclick = () => aiControl('stop', 'Auto-Spawn gestoppt');
-  el('aiDespawnBtn').onclick = () => aiControl('despawnall', 'Despawn ausgelöst');
-  el('aiKillBtn').onclick = () => aiControl('killall', 'Kill ausgelöst');
-  el('aiPanicBtn').onclick = () => aiControl('panic', 'PANIC ausgeführt');
-  el('aiDisableBtn').onclick = () => aiControl('disable', 'DLL deaktiviert (nach Neustart)');
   el('tpConfirmYes').onclick = () => useTp();
   el('tpConfirmNo').onclick = () => { el('tpConfirm').style.display = 'none'; tpConfirmTarget = null; };
   el('centerBtn').onclick = () => centerOnMe();
@@ -886,6 +934,9 @@ async function init() {
   // Master-Lautstärke für alle Spieler
   const mv = el('masterGain');
   if (mv) { mv.value = String(Math.round(masterGain * 100)); mv.oninput = (e) => setMasterGain(parseInt(e.target.value)); }
+  // 🧭 3D-Effektstärke
+  const s3 = el('spatial3d');
+  if (s3) { s3.value = String(Math.round(spatial3dStrength * 100)); s3.oninput = (e) => setSpatial3dStrength(parseInt(e.target.value)); }
 
   // Maustasten als Hotkey (für Push-to-Talk/Mute): während des Neubelegens Klick fangen
   window.addEventListener('mousedown', onRebindMouse, true);
@@ -963,7 +1014,12 @@ function startPositionPolling() {
       if (res.ok) {
         const data = await res.json();
         players = data.players || [];
+        godVoiceId = data.godVoice || ''; // Gottstimme-Durchsage aktiv? (steamId des Sprechers)
+        godVoiceReverbActive = !!data.godVoiceReverb; // Himmels-Hall der aktiven Durchsage (server-gesynct)
         me = players.find((p) => p.isYou) || null;
+        // Button-Zustand an die Server-Wahrheit angleichen (Reconnect / Fremd-Abschaltung).
+        const gvMine = !!(godVoiceId && me && godVoiceId === me.steamId);
+        if (gvMine !== godVoiceMine) { godVoiceMine = gvMine; if (serverOpen && serverTab === 'godvoice') renderGodVoice(); }
         // Tot / kein Dino → Voice komplett aus (weder hören noch senden). Wechsel → Mic umschalten + Hinweis.
         const wasDead = amDead;
         amDead = !me || !!me.isDead;
@@ -1083,20 +1139,278 @@ function updateGoldenHud() {
 // R = Reichweite des Sprechers (m). Rw = R*100 Welt-Einheiten. vol = clamp(2*(1 - d/Rw)).
 function updateProximityVolumes() {
   if (!room) return;
+  // STABIL: LiveKit-Wiedergabe (webAudioMix) + setVolume. Deafen/Tot über factor=0. Der 3D-Graph
+  // (updateSpatial) ist vorerst deaktiviert — wird später sauber isoliert wieder aufgesetzt.
+  // Gottstimme nur „aktiv", wenn der Sprecher WIRKLICH präsent ist (ich selbst = Sprecher, oder er ist
+  // ein Remote-Teilnehmer) — sonst würde ein voreilig gesetztes Flag alle anderen grundlos ducken.
+  const iAmGod = !!(godVoiceId && me && godVoiceId === me.steamId);
+  const godActive = !!godVoiceId && (iAmGod || [...room.remoteParticipants.values()].some((rp) => rp.identity === godVoiceId));
   for (const p of room.remoteParticipants.values()) {
     const pos = players.find((pl) => pl.steamId === p.identity);
     let vol = 1;
     if (me && pos) {
       const Rw = (remoteRanges[p.identity] ?? DEFAULT_RANGE) * UNITS_PER_M;
       const d = Math.hypot(pos.x - me.x, pos.y - me.y);
-      vol = Math.max(0, Math.min(1, 2 * (1 - d / Rw)));
+      vol = Math.max(0, Math.min(1, 1 - d / Rw));
     }
-    // Pro-User-Grundlautstärke + Master-Regler obendrauf. Bei Deafen alles auf 0.
-    // Dank webAudioMix:true setzt setVolume einen GainNode → Werte >1 wirken wirklich.
     const g = userGain[p.identity] ?? 1;
-    const factor = (deafened || amDead) ? 0 : masterGain;   // tot → du hörst niemanden
-    try { p.setVolume(vol * g * factor); } catch {}
+    let out;
+    if (godActive && p.identity === godVoiceId) {
+      // Gottstimme: voll & reichweiten-unabhängig, durchdringt Deafen; respektiert Master + Tot.
+      out = amDead ? 0 : GODVOICE_GAIN * masterGain;
+    } else {
+      const factor = (deafened || amDead) ? 0 : masterGain;
+      out = vol * g * factor;
+      if (godActive) out *= GODVOICE_DUCK; // während einer Durchsage alle anderen absenken
+    }
+    try { p.setVolume(out); } catch {}
   }
+  updateSpatialPanners(); // 3D-Richtung + Unterwasser + Gottstimme-Effekt (hängt in LiveKits Kette; Gain macht setVolume oben)
+}
+
+// ── 🧭 Räumlicher Ton (IMMER an) ─────────────────────────────────────────────
+// Je Sprecher ein eigener WebAudio-Graph: MediaStreamSource → PannerNode (Richtung aus Position+heading)
+// → BiquadFilter (Lowpass = Unterwasser-Muffling des SPRECHERS) → perGain (Proximity/User) → spatialMaster
+// (gemeinsamer Deafen-/Tot-/Master-Gate) → Ausgang. Der Raum verbindet mit webAudioMix:false.
+let spatialCtx = null;                 // gemeinsamer AudioContext für alle Remote-Sprecher
+let spatialMaster = null;              // gemeinsamer Master-GainNode: Deafen/Tot/Master-Lautstärke
+const spatialNodes = new Map();        // identity → { src, panner, lowpass, gain }
+const SPATIAL_SCALE = 0.001;           // Welt-Einheiten → Audio-Meter (nur Richtung zählt, Rolloff=0)
+const SPATIAL_HEADING_OFF = 0;         // Grad: Blickrichtung→Panner. 0 (Test: +90 lag 90° zu weit rechts → 0°)
+const UNDERWATER_HZ = 380;             // Lowpass-Grenzfrequenz unter Wasser — deutlich dumpf/gedämpft
+const OPEN_HZ = 20000;                 // offen (keine Dämpfung)
+// ── Gottstimme-Durchsage (Admin) ─────────────────────────────────────────────
+const GODVOICE_GAIN = 0.5;             // Wiedergabe-Pegel des Durchsage-Sprechers (× Master) — bewusst leise + Limiter gegen Übersteuern
+const GODVOICE_DUCK = 0.15;            // Faktor, auf den alle ANDEREN Sprecher während der Durchsage abgesenkt werden
+// „Gott spricht vom Himmel": KEIN Verzerrer (klang übersteuert), sondern ein großer, weicher Hall.
+// Umgesetzt als ConvolverNode-Impulsantwort, die das Direktsignal (Dry-Spike bei t=0) UND einen langen,
+// exponentiell abklingenden Rausch-Schweif enthält → Reverb OHNE Parallel-Mix (passt in die Serien-Kette).
+let godVoiceIR = null;   // Impulsantwort für den Himmels-Hall (lazy je AudioContext)
+let identityIR = null;   // Ein-Sample-Impuls = Passthrough (Convolver „aus")
+function ensureVoiceIRs(ctx) {
+  if (godVoiceIR && identityIR) return;
+  identityIR = ctx.createBuffer(1, 1, ctx.sampleRate);
+  identityIR.getChannelData(0)[0] = 1; // trockener Durchlass
+  const dur = 1.0, n = Math.max(1, Math.floor(ctx.sampleRate * dur));
+  const pre = Math.floor(ctx.sampleRate * 0.02); // ~20ms Predelay → Hauch von Weite („von oben")
+  godVoiceIR = ctx.createBuffer(2, n, ctx.sampleRate);
+  for (let ch = 0; ch < 2; ch++) {
+    const d = godVoiceIR.getChannelData(ch);
+    d[0] = 0.95; // Direktsignal klar dominant → Stimme sauber
+    // Schweif SEHR leise: die Energie summiert sich über zehntausende Taps auf, daher muss die
+    // Pro-Sample-Amplitude winzig sein (~0.005), sonst wirkt der Hall viel zu „nass".
+    for (let i = 1; i < n; i++) {
+      if (i < pre) { d[i] = 0; continue; }
+      const t = (i - pre) / (n - pre);
+      d[i] = (Math.random() * 2 - 1) * Math.pow(1 - t, 3.0) * 0.005; // nur ein Hauch Raum
+    }
+  }
+}
+function spatialWake() { if (spatialCtx && spatialCtx.state === 'suspended') spatialCtx.resume().catch(() => {}); }
+function ensureSpatialCtx() {
+  if (!spatialCtx) {
+    try {
+      spatialCtx = new (window.AudioContext || window.webkitAudioContext)();
+      spatialMaster = spatialCtx.createGain();
+      spatialMaster.connect(spatialCtx.destination);
+      // Autoplay-Policy: der Context startet „suspended" → per Geste entsperren und wach HALTEN,
+      // sonst bleibt der ganze Graph stumm (man hört niemanden).
+      spatialCtx.addEventListener('statechange', spatialWake);
+      ['click', 'keydown', 'pointerdown'].forEach((ev) => window.addEventListener(ev, spatialWake, { passive: true }));
+    } catch {}
+  }
+  spatialWake();
+  return spatialCtx;
+}
+function spatialAttach(track, identity) {
+  const ctx = ensureSpatialCtx(); if (!ctx || !identity) return;
+  spatialDetach(identity); // evtl. alten Graph derselben identity räumen
+  // track.attach() erzeugt ein <audio>-Element, das die WebRTC-Pipeline TREIBT; createMediaElementSource
+  // leitet dessen Ton IN den Graph um (Element gibt dann nicht mehr direkt auf die Boxen). Reines
+  // MediaStreamSource bleibt bei Remote-Tracks in Chromium oft still — daher der Element-Weg.
+  const el = track.attach(); el.autoplay = true;
+  document.body.appendChild(el);
+  let src;
+  try { src = ctx.createMediaElementSource(el); } catch { try { el.remove(); } catch {} return; }
+  const panner = ctx.createPanner();
+  panner.panningModel = 'HRTF'; panner.distanceModel = 'linear';
+  panner.refDistance = 1; panner.maxDistance = 1e6; panner.rolloffFactor = 0; // Distanz-Gain macht perGain, nicht der Panner
+  const lowpass = ctx.createBiquadFilter(); lowpass.type = 'lowpass'; lowpass.frequency.value = OPEN_HZ;
+  const gain = ctx.createGain(); gain.gain.value = 0;
+  src.connect(panner); panner.connect(lowpass); lowpass.connect(gain); gain.connect(spatialMaster);
+  spatialNodes.set(identity, { el, src, panner, lowpass, gain });
+  if (spkDeviceId && ctx.setSinkId) ctx.setSinkId(spkDeviceId).catch(() => {}); // Ausgabegerät (falls Browser es kann)
+}
+function spatialDetach(identity) {
+  const n = identity && spatialNodes.get(identity);
+  if (!n) return;
+  try { n.src.disconnect(); n.panner.disconnect(); n.lowpass.disconnect(); n.gain.disconnect(); } catch {}
+  try { if (n.el) n.el.remove(); } catch {}
+  spatialNodes.delete(identity);
+}
+function updateSpatial() {
+  const ctx = spatialCtx; if (!ctx || !spatialMaster) return;
+  const now = ctx.currentTime;
+  // Deafen/Tot = HARTER Master-Gate (unabhängig davon, wen der Server subscribed); sonst Master-Lautstärke.
+  const master = (deafened || amDead) ? 0 : masterGain;
+  try { spatialMaster.gain.setTargetAtTime(master, now, 0.03); } catch { spatialMaster.gain.value = master; }
+  // Blickrichtung von „mir" → Welt-Forward/Right-Basis (gleiche -90°-Konvention wie Karte/Kompass).
+  const hr = ((me && me.heading != null ? me.heading : 0) + SPATIAL_HEADING_OFF) * Math.PI / 180;
+  const fx = Math.cos(hr), fy = Math.sin(hr);   // Forward (Welt)
+  const rx = -fy, ry = fx;                        // Right = Forward um +90° (L/R gespiegelt: vorn/hinten stimmte, links/rechts war getauscht)
+  const dbg = [`me:${me ? `x${me.x | 0} y${me.y | 0} h${Math.round(me.heading || 0)}` : 'NULL'} ctx:${ctx.state} master:${master.toFixed(2)} spk:${spatialNodes.size}`];
+  for (const [identity, n] of spatialNodes) {
+    const pos = players.find((pl) => pl.steamId === identity);
+    // Richtung relativ zu meiner Blickrichtung (WebAudio: +x rechts, -z vorn, +y oben).
+    let px = 0, pz = -1, dU = 0;
+    if (me && pos) {
+      const dx = pos.x - me.x, dy = pos.y - me.y;
+      const fwd = dx * fx + dy * fy, right = dx * rx + dy * ry;
+      px = right * SPATIAL_SCALE; pz = -fwd * SPATIAL_SCALE;
+      dU = Math.hypot(dx, dy);
+    }
+    try { n.panner.positionX.setValueAtTime(px, now); n.panner.positionY.setValueAtTime(0, now); n.panner.positionZ.setValueAtTime(pz, now); }
+    catch { try { n.panner.setPosition(px, 0, pz); } catch {} }
+    // Unterwasser-Muffling des Sprechers (weicher Übergang, kein Klick).
+    const targetHz = (pos && pos.isUnderwater) ? UNDERWATER_HZ : OPEN_HZ;
+    try { n.lowpass.frequency.setTargetAtTime(targetHz, now, 0.08); } catch { n.lowpass.frequency.value = targetHz; }
+    // Proximity-Gain je Sprecher (Deafen/Master liegt im spatialMaster).
+    let vol = 1;
+    if (me && pos) {
+      const Rw = (remoteRanges[identity] ?? DEFAULT_RANGE) * UNITS_PER_M;
+      vol = Math.max(0, Math.min(1, 1 - dU / Rw));
+    }
+    const g = userGain[identity] ?? 1;
+    try { n.gain.gain.setTargetAtTime(vol * g, now, 0.05); } catch { n.gain.gain.value = vol * g; }
+    const nm = (pos && (pos.name || pos.playerName)) || String(identity).slice(-4);
+    const side = px > 0.05 ? 'R' : px < -0.05 ? 'L' : 'C';
+    const frb = pz < -0.05 ? 'F' : pz > 0.05 ? 'B' : '·';
+    dbg.push(`${pos ? '' : '?'}${nm}  d=${Math.round(dU / UNITS_PER_M)}m vol=${vol.toFixed(2)} pan=${side}${frb}(${px.toFixed(2)})${(pos && pos.isUnderwater) ? ' UW' : ''}`);
+  }
+  renderVoiceDbg(dbg);
+}
+// F9-Debug-Panel: exakte Zahlen (Distanz/Gain/Pan je Sprecher) zum Tunen von Reichweite & 3D.
+let voiceDbgOn = false; // NUR für Admins, per F9 einblendbar — normale Spieler sehen das Panel NIE
+function renderVoiceDbg(rows) {
+  const box = el('voiceDbg'); if (!box) return;
+  if (!voiceDbgOn || !voiceConnected || !isAdmin) { box.style.display = 'none'; return; } // Admin-Gate
+  box.style.display = 'block';
+  box.textContent = rows.join('\n');
+}
+window.addEventListener('keydown', (e) => {
+  if (e.key !== 'F9' || !isAdmin) return; // F9-Toggle nur für Admins
+  voiceDbgOn = !voiceDbgOn;
+  const b = el('voiceDbg'); if (b && !voiceDbgOn) b.style.display = 'none';
+});
+
+// ── 🧭 Räumlicher Ton v2 (weniger invasiv) ───────────────────────────────────
+// webAudioMix BLEIBT AN (stabil, kein Rauschen). Wir hängen NUR einen PannerNode + Lowpass über
+// LiveKits offizielle setWebAudioPlugins-API in die bestehende Kette:
+//   source → [panner → lowpass] → gainNode(setVolume) → out
+// Kein eigener Graph, kein eigenes Element, keine Autoplay-Bastelei — LiveKit managt Quelle/Gain/
+// Lifecycle. LiveKit nutzt UNSEREN AudioContext (voiceCtx), damit die Nodes zusammenpassen.
+let voiceCtx = null;
+const spatialPlugins = new Map(); // identity → { panner, lowpass }
+// 3D-Effektstärke (0 = mono/mittig, 1 = normal, bis 1.5 überzeichnet). Skaliert die Panner-Auslenkung.
+let spatial3dStrength = (() => { const v = parseFloat(localStorage.getItem('bf-voice-3d-strength')); return isNaN(v) ? 1 : v; })();
+function setSpatial3dStrength(pct) {
+  spatial3dStrength = Math.max(0, Math.min(1.5, pct / 100));
+  try { localStorage.setItem('bf-voice-3d-strength', String(spatial3dStrength)); } catch {}
+  const lbl = el('spatial3dVal'); if (lbl) lbl.textContent = `${Math.round(spatial3dStrength * 100)}%`;
+  updateProximityVolumes(); // sofort wirksam (kein Neuverbinden)
+}
+// ── Gottstimme-Durchsage (Admin, im Admin-Tab „📣 Gottstimme") ────────────────
+// Startet/beendet die server-weite Durchsage über POST /voice/godvoice. Der echte Zustand kommt über
+// /positions (data.godVoice) zurück und steuert bei allen Clients Effekt + Ducken (updateProximityVolumes).
+async function setGodVoice(on) {
+  if (!sessionToken) return;
+  if (on && !voiceConnected) { showToast('⚠️ Erst dem Voice beitreten — sonst hört dich niemand.', 'warn'); return; }
+  try {
+    const res = await fetch(`${config.tokenBase}/voice/godvoice`, {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${sessionToken}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ on: !!on, reverb: godVoiceReverbPref }),
+    });
+    if (!res.ok) { showToast('Gottstimme fehlgeschlagen', 'error'); return; }
+    const data = await res.json().catch(() => ({}));
+    godVoiceMine = !!data.on;          // optimistisch; der nächste /positions-Poll bestätigt
+    renderGodVoice();
+    showToast(godVoiceMine ? '📣 Gottstimme AN — alle hören dich.' : 'Gottstimme aus.', godVoiceMine ? 'success' : 'info');
+  } catch { showToast('Gottstimme fehlgeschlagen', 'error'); }
+}
+function toggleGodVoice() { setGodVoice(!godVoiceMine); }
+// Himmels-Hall an/aus (Admin-Wahl). Läuft gerade MEINE Durchsage, sofort server-seitig nachziehen.
+function setGodVoiceReverbPref(on) {
+  godVoiceReverbPref = !!on;
+  try { localStorage.setItem('bf-godvoice-reverb', godVoiceReverbPref ? '1' : '0'); } catch {}
+  if (godVoiceMine) setGodVoice(true); // aktualisiert reverb server-seitig (alle Hörer sofort)
+  renderGodVoice();
+}
+function renderGodVoice() {
+  const btn = el('godVoiceBtn'); if (!btn) return;
+  btn.textContent = godVoiceMine ? '⏹️ Gottstimme beenden' : '📣 Gottstimme starten';
+  btn.classList.toggle('secondary', godVoiceMine);
+  const chk = el('godVoiceReverbChk'); if (chk) chk.checked = godVoiceReverbPref;
+  const hint = el('godVoiceHint');
+  if (hint) hint.textContent = !voiceConnected
+    ? '⚠️ Nicht im Voice verbunden — die Durchsage wird nicht übertragen.'
+    : (godVoiceMine ? '● Läuft — du wirst server-weit gehört.' : '');
+}
+function ensureVoiceCtx() {
+  if (!voiceCtx) { try { voiceCtx = new (window.AudioContext || window.webkitAudioContext)(); } catch {} }
+  if (voiceCtx && voiceCtx.state === 'suspended') voiceCtx.resume().catch(() => {});
+  return voiceCtx;
+}
+function attachSpatialPlugins(track, identity) {
+  const ctx = voiceCtx; if (!ctx || !identity || typeof track.setWebAudioPlugins !== 'function') return;
+  const panner = ctx.createPanner();
+  panner.panningModel = 'HRTF'; panner.distanceModel = 'linear';
+  panner.refDistance = 1; panner.maxDistance = 1e6; panner.rolloffFactor = 0; // Distanz-Gain macht setVolume, nicht der Panner
+  const lowpass = ctx.createBiquadFilter(); lowpass.type = 'lowpass'; lowpass.frequency.value = OPEN_HZ;
+  ensureVoiceIRs(ctx);
+  const reverb = ctx.createConvolver(); reverb.normalize = false; reverb.buffer = identityIR; // Passthrough bis zur Gottstimme
+  // Brick-Wall-Limiter als letztes Glied: fängt nur Spitzen nahe 0 dBFS ab → normale Stimme transparent,
+  // aber die Gottstimme (voller Pegel, ohne Distanz-Abschwächung) kann NICHT mehr übersteuern.
+  const limiter = ctx.createDynamicsCompressor();
+  limiter.threshold.value = -2; limiter.knee.value = 0; limiter.ratio.value = 20; limiter.attack.value = 0.003; limiter.release.value = 0.12;
+  try { track.setWebAudioPlugins([panner, lowpass, reverb, limiter]); } catch { return; } // source→panner→lowpass→reverb→limiter→gain
+  spatialPlugins.set(identity, { panner, lowpass, reverb, limiter });
+}
+// Panner-Richtung (z+heading) + Unterwasser-Lowpass je Sprecher aktualisieren. Gain/Deafen macht weiter setVolume.
+function updateSpatialPanners() {
+  const ctx = voiceCtx; if (!ctx) { renderVoiceDbg([]); return; }
+  const now = ctx.currentTime;
+  const hr = ((me && me.heading != null ? me.heading : 0) + SPATIAL_HEADING_OFF) * Math.PI / 180;
+  const fx = Math.cos(hr), fy = Math.sin(hr);   // Forward (Welt)
+  const rx = -fy, ry = fx;                        // Right = Forward um +90° (L/R gespiegelt: vorn/hinten stimmte, links/rechts war getauscht)
+  const meUW = !!(me && me.isUnderwater); // ICH untergetaucht → ich höre ALLE gedämpft
+  const dbg = [`me:${me ? `h${Math.round(me.heading || 0)}${meUW ? ' UW' : ''}` : 'NULL'} ctx:${ctx.state} spk:${spatialPlugins.size}`];
+  for (const [identity, pl] of spatialPlugins) {
+    const pos = players.find((p) => p.steamId === identity);
+    const isGod = !!godVoiceId && identity === godVoiceId; // Gottstimme: zentriert, offen, verzerrt — ohne Richtung/Muffling
+    let px = 0, pz = -1, dU = 0;
+    if (me && pos && !isGod) {
+      const dx = pos.x - me.x, dy = pos.y - me.y;
+      const fwd = dx * fx + dy * fy, right = dx * rx + dy * ry;
+      const s = spatial3dStrength; // eine persönliche 3D-Stärke für alle, die man hört
+      px = right * SPATIAL_SCALE * s;
+      pz = (-fwd * SPATIAL_SCALE) * s - (1 - s); // s→0 blendet nach (0,0,-1) = geradeaus
+      dU = Math.hypot(dx, dy);
+    }
+    try { pl.panner.positionX.setValueAtTime(px, now); pl.panner.positionY.setValueAtTime(0, now); pl.panner.positionZ.setValueAtTime(pz, now); }
+    catch { try { pl.panner.setPosition(px, 0, pz); } catch {} }
+    // Unterwasser-Muffel BEIDSEITIG: gedämpft, wenn ICH untergetaucht bin ODER der Sprecher es ist.
+    // Gottstimme durchdringt Wasser (bleibt offen).
+    const spkUW = !!(pos && pos.isUnderwater);
+    const uw = !isGod && (meUW || spkUW);
+    const hz = isGod ? OPEN_HZ : (uw ? UNDERWATER_HZ : OPEN_HZ);
+    try { pl.lowpass.frequency.setTargetAtTime(hz, now, 0.08); } catch { pl.lowpass.frequency.value = hz; }
+    if (pl.reverb) { const want = (isGod && godVoiceReverbActive) ? godVoiceIR : identityIR; if (pl.reverb.buffer !== want) pl.reverb.buffer = want; } // Himmels-Hall nur bei Durchsage + wenn eingeschaltet
+    const nm = (pos && (pos.name || pos.playerName)) || String(identity).slice(-4);
+    const side = isGod ? '👑' : (px > 0.05 ? 'R' : px < -0.05 ? 'L' : 'C');
+    dbg.push(`${pos ? '' : '?'}${nm} d=${Math.round(dU / UNITS_PER_M)}m pan=${side}(${px.toFixed(2)})${isGod ? ' GOD' : uw ? ' UW' : ''}`);
+  }
+  renderVoiceDbg(dbg);
 }
 
 // ── Info-Box: Namen der Spieler, die man gerade hört (active speakers) ───────
@@ -1111,12 +1425,14 @@ function audibleVol(steamId) {
   if (me && pos) {
     const Rw = (remoteRanges[steamId] ?? DEFAULT_RANGE) * UNITS_PER_M;
     const d = Math.hypot(pos.x - me.x, pos.y - me.y);
-    vol = Math.max(0, Math.min(1, 2 * (1 - d / Rw)));
+    vol = Math.max(0, Math.min(1, 1 - d / Rw));
   }
   const g = userGain[steamId] ?? 1;
   const factor = (deafened || amDead) ? 0 : masterGain;
   return vol * g * factor;
 }
+const OBSIDIAN_HEX = '#c4b5fd'; // Obsidian-Tier-Textfarbe (vgl. .tier-Obsidian in overlay.html)
+const DUTY_RED = '#ff3b3b';    // Teamler im Dienst-Modus → rot (klar als Admin/Dienst erkennbar)
 function updateSpeakingBox(speakers) {
   const box = el('speakingBox'); if (!box) return;
   const now = Date.now();
@@ -1127,14 +1443,21 @@ function updateSpeakingBox(speakers) {
     if (now - ts > 1500) { _speakSeen.delete(id); continue; }
     if (audibleVol(id) <= 0) continue;                        // nur wen man WIRKLICH hört (Reichweite/deafened/stumm)
     const pl = players.find((x) => x.steamId === id);
-    const nm = pl && (pl.name || pl.playerName);
-    if (nm) items.push({ nm, color: pl.roleColor });          // roleColor = Discord-Rollenfarbe (Integer) oder null
+    const nm = pl && (pl.name || pl.playerName);              // name = RP-Name falls gesetzt; bei onDuty erzwingt das Backend den echten Namen
+    if (nm) items.push({ nm, color: pl.roleColor, team: !!pl.team, onDuty: !!pl.onDuty });
   }
   if (!items.length) { box.style.display = 'none'; return; }
   box.style.display = '';
-  // Namen in der Discord-Rollenfarbe (Spender/Abonnenten/Team erkennbar); ohne Farbe = Standard.
-  box.innerHTML = `🔊 ${items.map(({ nm, color }) => {
-    const hex = (color && color > 0) ? '#' + (color >>> 0).toString(16).padStart(6, '0') : null;
+  // Farb-/Namensregel für Teamler (sonst stechen sie durch ihre Rollenfarbe sofort heraus):
+  // • Im Dienst-Modus (pinker Admin-Skin) → Klarname (Backend liefert bei onDuty schon den echten
+  //   Namen) in ROT → klar als Admin/Dienst erkennbar.
+  // • Außer Dienst → RP-Name (sonst echter Name) in Obsidian-Lila → wirkt wie ein normaler
+  //   Top-Abonnent, die auffällige Team-Rollenfarbe wird verborgen.
+  // • Alle anderen → Name in ihrer Discord-Rollenfarbe wie gehabt.
+  box.innerHTML = `🔊 ${items.map(({ nm, color, team, onDuty }) => {
+    let hex = (color && color > 0) ? '#' + (color >>> 0).toString(16).padStart(6, '0') : null;
+    if (team && onDuty) hex = DUTY_RED;                      // im Dienst: rot (Admin/Dienst)
+    else if (team && !onDuty) hex = OBSIDIAN_HEX;            // außer Dienst: Rollenfarbe durch Obsidian ersetzen
     return hex ? `<span style="color:${hex}">${escapeHtml(nm)}</span>` : escapeHtml(nm);
   }).join(', ')}`;
 }
@@ -1173,17 +1496,16 @@ function renderVoiceUsers() {
   for (const { p, name } of list) {
     const g = userGain[p.identity] ?? 1;
     const row = document.createElement('div');
-    row.style.cssText = 'display:flex;align-items:center;gap:8px;margin-bottom:6px';
+    row.style.cssText = 'margin-bottom:8px';
     row.innerHTML =
-      `<span style="flex:1;font-size:12px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">👤 ${name}</span>` +
-      `<input type="range" min="0" max="200" step="5" value="${Math.round(g * 100)}" style="flex:1;accent-color:var(--accent)">` +
-      `<span style="width:42px;text-align:right;font-size:12px;color:var(--muted)">${Math.round(g * 100)}%</span>`;
-    const slider = row.querySelector('input');
-    const label = row.querySelector('span:last-child');
-    slider.addEventListener('input', () => {
-      label.textContent = `${slider.value}%`;
-      setUserGain(p.identity, parseInt(slider.value) / 100);
-    });
+      `<div style="font-size:12px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;margin-bottom:3px">👤 ${name}</div>` +
+      `<div style="display:flex;align-items:center;gap:6px">` +
+        `<span title="Lautstärke" style="width:16px">🔊</span>` +
+        `<input class="u-vol" type="range" min="0" max="200" step="5" value="${Math.round(g * 100)}" style="flex:1;accent-color:var(--accent)">` +
+        `<span class="u-vol-l" style="width:40px;text-align:right;font-size:11px;color:var(--muted)">${Math.round(g * 100)}%</span>` +
+      `</div>`;
+    const uv = row.querySelector('.u-vol'), uvl = row.querySelector('.u-vol-l');
+    uv.addEventListener('input', () => { uvl.textContent = `${uv.value}%`; setUserGain(p.identity, parseInt(uv.value) / 100); });
     box.appendChild(row);
   }
 }
@@ -1650,8 +1972,94 @@ function tpHoverHitTest(e) {
 
 // ── Admin-Panel (eigenständiges Modal, NUR Admins) ───────────────────────────
 let adminOpen = false;
+let serverOpen = false;
 let adminUserMap = new Map();   // Option-Text → { steamId, discordId, name }
+let adminUsers = [];            // volle User-Liste (für robuste Suche/Filter)
 let admSelectedSteamId = null;
+
+// ── User-Suchfelder: robust + skalierend ─────────────────────────────────────
+// Alle User-Picker (Admin-Panel + Dino-Token/Prime via userSearchHTML) teilen dieses Verhalten.
+// Ein natives <datalist> mit ~1000 Optionen zeigt in Chromium NICHT zuverlässig alle Vorschläge
+// (deshalb wurden User "nicht gefunden", obwohl sie in der Liste standen). Lösung: das Datalist
+// wird beim Tippen dynamisch mit nur den Top-Treffern befüllt — mit wenigen Optionen klappt es.
+// USER_POOLS: input-id → User-Array, das dieses Feld durchsucht.
+const USER_POOLS = {};
+
+// userLabel baut den Dropdown-Anzeigetext "RP (Steam, Discord)". Fehlende Teile fallen graziös
+// weg: ohne RP-Name → "Steam (Discord)", ohne Steam → "RP (Discord)" usw. So sieht Staff alle
+// gesetzten Namen auf einen Blick, und die Substring-Suche (das Label enthält alle drei) trifft
+// jeden der drei Namen.
+function userLabel(u) {
+  const rp = (u.rpName || '').trim();
+  const steam = (u.ingameName || '').trim();
+  const disc = (u.discordName || u.name || '').trim();
+  const primary = rp || steam || disc || u.steamId || '';
+  const extras = [];
+  if (rp) { if (steam) extras.push(steam); if (disc && disc !== steam) extras.push(disc); }
+  else if (steam) { if (disc && disc !== steam) extras.push(disc); }
+  return extras.length ? `${primary} (${extras.join(', ')})` : primary;
+}
+// userNames = alle gesetzten Namen eines Users (RP/Steam/Discord/Legacy) klein geschrieben.
+function userNames(u) {
+  return [u.rpName, u.ingameName, u.discordName, u.name].filter(Boolean).map((s) => s.toLowerCase());
+}
+// warnItemUser bringt ein /admin/players/search-Item (playerName = Ingame) auf die gemeinsame
+// User-Form, damit userLabel/matchUser (RP/Steam/Discord) auch auf die Verwarnungs-Suche passen.
+function warnItemUser(p) {
+  return { steamId: p.steamId, discordId: p.discordId, rpName: p.rpName, ingameName: p.playerName, discordName: p.discordName, name: p.discordName || p.playerName };
+}
+
+// matchUser löst den getippten/eingefügten Wert robust zum User auf: SteamID/DiscordID exakt
+// (Copy-Paste!), kombiniertes Label bzw. einer der drei Namen exakt (case-insensitive),
+// Dedup-Suffix "… (…1234)", sonst eindeutiger Teilstring über RP/Steam/Discord.
+function matchUser(v, users) {
+  v = (v || '').trim();
+  users = users || [];
+  if (!v) return null;
+  const lv = v.toLowerCase();
+  let m = users.find((u) => u.steamId === v || u.discordId === v);
+  if (m) return m;
+  const label = users.filter((u) => userLabel(u).toLowerCase() === lv);
+  if (label.length === 1) return label[0];
+  const exact = users.filter((u) => userNames(u).includes(lv));
+  if (exact.length === 1) return exact[0];
+  const suf = v.match(/\(…(\w{4})\)\s*$/);
+  if (suf) {
+    m = users.find((u) => (u.steamId || u.discordId || '').slice(-4) === suf[1] && lv.startsWith(userLabel(u).toLowerCase()));
+    if (m) return m;
+  }
+  const sub = users.filter((u) => userLabel(u).toLowerCase().includes(lv) || (u.steamId || '').includes(v));
+  if (sub.length === 1) return sub[0];
+  return (label[0] || exact[0]) || null; // mehrdeutig → erster Kandidat; sonst nichts
+}
+
+// filterDatalist befüllt das zum Input gehörende <datalist> mit den Top-Treffern zur aktuellen
+// Eingabe (Name/SteamID/DiscordID, Teilstring, case-insensitive), gedeckelt auf 50.
+function filterDatalist(inp) {
+  const listId = inp.getAttribute('list');
+  if (!listId) return;
+  const dl = document.getElementById(listId);
+  if (!dl) return;
+  const users = USER_POOLS[inp.id] || adminUsers || [];
+  const q = (inp.value || '').trim().toLowerCase();
+  // Substring über alle drei Namen: das Label enthält RP+Steam+Discord, deshalb reicht ein
+  // includes() auf dem Label (+ SteamID/DiscordID fürs Copy-Paste).
+  const hits = (q
+    ? users.filter((u) => userLabel(u).toLowerCase().includes(q) || (u.steamId || '').includes(q) || (u.discordId || '').includes(q))
+    : users
+  ).slice(0, 50);
+  const seen = new Set();
+  dl.innerHTML = hits.map((u) => {
+    let key = userLabel(u);
+    if (seen.has(key)) key = `${key} (…${(u.steamId || u.discordId || '').slice(-4)})`;
+    seen.add(key);
+    return `<option value="${escapeHtml(key)}"></option>`;
+  }).join('');
+}
+
+// Delegiert: jedes User-Suchfeld (in USER_POOLS registriert) filtert beim Tippen UND beim Fokus.
+document.addEventListener('input', (e) => { const t = e.target; if (t && t.id && USER_POOLS[t.id]) filterDatalist(t); });
+document.addEventListener('focusin', (e) => { const t = e.target; if (t && t.id && USER_POOLS[t.id]) filterDatalist(t); });
 
 function openAdminPanel() {
   if (!isStaff) { showToast('Nur für Staff (Supporter/Moderator+)', 'error'); return; }
@@ -1664,17 +2072,33 @@ function openAdminPanel() {
   updateInteractive();
   ensureGiftTypeOptions();
   loadAdminUsers();
-  loadDutyState();
+  loadDutyState();                        // async → setzt dutyOn + zieht das Gate nach
   if (isIngame) loadAdminRoles();         // Gift-Rollen-Dropdown — nur Moderator+ (Beschenken)
-  if (isAdmin) loadDinoLimits();
-  if (isIngame) { loadTeleports(); renderAdminTpList(); }
-  showAdminTab('tools');
+  applyModerationGate();                  // Tabs je nach Dienst-Modus/Admin ein-/ausblenden
+}
+// Moderation-Panel: für Moderatoren/Supporter sind alle Tabs (außer Handbuch) NUR sichtbar, wenn
+// der Dienst-Modus an ist. Admins sehen immer alles. Handbuch ist immer da.
+function applyModerationGate() {
+  if (!adminOpen) return;
+  const active = isAdmin || dutyOn;
+  document.querySelectorAll('#adminTabs [data-atab]').forEach((b) => {
+    const t = b.dataset.atab;
+    if (t === 'handbuch') { b.style.display = ''; return; } // Handbuch immer
+    let vis = active;
+    if (b.classList.contains('admin-only') && !isAdmin) vis = false; // account/lootbox bleiben admin-only
+    b.style.display = vis ? '' : 'none';
+  });
+  const cur = document.querySelector(`#adminTabs [data-atab="${adminTab}"]`);
+  if (!cur || cur.style.display === 'none') showAdminTab(active ? 'tools' : 'handbuch');
 }
 // Admin-Panel-Tabs (Tools / Dino-Token / künftige Staff-Chunks)
 let adminTab = 'tools';
 function showAdminTab(t) {
   const btn = document.querySelector(`#adminTabs [data-atab="${t}"]`);
-  if (btn && btn.style.display === 'none') t = 'tools';   // gesperrten Tab → zurück auf Tools
+  if (btn && btn.style.display === 'none') { // gesperrter Tab → auf Tools, sonst Handbuch (immer da)
+    const toolsBtn = document.querySelector('#adminTabs [data-atab="tools"]');
+    t = (toolsBtn && toolsBtn.style.display !== 'none') ? 'tools' : 'handbuch';
+  }
   adminTab = t;
   document.querySelectorAll('#adminTabs [data-atab]').forEach((b) => b.classList.toggle('secondary', b.dataset.atab !== t));
   document.querySelectorAll('#adminPanel .admin-pane').forEach((p) => { p.hidden = p.dataset.pane !== t; });
@@ -1682,9 +2106,9 @@ function showAdminTab(t) {
   else if (t === 'pvp') ensurePvpLoaded();
   else if (t === 'account') renderAccount();
   else if (t === 'lootbox') ensureLootboxCfgLoaded();
-  else if (t === 'server') renderServer();
   else if (t === 'warn') renderWarnPane();
   else if (t === 'audit') renderAudit();
+  else if (t === 'teamaudit') renderTeamAudit();
   else if (t === 'handbuch') renderHandbuch();
   bfScheduleFrameSync && bfScheduleFrameSync();
 }
@@ -1694,6 +2118,8 @@ function showAdminTab(t) {
 // selbst auf einen echten Menschen mit Rang aus ADMIN_RANKS — hier ist nur UI. Die Filterleiste
 // wird EINMAL gebaut und danach nie neu gezeichnet (sonst verlöre man beim Nachladen Fokus und
 // Eingaben); neu gerendert wird ausschliesslich die Tabelle + der Fuss.
+// Sensible Aktionen, die im Filter-Dropdown nur Admins sehen (Moderatoren nicht).
+const PA_ADMIN_ACTIONS = new Set(['duty_on', 'duty_off']);
 const PA_COLS = [ // key = Sort-Whitelist des Backends; null = nicht sortierbar
   { key: 'time', label: 'Zeit', w: '86px' },
   { key: 'name', label: 'Spieler' },
@@ -1776,12 +2202,17 @@ function paRenderTable() {
       const datum = t.toLocaleDateString('de-DE', { day: '2-digit', month: '2-digit' });
       const [ico, lbl] = PA_VIA[it.via] || ['•', it.via || ''];
       const det = paDetails(it.details);
-      // actorSteam ist nur gesetzt, wenn jemand ANDERES gehandelt hat (Staff) — dann sichtbar machen.
-      const actor = it.actorSteam ? `<div style="font-size:10px;opacity:.7">durch ${escapeHtml(it.actorSteam)}</div>` : '';
+      // actorSteam ist nur gesetzt, wenn jemand ANDERES gehandelt hat (Staff, oder Combat-Angreifer
+      // /-Killer). Namen statt roher SteamID: Discord → In-Game → SteamID (Rest im Tooltip).
+      const actorLabel = it.actorDiscordName || it.actorName || it.actorSteam;
+      const actorTip = [it.actorSteam && 'Steam: ' + it.actorSteam, it.actorName && 'Ingame: ' + it.actorName].filter(Boolean).join(' · ');
+      const actor = it.actorSteam
+        ? `<div style="font-size:10px;opacity:.7" title="${escapeHtml(actorTip)}">durch ${escapeHtml(actorLabel)}${it.actorDiscordName ? ' 🎮' : ''}</div>`
+        : '';
       const td = 'padding:5px 8px;vertical-align:top';
       return `<tr style="border-top:1px solid var(--border)">
         <td style="${td};white-space:nowrap" title="${escapeHtml(t.toLocaleString('de-DE'))}">${zeit}<div style="font-size:10px;opacity:.6">${datum}</div></td>
-        <td style="${td};max-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${escapeHtml(it.playerName || '')}">${escapeHtml(it.playerName || '—')}</td>
+        <td style="${td};max-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="Steam: ${escapeHtml(it.playerName || '')}${it.discordName ? ' · Discord: ' + escapeHtml(it.discordName) : ''}">${escapeHtml(it.playerName || '—')}${it.discordName ? `<div style="font-size:10px;color:var(--muted);overflow:hidden;text-overflow:ellipsis">🎮 ${escapeHtml(it.discordName)}</div>` : ''}</td>
         <td style="${td};font-family:monospace;font-size:11px;white-space:nowrap">${escapeHtml(it.steamId || '')}</td>
         <td style="${td};white-space:nowrap"><span style="background:rgba(255,255,255,.07);padding:2px 6px;border-radius:6px">${escapeHtml(it.action || '')}</span></td>
         <td style="${td};white-space:nowrap">${escapeHtml(it.dinoClass || '—')}</td>
@@ -1818,6 +2249,8 @@ async function renderAudit() {
     const r = await fetch(`${config.tokenBase}/admin/player-audit/actions`, { headers: { Authorization: `Bearer ${sessionToken}` } });
     if (r.ok) { const d = await r.json(); actions = d.actions || []; vias = d.via || []; }
   } catch {}
+  // Sensible Aktionen nur für Admins im Filter zeigen (Moderatoren sehen sie nicht).
+  if (!isAdmin) actions = actions.filter((a) => !PA_ADMIN_ACTIONS.has(a));
 
   const lab = 'font-size:11px;color:var(--muted);display:block;margin-bottom:2px';
   const inp = 'width:100%;box-sizing:border-box;padding:7px 8px;border-radius:8px;border:1px solid var(--border);background:var(--input-bg);color:#eee;font-size:12px';
@@ -1827,7 +2260,7 @@ async function renderAudit() {
     <div style="display:flex;flex-wrap:wrap;gap:8px;align-items:flex-end;margin-bottom:6px">
       <div style="flex:1;min-width:120px"><label style="${lab}">Spieler-Name</label><input id="paName" style="${inp}" placeholder="Teil des Namens"></div>
       <div style="flex:1;min-width:130px"><label style="${lab}">SteamID</label><input id="paSteam" style="${inp}" placeholder="7656…"></div>
-      <div style="flex:1;min-width:110px"><label style="${lab}">Dino</label><input id="paDino" style="${inp}" placeholder="z. B. Allosaurus"></div>
+      <div style="flex:1;min-width:110px"><label style="${lab}">Dino</label><input id="paDino" style="${inp}" placeholder="Teil, z. B. Allo"></div>
       <div style="min-width:110px"><label style="${lab}">Via</label><select id="paVia" style="${inp}"><option value="">alle</option>${vias.map((v) => `<option value="${escapeHtml(v)}">${(PA_VIA[v] || ['', v])[1]}</option>`).join('')}</select></div>
       <div style="min-width:150px"><label style="${lab}">Aktion <span style="opacity:.7">(Strg/Cmd = mehrere)</span></label>
         <select id="paAction" multiple size="4" style="${inp};height:auto">${actions.map((a) => `<option value="${escapeHtml(a)}">${escapeHtml(a)}</option>`).join('')}</select></div>
@@ -1871,6 +2304,132 @@ async function renderAudit() {
   paLoad(true);
 }
 
+// ── Team-Audit: Staff-Aktions-Log (dieselben Daten wie der Discord-Audit-Channel) ────────────
+// Backend /admin/staff-audit filtert + paginiert serverseitig und gated selbst auf Staff. Nur UI.
+const TA_SRC = { overlay: ['🎮', 'Overlay'], discord: ['💬', 'Discord'] };
+let taState = { built: false, items: [], total: 0, limit: 100, offset: 0, loading: false, fromMs: 0, toMs: 0 };
+function taQuery() {
+  const p = new URLSearchParams();
+  for (const [id, key] of [['taActor', 'actor'], ['taAction', 'action'], ['taSource', 'source']]) {
+    const v = (el(id)?.value || '').trim();
+    if (v) p.set(key, v);
+  }
+  for (const [id, key] of [['taFrom', 'from'], ['taTo', 'to']]) {
+    const ms = Date.parse((el(id)?.value || '').trim());
+    if (!isNaN(ms)) p.set(key, String(ms));
+  }
+  p.set('limit', String(taState.limit)); p.set('offset', String(taState.offset));
+  return p.toString();
+}
+async function taLoad(resetOffset) {
+  if (resetOffset) taState.offset = 0;
+  taState.loading = true; taRenderTable();
+  try {
+    const r = await fetch(`${config.tokenBase}/admin/staff-audit?${taQuery()}`, { headers: { Authorization: `Bearer ${sessionToken}` } });
+    if (!r.ok) throw new Error(r.status === 403 ? 'Nicht berechtigt — nur Staff.' : `Fehler ${r.status}`);
+    const d = await r.json();
+    taState.items = d.items || []; taState.total = d.total || 0;
+    taState.limit = d.limit || taState.limit; taState.offset = d.offset || 0;
+    taState.fromMs = d.fromMs || 0; taState.toMs = d.toMs || 0;
+  } catch (e) {
+    taState.items = []; taState.total = 0;
+    showToast(e.message, 'error');
+  }
+  taState.loading = false;
+  taRenderTable();
+}
+function taRenderTable() {
+  const box = el('taTableWrap'); if (!box) return;
+  if (taState.loading) {
+    box.innerHTML = '<div class="dt-muted" style="padding:12px">Lade…</div>';
+  } else if (!taState.items.length) {
+    box.innerHTML = '<div class="dt-muted" style="padding:12px">Keine Einträge für diese Filter.</div>';
+  } else {
+    const td = 'padding:5px 8px;vertical-align:top';
+    const rows = taState.items.map((it) => {
+      const t = new Date(it.createdAtMs);
+      const zeit = t.toLocaleTimeString('de-DE', { hour12: false });
+      const datum = t.toLocaleDateString('de-DE', { day: '2-digit', month: '2-digit' });
+      const [ico, lbl] = TA_SRC[it.source] || ['•', it.source || ''];
+      const who = it.actorName || it.actorDiscord || it.actorSteam || '—';
+      const whoTip = [it.actorSteam && 'Steam: ' + it.actorSteam, it.actorDiscord && 'Discord-ID: ' + it.actorDiscord].filter(Boolean).join(' · ');
+      const det = paDetails(it.details);
+      return `<tr style="border-top:1px solid var(--border)">
+        <td style="${td};white-space:nowrap" title="${escapeHtml(t.toLocaleString('de-DE'))}">${zeit}<div style="font-size:10px;opacity:.6">${datum}</div></td>
+        <td style="${td};max-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${escapeHtml(whoTip)}">${escapeHtml(who)}</td>
+        <td style="${td}"><span style="background:rgba(255,255,255,.07);padding:2px 6px;border-radius:6px;font-family:monospace;font-size:11px">${escapeHtml(it.action || '')}</span>${it.method && it.method !== 'POST' ? `<span style="font-size:10px;opacity:.6;margin-left:4px">${escapeHtml(it.method)}</span>` : ''}</td>
+        <td style="${td};white-space:nowrap" title="${escapeHtml(it.source || '')}">${ico} ${escapeHtml(lbl)}</td>
+        <td style="${td};max-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:11px;opacity:.85" title="${escapeHtml(det)}">${escapeHtml(det)}</td>
+      </tr>`;
+    }).join('');
+    const th = (l, w) => `<th style="padding:6px 8px;text-align:left;color:var(--muted);font-weight:600;white-space:nowrap${w ? `;width:${w}` : ''}">${l}</th>`;
+    box.innerHTML = `<table style="width:100%;border-collapse:collapse;font-size:12px">
+      <thead><tr style="position:sticky;top:0;background:#1c1c22;z-index:1">${th('Zeit', '86px')}${th('Wer', '150px')}${th('Aktion', '200px')}${th('Quelle', '96px')}${th('Details')}</tr></thead>
+      <tbody>${rows}</tbody></table>`;
+  }
+  const foot = el('taFoot'); if (!foot) return;
+  const von = taState.offset + 1, bis = taState.offset + taState.items.length;
+  const zeitraum = taState.fromMs && taState.toMs
+    ? `${new Date(taState.fromMs).toLocaleString('de-DE')} – ${new Date(taState.toMs).toLocaleString('de-DE')}` : '';
+  foot.innerHTML = `<span>${taState.total ? `${von}–${bis} von ${taState.total}` : '0 Treffer'}${zeitraum ? ` · Zeitraum: ${escapeHtml(zeitraum)}` : ''}</span>
+    <span style="display:flex;gap:6px">
+      <button id="taPrev" class="secondary" style="width:auto;padding:3px 9px;font-size:11px" ${taState.offset <= 0 ? 'disabled' : ''}>← Zurück</button>
+      <button id="taNext" class="secondary" style="width:auto;padding:3px 9px;font-size:11px" ${bis >= taState.total ? 'disabled' : ''}>Weiter →</button>
+    </span>`;
+  const pv = el('taPrev'), nx = el('taNext');
+  if (pv) pv.onclick = () => { taState.offset = Math.max(0, taState.offset - taState.limit); taLoad(false); };
+  if (nx) nx.onclick = () => { taState.offset += taState.limit; taLoad(false); };
+}
+function renderTeamAudit() {
+  const box = el('taBody'); if (!box) return;
+  if (taState.built) { taLoad(true); return; }
+  const lab = 'font-size:11px;color:var(--muted);display:block;margin-bottom:2px';
+  const inp = 'width:100%;box-sizing:border-box;padding:7px 8px;border-radius:8px;border:1px solid var(--border);background:var(--input-bg);color:#eee;font-size:12px';
+  box.innerHTML = `
+    <div style="font-weight:600;font-size:14px">🛡️ Team-Audit <span style="font-weight:400;font-size:11px;color:var(--muted)">— jede verändernde Staff-Aktion (Overlay + Discord)</span></div>
+    <div style="font-size:11px;color:var(--muted);margin:2px 0 8px">Dieselben Einträge wie im Discord-Audit-Channel.</div>
+    <div style="display:flex;flex-wrap:wrap;gap:8px;align-items:flex-end;margin-bottom:6px">
+      <div style="flex:1;min-width:130px"><label style="${lab}">Wer (Name)</label><input id="taActor" style="${inp}" placeholder="Teil des Namens"></div>
+      <div style="flex:1;min-width:140px"><label style="${lab}">Aktion</label><input id="taAction" style="${inp}" placeholder="z. B. gift, ban"></div>
+      <div style="min-width:120px"><label style="${lab}">Quelle</label><select id="taSource" style="${inp}"><option value="">alle</option><option value="overlay">🎮 Overlay</option><option value="discord">💬 Discord</option></select></div>
+      <div style="min-width:158px"><label style="${lab}">Von</label><input id="taFrom" type="datetime-local" style="${inp}"></div>
+      <div style="min-width:158px"><label style="${lab}">Bis</label><input id="taTo" type="datetime-local" style="${inp}"></div>
+    </div>
+    <div style="display:flex;flex-wrap:wrap;gap:6px;align-items:center;margin-bottom:8px">
+      <span style="font-size:11px;color:var(--muted)">Schnell:</span>
+      <button class="secondary" data-tarange="24" style="width:auto;padding:4px 9px;font-size:11px">24 h</button>
+      <button class="secondary" data-tarange="168" style="width:auto;padding:4px 9px;font-size:11px">7 Tage</button>
+      <button class="secondary" data-tarange="720" style="width:auto;padding:4px 9px;font-size:11px">30 Tage</button>
+      <span style="flex:1"></span>
+      <button id="taApply" style="width:auto;padding:5px 12px;font-size:12px">🔍 Filtern</button>
+      <button id="taReset" class="secondary" style="width:auto;padding:5px 12px;font-size:12px">Zurücksetzen</button>
+    </div>
+    <div id="taTableWrap" style="max-height:46vh;overflow:auto;border:1px solid var(--border);border-radius:8px;background:rgba(0,0,0,.18)"></div>
+    <div id="taFoot" style="display:flex;justify-content:space-between;align-items:center;gap:8px;margin-top:6px;font-size:11px;color:var(--muted)"></div>`;
+
+  el('taApply').onclick = () => taLoad(true);
+  el('taReset').onclick = () => {
+    ['taActor', 'taAction', 'taFrom', 'taTo'].forEach((id) => { const e = el(id); if (e) e.value = ''; });
+    el('taSource').value = '';
+    taLoad(true);
+  };
+  box.querySelectorAll('[data-tarange]').forEach((b) => {
+    b.onclick = () => {
+      const now = Date.now();
+      el('taTo').value = paToLocalInput(now);
+      el('taFrom').value = paToLocalInput(now - Number(b.dataset.tarange) * 3600_000);
+      taLoad(true);
+    };
+  });
+  ['taActor', 'taAction'].forEach((id) => {
+    const e = el(id); if (e) e.onkeydown = (ev) => { if (ev.key === 'Enter') { ev.preventDefault(); taLoad(true); } };
+  });
+  ['taSource', 'taFrom', 'taTo'].forEach((id) => { const e = el(id); if (e) e.onchange = () => taLoad(true); });
+
+  taState.built = true;
+  taLoad(true);
+}
+
 // ── Verwarnungen (Staff) ─────────────────────────────────────────────────────
 function renderWarnPane() {
   const box = el('warnBody'); if (!box) return;
@@ -1882,7 +2441,7 @@ function renderWarnPane() {
       <div style="flex:1"><label style="font-size:11px;color:var(--muted)">Discord-ID</label><input id="wnDiscord" placeholder="z. B. 4785…" style="${inp}"></div>
       <div style="flex:1"><label style="font-size:11px;color:var(--muted)">Steam-ID</label><input id="wnSteam" placeholder="7656…" style="${inp}"></div>
     </div>
-    <label style="font-size:11px;color:var(--muted);margin-top:8px;display:block">oder Ingame-Name <span style="opacity:.7">(wird automatisch zu Steam aufgelöst)</span></label>
+    <label style="font-size:11px;color:var(--muted);margin-top:8px;display:block">oder Name <span style="opacity:.7">(RP-, Ingame- oder Discord-Name — wird automatisch zu Steam aufgelöst)</span></label>
     <input id="wnIngame" list="wnIngameList" autocomplete="off" placeholder="z. B. Complex-Slayer" style="${inp}">
     <datalist id="wnIngameList"></datalist>
     <label style="font-size:11px;color:var(--muted);margin-top:8px;display:block">Regel-Paragraph *</label>
@@ -1898,7 +2457,7 @@ function renderWarnPane() {
     </div>
     <div id="wnResults" style="margin-top:10px"></div>`;
 
-  // Ingame-Name → Live-Vorschläge aus der Spielersuche (debounced).
+  // Server-Spielersuche (RP/Ingame/Discord) → Live-Vorschläge im Label "RP (Steam, Discord)".
   let wnIngTimer = null;
   el('wnIngame').oninput = () => {
     const q = el('wnIngame').value.trim();
@@ -1908,7 +2467,7 @@ function renderWarnPane() {
       try {
         const d = await fetch(`${config.tokenBase}/admin/players/search?q=${encodeURIComponent(q)}`, { headers: { Authorization: `Bearer ${sessionToken}` } }).then((r) => r.json());
         const dl = el('wnIngameList'); if (!dl) return;
-        dl.innerHTML = (d.items || []).slice(0, 15).map((p) => `<option value="${escapeHtml(p.playerName)}">`).join('');
+        dl.innerHTML = (d.items || []).slice(0, 15).map((p) => `<option value="${escapeHtml(userLabel(warnItemUser(p)))}">`).join('');
       } catch {}
     }, 300);
   };
@@ -1920,16 +2479,15 @@ function renderWarnPane() {
     const ruleParagraph = el('wnPara').value.trim();
     const reason = el('wnReason').value.trim();
     if (!ruleParagraph || !reason) { showToast('Paragraph und Grund sind Pflicht', 'error'); return; }
-    // Ingame-Name → Steam auflösen (nur wenn keine ID direkt angegeben).
+    // Name (RP/Ingame/Discord) → Steam auflösen (nur wenn keine ID direkt angegeben).
     if (!discordId && !steamId && ingame) {
       try {
         const d = await fetch(`${config.tokenBase}/admin/players/search?q=${encodeURIComponent(ingame)}`, { headers: { Authorization: `Bearer ${sessionToken}` } }).then((r) => r.json());
         const items = d.items || [];
-        const exact = items.filter((p) => (p.playerName || '').toLowerCase() === ingame.toLowerCase());
-        const pick = exact.length === 1 ? exact[0] : (items.length === 1 ? items[0] : null);
-        if (!pick) { showToast(items.length ? 'Mehrere Treffer — bitte genauer tippen oder SteamID nutzen' : 'Ingame-Name nicht gefunden (war der Spieler online?)', 'error'); return; }
+        const pick = matchUser(ingame, items.map(warnItemUser));
+        if (!pick) { showToast(items.length ? 'Mehrere Treffer — bitte genauer tippen oder SteamID nutzen' : 'Name nicht gefunden (war der Spieler online?)', 'error'); return; }
         steamId = pick.steamId;
-      } catch { showToast('Ingame-Name konnte nicht aufgelöst werden', 'error'); return; }
+      } catch { showToast('Name konnte nicht aufgelöst werden', 'error'); return; }
     }
     if (!discordId && !steamId) { showToast('Discord-/Steam-ID oder Ingame-Name nötig', 'error'); return; }
     await apiAction('/admin/warnings', { discordId, steamId, reason, ruleParagraph }, '⚠️ Verwarnung erfasst', () => {
@@ -2121,6 +2679,336 @@ function closeAdminPanel() {
   el('adminPanel').style.display = 'none';
   updateInteractive();
 }
+
+// ── Server-Panel (nur Admin): Welt / AI / Polymorph / Objekte / Server ───────
+// Alle Aktionen laufen über admin-only Backend-Proxies (/admin/world/*, /admin/players/{id}/
+// polymorph, /admin/mod-ai/*, /admin/ai/*), die 1:1 an die mod-API bzw. den control-server gehen.
+function openServerPanel() {
+  if (!isAdmin) { showToast('Nur für Admins', 'error'); return; }
+  serverOpen = true;
+  el('serverPanel').style.display = 'block';
+  updateInteractive();
+  showServerTab('welt');
+}
+function closeServerPanel() {
+  serverOpen = false;
+  el('serverPanel').style.display = 'none';
+  updateInteractive();
+}
+let serverTab = 'welt';
+function showServerTab(t) {
+  serverTab = t;
+  document.querySelectorAll('#serverTabs [data-stab]').forEach((b) => b.classList.toggle('secondary', b.dataset.stab !== t));
+  document.querySelectorAll('#serverPanel .admin-pane').forEach((p) => { p.hidden = p.dataset.pane !== t; });
+  if (t === 'welt') renderSvWelt();
+  else if (t === 'ai') renderSvAi();
+  else if (t === 'polymorph') renderSvPoly();
+  else if (t === 'objects') renderSvObjects();
+  else if (t === 'karte') { loadTeleports(); renderAdminTpList(); }
+  else if (t === 'server') { renderServer(); svRenderClassLimits(); }
+  else if (t === 'godvoice') renderGodVoice();
+  bfScheduleFrameSync && bfScheduleFrameSync();
+}
+// Class-Limits im Server-Tab (dieselben /dino-limits-Endpoints wie das Admin-Panel; das Admin-Panel
+// bleibt unangetastet — hier eine eigene Ansicht in #svClassBody).
+async function svRenderClassLimits() {
+  const box = el('svClassBody'); if (!box) return;
+  box.innerHTML = '<div class="sec-title">🦖 Class-Limits</div><div class="dt-muted">Lade…</div>';
+  await fetchDinoLimits();
+  box.innerHTML = `
+    <div class="sec-title">🦖 Class-Limits <span class="dt-muted">— Spezies-Obergrenzen (über Limit → jüngster Dino wird nach 90 s eingeparkt)</span></div>
+    <div id="svClassList" style="max-height:300px;overflow:auto;margin:8px 0">${dinoLimitSpecies.map((sp) => `<div class="dlimit-row"><span>${escapeHtml(sp)}</span><input type="number" min="0" data-sp="${escapeHtml(sp)}" value="${dinoLimits[sp] || 0}" class="bf-select"></div>`).join('')}</div>
+    <button id="svClassSave" style="width:100%">💾 Class-Limits speichern</button>
+    <div id="svClassResult" class="dt-muted" style="margin-top:6px"></div>`;
+  el('svClassSave').onclick = async () => {
+    const limits = {};
+    box.querySelectorAll('#svClassList input[data-sp]').forEach((inp) => { const v = parseInt(inp.value, 10); if (v > 0) limits[inp.dataset.sp] = v; });
+    const res = el('svClassResult'); if (res) res.textContent = 'Speichere…';
+    try {
+      const r = await fetch(`${config.tokenBase}/admin/dino-limits`, { method: 'POST', headers: { Authorization: `Bearer ${sessionToken}`, 'Content-Type': 'application/json' }, body: JSON.stringify({ limits }) });
+      const d = await r.json(); if (!r.ok) throw new Error(apiErr(d));
+      dinoLimits = d.limits || {};
+      if (res) res.textContent = '✅ Gespeichert.';
+      showToast('🦖 Class-Limits gespeichert', 'success');
+    } catch (e) { if (res) res.textContent = '⚠️ ' + e.message; showToast(e.message, 'error'); }
+  };
+}
+// Generischer Server-Panel-API-Call (GET/POST/PATCH/DELETE) → geparste Antwort, wirft bei !ok.
+async function svApi(method, path, body) {
+  const opt = { method, headers: { Authorization: `Bearer ${sessionToken}` } };
+  if (body !== undefined && body !== null) { opt.headers['Content-Type'] = 'application/json'; opt.body = JSON.stringify(body); }
+  const r = await fetch(`${config.tokenBase}${path}`, opt);
+  let d = {}; try { d = await r.json(); } catch {}
+  if (!r.ok) throw new Error(apiErr(d) || `HTTP ${r.status}`);
+  return d;
+}
+function svFmtTod(t) { const h = Math.floor(t), m = Math.round((t - h) * 60); return `${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}`; }
+
+// 🌍 Welt: Zeit / Wetter / Grow-Stop
+async function renderSvWelt() {
+  const box = el('svWeltBody'); if (!box) return;
+  box.innerHTML = '<div class="dt-muted">Lade…</div>';
+  const [time, weather, grow, fgs] = await Promise.all([
+    svApi('GET', '/admin/world/time').catch(() => ({})),
+    svApi('GET', '/admin/world/weather').catch(() => ({})),
+    svApi('GET', '/admin/world/growth-stop').catch(() => ({})),
+    svApi('GET', '/free-gender-swap').catch(() => ({})),
+  ]);
+  const presets = weather.presets || weather.weathers || weather.list || weather.items || ['clear', 'clouds', 'rain', 'storm', 'fog', 'snow', 'auto'];
+  const tod = (typeof time.timeOfDay === 'number') ? time.timeOfDay : 12;
+  box.innerHTML = `
+    <div class="sec-title">🕑 Tageszeit</div>
+    <div style="display:flex;align-items:center;gap:10px;margin:8px 0">
+      <input id="svTod" type="range" min="0" max="24" step="0.25" value="${tod}" style="flex:1;accent-color:var(--accent)">
+      <span id="svTodVal" style="width:52px;text-align:right">${svFmtTod(tod)}</span>
+      <button id="svTodApply" style="width:auto;padding:6px 12px">Setzen</button>
+    </div>
+    <label style="display:flex;align-items:center;gap:8px;font-size:13px;margin-bottom:14px"><input id="svPause" type="checkbox" ${time.paused ? 'checked' : ''}> Zeit einfrieren (Tag/Nacht-Zyklus anhalten)</label>
+    <div class="sec-title">🌦️ Wetter</div>
+    <div style="display:flex;flex-wrap:wrap;gap:6px;margin:8px 0 14px">${presets.map((p) => `<button class="secondary" data-weather="${escapeHtml(String(p))}" style="width:auto;padding:6px 12px">${escapeHtml(String(p))}</button>`).join('')}</div>
+    <div class="sec-title">🌱 Wachstum</div>
+    <label style="display:flex;align-items:center;gap:8px;font-size:13px;margin:8px 0"><input id="svGrow" type="checkbox" ${grow.enabled ? 'checked' : ''}> Grow-Stop (Wachstum aller Dinos einfrieren)</label>
+    <div class="sec-title">🎉 Events</div>
+    <label style="display:flex;align-items:center;gap:8px;font-size:13px;margin:8px 0"><input id="svFreeGender" type="checkbox" ${fgs.enabled ? 'checked' : ''}> Free Gender Swap — ALLE wechseln kostenlos${fgs.enabled && fgs.expiresAtMs ? ` <span class="dt-muted">(noch ${fmtEventCountdown(fgs.expiresAtMs)})</span>` : ''}</label>
+    <div style="display:flex;align-items:center;gap:8px;margin:2px 0 8px">
+      <span class="dt-muted">Dauer:</span>
+      <input id="svFreeGenderHours" type="number" min="0" step="1" value="24" style="width:70px;padding:6px;border-radius:6px;border:1px solid var(--border);background:var(--input-bg);color:#eee">
+      <span class="dt-muted">Stunden (0 = unbegrenzt). Läuft danach automatisch ab.</span>
+    </div>`;
+  el('svTod').oninput = () => { el('svTodVal').textContent = svFmtTod(parseFloat(el('svTod').value)); };
+  el('svTodApply').onclick = async () => { try { await svApi('POST', '/admin/world/time', { timeOfDay: parseFloat(el('svTod').value) }); showToast('🕑 Tageszeit gesetzt', 'success'); } catch (e) { showToast(e.message, 'error'); } };
+  el('svPause').onchange = async () => { try { await svApi('POST', '/admin/world/time', { paused: el('svPause').checked }); showToast(el('svPause').checked ? '⏸️ Zeit eingefroren' : '▶️ Zeit läuft', 'success'); } catch (e) { showToast(e.message, 'error'); } };
+  box.querySelectorAll('[data-weather]').forEach((b) => b.onclick = async () => { try { await svApi('POST', '/admin/world/weather', { weather: b.dataset.weather }); showToast('🌦️ Wetter: ' + b.dataset.weather, 'success'); } catch (e) { showToast(e.message, 'error'); } });
+  el('svGrow').onchange = async () => { try { await svApi('POST', '/admin/world/growth-stop', { enabled: el('svGrow').checked }); showToast(el('svGrow').checked ? '🌱 Grow-Stop AN' : '🌱 Grow-Stop AUS', 'success'); } catch (e) { el('svGrow').checked = !el('svGrow').checked; showToast(e.message, 'error'); } };
+  const applyFreeGender = async () => {
+    const on = el('svFreeGender').checked;
+    const hours = on ? Math.max(0, parseFloat(el('svFreeGenderHours').value) || 0) : 0;
+    try {
+      await svApi('POST', '/free-gender-swap', { enabled: on, durationHours: hours });
+      freeGenderSwap = on;
+      showToast(on ? (hours ? `⚧️ Free Gender Swap AN — ${hours} Std` : '⚧️ Free Gender Swap AN — unbegrenzt') : '⚧️ Free Gender Swap AUS', 'success');
+      loadActiveEvents();          // Event-Timer-HUD sofort aktualisieren
+      if (serverTab === 'welt') renderSvWelt(); // Restzeit-Anzeige im Tab aktualisieren
+    } catch (e) { el('svFreeGender').checked = !on; showToast(e.message, 'error'); }
+  };
+  el('svFreeGender').onchange = applyFreeGender;
+  el('svFreeGenderHours').onchange = () => { if (el('svFreeGender').checked) applyFreeGender(); }; // Dauer ändern → neu setzen
+}
+
+// 🤖 AI: mod-eigenes /ai/encounters-Framework — Master + read-only Liste + Detail-Editor
+const SV_ARCHETYPES = ['territorial_guard', 'pack_hunter', 'herd', 'ambush', 'skittish_prey', 'scavenger', 'nomad', 'apex_solo'];
+const svArchOpts = (sel) => SV_ARCHETYPES.map((a) => `<option value="${a}"${a === sel ? ' selected' : ''}>${a}</option>`).join('');
+let svEncEditId = null, svEncDraft = null;
+
+async function renderSvAi() {
+  const box = el('svAiBody'); if (!box) return;
+  box.innerHTML = '<div class="dt-muted">Lade…</div>';
+  const [st, list] = await Promise.all([
+    svApi('GET', '/admin/mod-ai/encounters/status').catch(() => ({})),
+    svApi('GET', '/admin/mod-ai/encounters').catch(() => ({ encounters: [] })),
+  ]);
+  const enabled = !!(st.ai_encounters_enabled != null ? st.ai_encounters_enabled : st.enabled);
+  const encs = list.encounters || [];
+  const statusDot = (e) => e.enabled !== false ? '<span style="color:#22c55e">● aktiv</span>' : '<span style="color:var(--muted)">○ aus</span>';
+  const rows = encs.map((e) => `
+    <div style="display:flex;align-items:center;gap:10px;border:1px solid var(--border);border-radius:8px;padding:6px 10px;margin-bottom:6px">
+      <div style="flex:1;min-width:0"><b>${escapeHtml(e.name || e.id)}</b><div class="dt-muted" style="font-size:12px">${escapeHtml(e.archetype || '')} · ${escapeHtml(e.species || '')} · ×${e.count || 1}</div></div>
+      <div style="font-size:12px;white-space:nowrap">${statusDot(e)}</div>
+      <button class="secondary sv-enc-edit" data-eid="${escapeHtml(e.id)}" style="width:auto;padding:4px 12px">✏️ Bearbeiten</button>
+    </div>`).join('') || '<div class="dt-muted">Keine Encounters angelegt.</div>';
+  box.innerHTML = `
+    <div class="sec-title">🤖 AI-Encounters</div>
+    <label style="display:flex;align-items:center;gap:8px;font-size:13px;margin:8px 0 14px"><input id="svAiMaster" type="checkbox" ${enabled ? 'checked' : ''}> Encounter-System aktiv (Master-Schalter)</label>
+    <div class="sec-title">Encounters (${encs.length})</div>
+    <div id="svEncList" style="margin:6px 0 6px">${rows}</div>
+    <div id="svEncEditor"></div>
+    <div class="sec-title" style="margin-top:12px">➕ Neuer Encounter</div>
+    <div class="dt-form" style="margin-top:6px">
+      <label>Name</label><input id="svEncName" class="tm-input" placeholder="Rex-Wache Nord">
+      <label>Spezies (Blueprint, z. B. BP_Allosaurus_C)</label><input id="svEncSpecies" class="tm-input" placeholder="BP_Allosaurus_C">
+      <div style="display:flex;gap:10px">
+        <div style="flex:1"><label>Archetyp</label><select id="svEncArch" class="bf-select">${svArchOpts('territorial_guard')}</select></div>
+        <div style="flex:1"><label>Anzahl (1–20)</label><input id="svEncCount" type="number" min="1" max="20" value="1" class="tm-input"></div>
+      </div>
+      <label style="display:flex;align-items:center;gap:8px;margin-top:6px"><input id="svEncAtMe" type="checkbox" checked> Spawnpunkt = meine Position</label>
+    </div>
+    <button id="svEncCreate" style="width:100%;margin-top:8px">➕ Encounter anlegen</button>`;
+  el('svAiMaster').onchange = async () => {
+    try { await svApi('PATCH', '/admin/mod-ai/encounters/status', { ai_encounters_enabled: el('svAiMaster').checked }); showToast(el('svAiMaster').checked ? '🤖 AI-Encounters AN' : '🤖 AI-Encounters AUS', 'success'); }
+    catch (e) { el('svAiMaster').checked = !el('svAiMaster').checked; showToast(e.message, 'error'); }
+  };
+  box.querySelectorAll('.sv-enc-edit').forEach((b) => b.onclick = () => {
+    const e = encs.find((x) => x.id === b.dataset.eid); if (!e) return;
+    svEncEditId = e.id; svEncDraft = JSON.parse(JSON.stringify(e));
+    renderEncEditor();
+    const ed = el('svEncEditor'); if (ed) ed.scrollIntoView({ block: 'nearest' });
+  });
+  el('svEncCreate').onclick = async () => {
+    const species = el('svEncSpecies').value.trim(); if (!species) { showToast('Spezies angeben', 'error'); return; }
+    const body = { name: el('svEncName').value.trim() || species, species, archetype: el('svEncArch').value, count: Math.max(1, Math.min(20, parseInt(el('svEncCount').value) || 1)), enabled: true };
+    if (el('svEncAtMe').checked && me && typeof me.x === 'number') body.spawn = { x: me.x, y: me.y, z: me.z || 0 };
+    try { await svApi('POST', '/admin/mod-ai/encounters', body); showToast('➕ Encounter angelegt', 'success'); renderSvAi(); } catch (e) { showToast(e.message, 'error'); }
+  };
+  renderEncEditor(); // Editor nach Refetch synchron halten (offen nur, wenn svEncDraft gesetzt)
+}
+
+// Liest die aktuellen Editor-Feldwerte in svEncDraft zurück (vor jedem Teil-Re-Render der Patrouille).
+function svEncSyncDraft() {
+  const box = el('svEncEditor'); if (!box || !svEncDraft) return;
+  const q = (c) => box.querySelector(c);
+  if (q('.ee-name')) svEncDraft.name = q('.ee-name').value.trim();
+  if (q('.ee-species')) svEncDraft.species = q('.ee-species').value.trim();
+  if (q('.ee-arch')) svEncDraft.archetype = q('.ee-arch').value;
+  if (q('.ee-count')) svEncDraft.count = Math.max(1, Math.min(20, parseInt(q('.ee-count').value) || 1));
+  if (q('.ee-enabled')) svEncDraft.enabled = q('.ee-enabled').checked;
+  if (q('.ee-respawn')) { const v = parseInt(q('.ee-respawn').value); svEncDraft.respawnDelaySec = (v >= 0 && !isNaN(v)) ? v : undefined; }
+  const sx = q('.ee-sx'), sy = q('.ee-sy'), sz = q('.ee-sz');
+  if (sx && sy && sz) svEncDraft.spawn = { x: parseFloat(sx.value) || 0, y: parseFloat(sy.value) || 0, z: parseFloat(sz.value) || 0 };
+  const pts = [];
+  box.querySelectorAll('.ee-pt').forEach((r) => pts.push({ x: parseFloat(r.querySelector('.pt-x').value) || 0, y: parseFloat(r.querySelector('.pt-y').value) || 0, z: parseFloat(r.querySelector('.pt-z').value) || 0 }));
+  svEncDraft.patrol = pts;
+}
+
+// Detail-Editor eines Encounters (Koordinaten + Patrouillen-Pfad). Rendert nur aus svEncDraft,
+// ohne Refetch — Patrouillen-Änderungen re-rendern nur diesen Block.
+function renderEncEditor() {
+  const box = el('svEncEditor'); if (!box) return;
+  if (!svEncDraft) { box.innerHTML = ''; return; }
+  const d = svEncDraft, sp = d.spawn || {}, patrol = d.patrol || [];
+  box.innerHTML = `
+    <div style="border:1px solid var(--accent);border-radius:8px;padding:10px;margin:8px 0">
+      <div class="sec-title">✏️ Bearbeiten: ${escapeHtml(d.id)}</div>
+      <div class="dt-form">
+        <div style="display:flex;gap:8px;align-items:center">
+          <input class="tm-input ee-name" style="flex:1" value="${escapeHtml(d.name || '')}" placeholder="Name">
+          <label style="font-size:12px;display:flex;align-items:center;gap:4px"><input type="checkbox" class="ee-enabled" ${d.enabled !== false ? 'checked' : ''}> aktiv</label>
+        </div>
+        <div style="display:flex;gap:8px;margin-top:6px">
+          <input class="tm-input ee-species" style="flex:2" value="${escapeHtml(d.species || '')}" placeholder="Spezies (BP_…)">
+          <select class="bf-select ee-arch" style="flex:1">${svArchOpts(d.archetype)}</select>
+          <input type="number" min="1" max="20" class="tm-input ee-count" style="width:64px" value="${d.count || 1}">
+        </div>
+        <label style="margin-top:8px">Spawn-Koordinaten (x / y / z)</label>
+        <div style="display:flex;gap:6px;align-items:center">
+          <input type="number" class="tm-input ee-sx" style="flex:1" value="${sp.x || 0}" placeholder="x">
+          <input type="number" class="tm-input ee-sy" style="flex:1" value="${sp.y || 0}" placeholder="y">
+          <input type="number" class="tm-input ee-sz" style="flex:1" value="${sp.z || 0}" placeholder="z">
+          <button class="secondary ee-spawn-me" style="width:auto;padding:6px 10px">📍 hier</button>
+        </div>
+        <label style="margin-top:8px">Patrouillen-Pfad (${patrol.length} Punkte)</label>
+        <div class="ee-patrol">${patrol.map((p, i) => `
+          <div class="ee-pt" style="display:flex;gap:6px;align-items:center;margin-bottom:4px">
+            <span class="dt-muted" style="width:18px;text-align:right">${i + 1}</span>
+            <input type="number" class="tm-input pt-x" style="flex:1" value="${p.x || 0}" placeholder="x">
+            <input type="number" class="tm-input pt-y" style="flex:1" value="${p.y || 0}" placeholder="y">
+            <input type="number" class="tm-input pt-z" style="flex:1" value="${p.z || 0}" placeholder="z">
+            <button class="secondary ee-pt-del" data-i="${i}" style="width:auto;padding:4px 8px">✕</button>
+          </div>`).join('')}</div>
+        <div style="display:flex;gap:6px;margin-top:4px">
+          <button class="secondary ee-pt-add" style="flex:1">➕ Punkt</button>
+          <button class="secondary ee-pt-addme" style="flex:1">📍 Punkt an meiner Position</button>
+        </div>
+        <label style="margin-top:8px">Respawn-Delay (Sek, optional)</label>
+        <input type="number" min="0" class="tm-input ee-respawn" value="${d.respawnDelaySec != null ? d.respawnDelaySec : ''}" placeholder="—">
+      </div>
+      <div style="display:flex;gap:6px;margin-top:10px">
+        <button class="ee-save" style="flex:1">💾 Speichern</button>
+        <button class="secondary ee-cancel" style="width:auto;padding:6px 12px">Abbrechen</button>
+        <button class="secondary ee-del" style="width:auto;padding:6px 12px;color:#ef4444">🗑️ Löschen</button>
+      </div>
+    </div>`;
+  box.querySelector('.ee-spawn-me').onclick = () => { svEncSyncDraft(); if (me && typeof me.x === 'number') svEncDraft.spawn = { x: me.x, y: me.y, z: me.z || 0 }; else showToast('Position unbekannt', 'error'); renderEncEditor(); };
+  box.querySelector('.ee-pt-add').onclick = () => { svEncSyncDraft(); (svEncDraft.patrol = svEncDraft.patrol || []).push({ x: 0, y: 0, z: 0 }); renderEncEditor(); };
+  box.querySelector('.ee-pt-addme').onclick = () => { svEncSyncDraft(); if (me && typeof me.x === 'number') (svEncDraft.patrol = svEncDraft.patrol || []).push({ x: me.x, y: me.y, z: me.z || 0 }); else showToast('Position unbekannt', 'error'); renderEncEditor(); };
+  box.querySelectorAll('.ee-pt-del').forEach((b) => b.onclick = () => { svEncSyncDraft(); svEncDraft.patrol.splice(parseInt(b.dataset.i), 1); renderEncEditor(); });
+  box.querySelector('.ee-cancel').onclick = () => { svEncEditId = null; svEncDraft = null; renderEncEditor(); };
+  box.querySelector('.ee-del').onclick = () => svArmConfirm(box.querySelector('.ee-del'), 'Encounter löschen', async () => {
+    try { await svApi('DELETE', `/admin/mod-ai/encounters/${encodeURIComponent(svEncEditId)}`); showToast('🗑️ Encounter gelöscht', 'success'); svEncEditId = null; svEncDraft = null; renderSvAi(); } catch (e) { showToast(e.message, 'error'); }
+  });
+  box.querySelector('.ee-save').onclick = async () => {
+    svEncSyncDraft();
+    if (!svEncDraft.species) { showToast('Spezies angeben', 'error'); return; }
+    const body = { name: svEncDraft.name, species: svEncDraft.species, archetype: svEncDraft.archetype, count: svEncDraft.count, enabled: svEncDraft.enabled, spawn: svEncDraft.spawn, patrol: svEncDraft.patrol };
+    if (svEncDraft.respawnDelaySec != null) body.respawnDelaySec = svEncDraft.respawnDelaySec;
+    try { await svApi('PATCH', `/admin/mod-ai/encounters/${encodeURIComponent(svEncEditId)}`, body); showToast('💾 Encounter gespeichert', 'success'); svEncEditId = null; svEncDraft = null; renderSvAi(); } catch (e) { showToast(e.message, 'error'); }
+  };
+}
+
+// 🦖 Polymorph: Spieler in NPC-Tier verwandeln
+async function renderSvPoly() {
+  const box = el('svPolyBody'); if (!box) return;
+  box.innerHTML = '<div class="dt-muted">Lade…</div>';
+  await loadAdminUsers();
+  box.innerHTML = `
+    <div class="sec-title">🦖 Polymorph <span class="dt-muted">— Spieler per Respawn in ein NPC-Tier verwandeln</span></div>
+    <div class="dt-form" style="margin-top:6px">
+      ${userSearchHTML('svPolyUser', adminUsers, 'Spieler', 'RP/Steam/Discord tippen…')}
+      <label>Ziel-Dino (Blueprint/Kurzname, z. B. Boar, Chicken, Deer)</label>
+      <input id="svPolyClass" class="tm-input" placeholder="Chicken">
+      <div style="display:flex;gap:10px">
+        <div style="flex:1"><label>Scale</label><input id="svPolyScale" type="number" step="0.1" min="0.1" value="1" class="tm-input"><div class="dt-muted" style="margin-top:3px">grösser 1 ist noch nicht funktional</div></div>
+        <div style="flex:1"><label>maxHealth (optional)</label><input id="svPolyHp" type="number" step="100" placeholder="—" class="tm-input"></div>
+      </div>
+    </div>
+    <div style="display:flex;flex-wrap:wrap;gap:6px;margin:10px 0 6px">
+      <button class="secondary" data-poly="Chicken|1|10000" style="width:auto;padding:6px 12px">🐔 Kampf-Huhn</button>
+      <button class="secondary" data-poly="Boar|1|2000" style="width:auto;padding:6px 12px">🐗 Panzer-Boar</button>
+      <button class="secondary" data-poly="Rabbit|0.3|" style="width:auto;padding:6px 12px">🐇 Mini-Hase</button>
+    </div>
+    <button id="svPolyApply" style="width:100%;margin-top:6px">🦖 Polymorph anwenden</button>`;
+  box.querySelectorAll('[data-poly]').forEach((b) => b.onclick = () => { const [c, s, h] = b.dataset.poly.split('|'); el('svPolyClass').value = c; el('svPolyScale').value = s || ''; el('svPolyHp').value = h || ''; });
+  el('svPolyApply').onclick = async () => {
+    const u = resolveUserInput('svPolyUser', adminUsers);
+    if (!u) { showToast('Spieler aus der Liste wählen', 'error'); return; }
+    const cls = (el('svPolyClass').value || '').trim(); if (!cls) { showToast('Ziel-Dino angeben', 'error'); return; }
+    const body = { dinoClass: cls };
+    const sc = parseFloat(el('svPolyScale').value); if (sc > 0) body.scale = sc;
+    const hp = parseFloat(el('svPolyHp').value); if (hp > 0) body.maxHealth = hp;
+    try { await svApi('POST', `/admin/players/${u.steamId}/polymorph`, body); showToast(`🦖 ${u.ingameName || u.name || 'Spieler'} → ${cls}`, 'success'); } catch (e) { showToast(e.message, 'error'); }
+  };
+}
+
+// 🧱 Objekte: platzieren / auflisten / löschen (mod In-Memory-Registry, überlebt keinen Restart)
+async function renderSvObjects() {
+  const box = el('svObjBody'); if (!box) return;
+  box.innerHTML = '<div class="dt-muted">Lade…</div>';
+  let list = { actors: [] };
+  try { list = await svApi('GET', '/admin/world/objects'); } catch {}
+  const actors = list.actors || [];
+  const rows = actors.map((o) => `<tr><td style="padding:2px 6px">${escapeHtml(o.tag || '')}</td><td style="padding:2px 6px" class="dt-muted">${escapeHtml(o.id || '')}</td><td style="padding:2px 6px" class="dt-muted">${escapeHtml(o.kind || '')}</td><td style="padding:2px 6px">${Math.round(o.x)}, ${Math.round(o.y)}, ${Math.round(o.z)}</td><td style="padding:2px 6px"><button class="secondary" data-obj-del="${escapeHtml(o.id || '')}" style="width:auto;padding:2px 8px">✕</button></td></tr>`).join('') || '<tr><td colspan="5" class="dt-muted" style="padding:6px">Keine Objekte platziert.</td></tr>';
+  box.innerHTML = `
+    <div class="sec-title">🧱 Objekt platzieren <span class="dt-muted">— überlebt KEINEN Server-Restart</span></div>
+    <div class="dt-form" style="margin-top:6px">
+      <label>Modell (BP_… / SM_… / NS_… oder /Game/…-Pfad)</label>
+      <input id="svObjModel" class="tm-input" placeholder="BP_Rock_C">
+      <label>Tag (Gruppenname zum späteren Löschen)</label>
+      <input id="svObjTag" class="tm-input" placeholder="deko1">
+      <label>Scale</label>
+      <input id="svObjScale" type="number" step="0.5" value="1" class="tm-input">
+      <label style="display:flex;align-items:center;gap:8px;margin-top:8px"><input id="svObjAtMe" type="checkbox" checked> An meiner Position platzieren</label>
+    </div>
+    <button id="svObjSpawn" style="width:100%;margin:8px 0 4px">🧱 Platzieren</button>
+    <button id="svObjAssets" class="secondary" style="width:100%;margin-bottom:12px">📋 Spawnbare Assets anzeigen</button>
+    <div id="svObjAssetList"></div>
+    <div class="sec-title" style="margin-top:10px">Platzierte Objekte (${actors.length})</div>
+    <div style="max-height:220px;overflow:auto;margin-top:6px"><table style="width:100%;border-collapse:collapse;font-size:12px"><tbody>${rows}</tbody></table></div>`;
+  el('svObjSpawn').onclick = async () => {
+    const model = (el('svObjModel').value || '').trim(); if (!model) { showToast('Modell angeben', 'error'); return; }
+    const entry = { tag: (el('svObjTag').value || '').trim() || 'obj', model, scale: parseFloat(el('svObjScale').value) || 1 };
+    if (el('svObjAtMe').checked) { if (!me || typeof me.x !== 'number') { showToast('Deine Position unbekannt', 'error'); return; } entry.location = { x: me.x, y: me.y, z: me.z || 0 }; }
+    try { await svApi('POST', '/admin/world/objects', entry); showToast('🧱 Objekt platziert', 'success'); renderSvObjects(); } catch (e) { showToast(e.message, 'error'); }
+  };
+  el('svObjAssets').onclick = async () => {
+    const t = el('svObjAssetList'); t.innerHTML = '<div class="dt-muted">Lade Assets…</div>';
+    try {
+      const a = await svApi('GET', '/admin/world/objects/all');
+      const bp = (a.blueprints && a.blueprints.items) || [];
+      t.innerHTML = `<div class="dt-muted" style="margin:6px 0">Blueprints (${(a.blueprints && a.blueprints.count) || 0}) — Klick übernimmt ins Modell-Feld:</div>` + bp.slice(0, 200).map((m) => `<button class="secondary" data-asset="${escapeHtml(m)}" style="width:auto;padding:2px 8px;margin:2px">${escapeHtml(m)}</button>`).join('');
+      t.querySelectorAll('[data-asset]').forEach((b) => b.onclick = () => { el('svObjModel').value = b.dataset.asset; });
+    } catch (e) { t.innerHTML = `<span style="color:#ef4444">${escapeHtml(e.message)}</span>`; }
+  };
+  box.querySelectorAll('[data-obj-del]').forEach((b) => b.onclick = async () => { try { await svApi('DELETE', `/admin/world/objects/id/${encodeURIComponent(b.dataset.objDel)}`); showToast('🗑️ Objekt gelöscht', 'success'); renderSvObjects(); } catch (e) { showToast(e.message, 'error'); } });
+}
 // Hotkey „admin-menu": Panel umschalten (nur Admins)
 function openAdminMenu() {
   if (!isIngame) { loadTeleports(); return; }
@@ -2169,19 +3057,13 @@ async function loadAdminUsers() {
     const res = await fetch(`${config.tokenBase}/admin/users`, { headers: { Authorization: `Bearer ${sessionToken}` } });
     if (!res.ok) return;
     const d = await res.json();
-    adminUserMap = new Map();
-    const dl = el('admUserList');
-    dl.innerHTML = '';
-    const seen = new Set();
-    for (const u of (d.users || [])) {
-      let key = u.name;
-      if (seen.has(key)) key = `${u.name} (…${u.steamId.slice(-4)})`;
-      seen.add(key);
-      adminUserMap.set(key, u);
-      const opt = document.createElement('option');
-      opt.value = key;
-      dl.appendChild(opt);
-    }
+    adminUsers = d.users || [];
+    // Die drei Admin-Suchfelder teilen sich admUserList und durchsuchen die volle User-Liste.
+    // Das Datalist wird NICHT mehr mit allen ~1000 Optionen vorbefüllt (Chromium zeigt die dann
+    // nicht zuverlässig) — filterDatalist füllt es beim Tippen/Fokus mit den Top-Treffern.
+    for (const id of ['admUserSearch', 'msgUserSearch', 'giftUserSearch', 'followUserSearch']) USER_POOLS[id] = adminUsers;
+    adminUserMap = new Map(); // nur noch Back-Compat; Auflösung läuft über matchUser
+    for (const u of adminUsers) adminUserMap.set(u.name, u);
   } catch {}
 }
 
@@ -2226,37 +3108,23 @@ function updateGiftTarget() {
 }
 
 function resolveAdminUser(inputId) {
-  const v = (el(inputId).value || '').trim();
-  return adminUserMap.get(v) || null;
+  return matchUser(el(inputId)?.value, USER_POOLS[inputId] || adminUsers);
 }
 
 // ── Wiederverwendbar: Discord-User-Suchfeld (Name selbst tippen + Vorschläge unten) ──
 // Ersetzt <select>-Dropdowns überall im Admin-Overlay durch ein Text-Input mit Datalist.
 function userSearchHTML(inputId, users, label, placeholder) {
   const listId = inputId + '_dl';
-  const seen = new Set(); const opts = [];
-  for (const u of (users || [])) {
-    let key = u.name || '';
-    if (seen.has(key)) key = `${u.name} (…${(u.steamId || u.discordId || '').slice(-4)})`;
-    seen.add(key);
-    opts.push(`<option value="${escapeHtml(key)}">`);
-  }
+  // User-Pool für dieses Feld registrieren; filterDatalist (delegierter input/focusin-Handler)
+  // befüllt das Datalist beim Tippen mit den Top-Treffern. Kein Vorabdump aller Optionen mehr.
+  USER_POOLS[inputId] = users || [];
   return `<label>${escapeHtml(label || 'Spieler')}</label>` +
-    `<input id="${inputId}" list="${listId}" class="tm-input" placeholder="${escapeHtml(placeholder || 'Discord-Name tippen…')}" autocomplete="off">` +
-    `<datalist id="${listId}">${opts.join('')}</datalist>`;
+    `<input id="${inputId}" list="${listId}" class="tm-input" placeholder="${escapeHtml(placeholder || 'Discord-Name/SteamID tippen…')}" autocomplete="off">` +
+    `<datalist id="${listId}"></datalist>`;
 }
-// Löst den getippten Namen zurück zum User-Objekt (mit gleichem Dedup-Suffix wie oben).
+// Löst den getippten Wert robust zum User auf (Name-Teilstring/Case/SteamID) — siehe matchUser.
 function resolveUserInput(inputId, users) {
-  const v = (el(inputId)?.value || '').trim().toLowerCase();
-  if (!v) return null;
-  const seen = new Set();
-  for (const u of (users || [])) {
-    let key = u.name || '';
-    if (seen.has(key)) key = `${u.name} (…${(u.steamId || u.discordId || '').slice(-4)})`;
-    seen.add(key);
-    if (key.toLowerCase() === v) return u;
-  }
-  return (users || []).find((u) => (u.name || '').toLowerCase() === v) || null;
+  return matchUser(el(inputId)?.value, users || USER_POOLS[inputId]);
 }
 
 async function admLoadUserInfo() {
@@ -2287,10 +3155,18 @@ async function admLoadUserInfo() {
 }
 
 // ── Dienst-Modus (Staff): Vitals einfrieren + Admin-Skin ──────────────────────
+let dutyOn = false;
 function updateDutyBtn(on) {
-  const b = el('dutyToggleBtn'); if (!b) return;
-  b.textContent = on ? '🩷 Dienst-Modus AUSschalten (Skin zurück)' : '🩷 Dienst-Modus einschalten';
-  b.style.background = on ? '#db2777' : '';
+  dutyOn = !!on;
+  document.body.classList.toggle('on-duty', dutyOn); // Lebensanzeige aus + weitere Dienst-Modus-Styles
+  const g = el('dutyGlow'); if (g) g.classList.toggle('on', dutyOn); // pinker Rand-Glow
+  updateWindowBounds(); // Fenster im Dienst-Modus auf Vollbild halten → Glow rundum sichtbar
+  const b = el('dutyToggleBtn');
+  if (b) {
+    b.textContent = on ? '🩷 Dienst-Modus AUSschalten (Skin zurück)' : '🩷 Dienst-Modus einschalten';
+    b.style.background = on ? '#db2777' : '';
+  }
+  applyModerationGate(); // Tabs nachziehen (no-op wenn Panel zu)
 }
 async function loadDutyState() {
   const blk = el('dutyBlock');
@@ -2339,6 +3215,37 @@ async function admSendToast() {
     const d = await res.json(); if (!res.ok) throw new Error(apiErr(d));
     showToast(`💬 Nachricht an ${escapeHtml(u.name || 'Spieler')} gesendet`, 'success');
     el('msgText').value = ''; el('msgUserSearch').value = '';
+  } catch (e) { showToast(e.message, 'error'); }
+}
+
+// Follow-Overwatch: Toggle. Startet (POST) bzw. stoppt (DELETE) /admin/follow.
+// Der folgende Admin ist server-seitig der Actor (SteamID aus dem JWT) — wir senden
+// nur das Ziel. Auto-Stop im Mod (Ziel disconnect/tot) wird hier nicht gespiegelt.
+let followingSteamId = null;
+function updateFollowBtn(on) {
+  const b = el('followToggleBtn'); if (!b) return;
+  b.textContent = on ? '🎯 Follow stoppen' : '🎯 Follow starten';
+  b.style.background = on ? '#dc2626' : '';
+}
+async function admToggleFollow() {
+  const stop = !!followingSteamId;
+  let target = followingSteamId, name = '';
+  if (!stop) {
+    const u = resolveAdminUser('followUserSearch');
+    if (!u) { showToast('Bitte einen Spieler aus den Vorschlägen wählen', 'error'); return; }
+    target = u.steamId; name = u.name || 'Spieler';
+  }
+  try {
+    const res = await fetch(`${config.tokenBase}/admin/follow`, {
+      method: stop ? 'DELETE' : 'POST',
+      headers: { Authorization: `Bearer ${sessionToken}`, 'Content-Type': 'application/json' },
+      body: stop ? undefined : JSON.stringify({ targetSteamId: target }),
+    });
+    const d = await res.json().catch(() => ({})); if (!res.ok) throw new Error(apiErr(d));
+    followingSteamId = stop ? null : target;
+    updateFollowBtn(!!followingSteamId);
+    showToast(stop ? '🎯 Follow gestoppt' : `🎯 Folge ${escapeHtml(name)}`, 'success');
+    if (!stop) el('followUserSearch').value = '';
   } catch (e) { showToast(e.message, 'error'); }
 }
 
@@ -2416,7 +3323,7 @@ async function deleteTp(t) {
 }
 
 async function adminCalibrate() {
-  closeAdminPanel(); // Kalibrierung läuft auf der Karte → Modal schließen
+  closeAllPanels(); // Kalibrierung läuft auf der Karte → offenes Modal (Administration/Moderation) schließen
   const ok = await startAutoCalibration();
   if (!ok) return;
   try {
@@ -2668,6 +3575,15 @@ async function loadServerZones() {
 }
 
 // Zentrale Kalibrierung vom Server laden (alle Clients beim Start)
+// Free-Gender-Swap-Event: server-weites Flag (Administration→Welt). Aktiv → alle dürfen kostenlos
+// das Geschlecht wechseln (Skin-Editor überspringt dann die Rang-Grenze).
+let freeGenderSwap = false;
+async function loadFreeGenderSwap() {
+  try {
+    const res = await fetch(`${config.tokenBase}/free-gender-swap`, { headers: { Authorization: `Bearer ${sessionToken}` } });
+    if (res.ok) { const d = await res.json(); freeGenderSwap = !!d.enabled; }
+  } catch {}
+}
 async function loadServerCalibration() {
   try {
     // WICHTIG: GET /calibration braucht Auth (RequireActor). Ohne Header → 401 → globale
@@ -4871,6 +5787,7 @@ async function renderSkinEditor() {
   panel.innerHTML = '<h2>🎨 Skin Editor</h2><p>Lade aktuellen Dino…</p>';
   let me = null;
   try { me = await (await fetch(`${config.tokenBase}/me`, { headers: { Authorization: `Bearer ${sessionToken}` } })).json(); } catch {}
+  await loadFreeGenderSwap(); // aktuellen Event-Stand holen → Geschlechts-Buttons entsprechend
   if (!me || !me.online) {
     panel.innerHTML = '<h2>🎨 Skin Editor</h2><p>Du musst im Spiel sein (auf einem Dino), um den Skin zu ändern.</p><button class="closeFeature secondary" style="width:100%">Schließen</button>';
     panel.querySelector('.closeFeature').onclick = closeAllFeatures; return;
@@ -4882,8 +5799,13 @@ async function renderSkinEditor() {
   skinPays = !mySkinFree;                    // Free (Fossil) = gratis Live-Vorschau + „Bestätigen" zahlt; ab Knochen/Beta-Tester live & gratis
   skinConfirmed = false; skinPreviewed = false;   // neue Editier-Sitzung: nichts bestätigt/vorschau
   const obsidian = myAboIdx() >= 3;
-  const canGender = myAboIdx() >= 2;         // Geschlechtswechsel erst ab Bernstein
+  const canGender = freeGenderSwap || myAboIdx() >= 2; // Event aktiv → für alle frei, sonst ab Bernstein
   const genderTip = canGender ? 'Geschlecht wechseln (Respawn)' : '🔒 Geschlechtswechsel ist ab Rang Bernstein freigeschaltet';
+  // Aktuellen Rollplay-Namen aus den Live-Positionen vorbelegen (globales `players`, NICHT das
+  // hier lokal geshadowte `me`). realName ist nur gesetzt, wenn ein RP-Name aktiv ist → dann ist
+  // name der RP-Name.
+  const selfPos = (typeof players !== 'undefined' && Array.isArray(players)) ? players.find((p) => p.isYou) : null;
+  const rpPrefillName = (selfPos && selfPos.realName) ? (selfPos.name || '') : '';
 
   const swatches = SKIN_GROUPS.map(([k, l]) => `<label style="display:flex;justify-content:space-between;align-items:center;gap:8px;padding:6px 8px;background:rgba(255,255,255,0.04);border-radius:8px;font-size:13px;cursor:pointer"><span style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${l}</span><input type="color" data-col="${k}" value="${linToHex(skinState.colors[k])}" style="width:40px;height:26px;border:0;background:none;cursor:pointer;flex:none"></label>`).join('');
   const liveMsg = skinPays
@@ -4891,6 +5813,13 @@ async function renderSkinEditor() {
     : '🟢 Änderungen werden live im Spiel übernommen';
   panel.innerHTML = `<h2>🎨 Skin Editor — ${me.dino}</h2>
     <div id="skLive" style="font-size:12px;color:${skinPays ? '#f59e0b' : '#22c55e'};margin:2px 0 14px">${liveMsg}</div>
+    <div class="sec-title">🎭 Rollplay-Name</div>
+    <div style="font-size:11px;color:var(--muted);margin:2px 0 8px">Andere Spieler sehen diesen Namen statt deines Steam-Namens. Leer speichern = zurücksetzen.</div>
+    <div style="display:flex;gap:6px;margin-bottom:14px">
+      <input id="rpName" maxlength="24" placeholder="Rollplay-Name…" value="${escapeHtml(rpPrefillName)}" style="flex:1;min-width:0;padding:8px;border-radius:6px;border:1px solid var(--border);background:var(--input-bg);color:#eee">
+      <button id="rpSave" style="width:auto;padding:8px 12px">💾 Speichern</button>
+      <button id="rpClear" class="secondary" style="width:auto;padding:8px 12px">Zurücksetzen</button>
+    </div>
     <div class="sec-title">Geschlecht ${canGender ? '' : '<span style="color:var(--muted);font-weight:400;font-size:11px">🔒 ab Bernstein</span>'}</div>
     <div style="display:flex;gap:6px;margin:8px 0 14px">
       <button data-gender="Female" title="${genderTip}" style="flex:1${canGender ? '' : ';opacity:.5'}" class="${skinState.gender === 'Female' ? '' : 'secondary'}">♀ Female</button>
@@ -4922,6 +5851,8 @@ async function renderSkinEditor() {
     <div id="skTplList"></div>
     <button class="closeFeature secondary" style="width:100%;margin-top:12px">Schließen</button>`;
   panel.querySelector('.closeFeature').onclick = closeAllFeatures;
+  el('rpSave').onclick = () => saveRpName();
+  el('rpClear').onclick = () => { el('rpName').value = ''; saveRpName(); };
   el('skTplSave').onclick = () => saveSkinTemplate();
   el('skShare').onclick = () => copySkinCode();
   el('skImportBtn').onclick = () => importSkinCode(el('skImport').value);
@@ -4939,11 +5870,27 @@ async function renderSkinEditor() {
   if (obsidian) zin.oninput = () => { el('skZombieVal').textContent = Math.round(zin.value * 100) + '%'; clearTimeout(zombieTimer); zombieTimer = setTimeout(() => setZombie(parseFloat(zin.value)), 500); };
   else zin.onclick = () => showToast('🧟 Der Zombie-Look ist exklusiv für Obsidian.', 'error');
 }
+// Rollplay-Namen setzen/löschen (leerer Name = zurücksetzen). Das Backend ersetzt damit den
+// angezeigten Namen für alle Spieler; Staff/Mods sehen zusätzlich den echten Namen.
+async function saveRpName() {
+  const name = (el('rpName')?.value || '').trim();
+  const btn = el('rpSave'); if (btn) btn.disabled = true;
+  try {
+    const r = await fetch(`${config.tokenBase}/me/rpname`, {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${sessionToken}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ name }),
+    });
+    const d = await r.json(); if (!r.ok) throw new Error(apiErr(d));
+    showToast(d.set ? `🎭 Rollplay-Name: ${d.name}` : '🎭 Rollplay-Name zurückgesetzt', 'success');
+  } catch (e) { showToast(e.message || 'Fehler', 'error'); }
+  finally { if (btn) btn.disabled = false; }
+}
 // Geschlecht wechseln: The Isle kann das nur per Respawn → /me/gender (selber Dino,
 // selbes Wachstum, neues Geschlecht), danach Skin erneut anwenden (Farben behalten).
 async function changeGender(gender, panel) {
   if (!skinState || skinState.gender === gender) return;
-  if (myAboIdx() < 2) { showToast('🔒 Geschlechtswechsel gibt es ab Rang Bernstein.', 'error'); return; }
+  if (!freeGenderSwap && myAboIdx() < 2) { showToast('🔒 Geschlechtswechsel gibt es ab Rang Bernstein.', 'error'); return; }
   setSkinLive('… Geschlecht wird gewechselt (Respawn)', '#f59e0b');
   try {
     const r = await fetch(`${config.tokenBase}/me/gender`, { method: 'POST', headers: { Authorization: `Bearer ${sessionToken}`, 'Content-Type': 'application/json' }, body: JSON.stringify({ gender }) });
@@ -5940,7 +6887,7 @@ function setDockVisible(visible) {
 
 function updateInteractive() {
   updateDockActive(); // Dock-Highlight immer am aktuellen Stand halten
-  const anyPanel = settingsOpen || mapOpen || adminOpen || !!featureOpen;
+  const anyPanel = settingsOpen || mapOpen || adminOpen || serverOpen || !!featureOpen;
   // Dock IMMER einblenden, sobald ein Panel offen ist (auch per Hotkey geöffnet), im „^"-Modus oder im Edit-Mode.
   setDockVisible(overlayMode || anyPanel || editMode);
   // Maus durchlassen nur wenn nichts offen ist (im Edit-Mode immer klickbar)
@@ -5975,7 +6922,7 @@ function bfEnsureRO() {
 function bfLightningTargets() {
   const out = [];
   document.querySelectorAll('.feature-panel').forEach((e) => out.push({ el: e, round: false }));
-  for (const id of ['settings', 'adminPanel', 'bigMap']) { const e = el(id); if (e) out.push({ el: e, round: false }); }
+  for (const id of ['settings', 'adminPanel', 'serverPanel', 'bigMap']) { const e = el(id); if (e) out.push({ el: e, round: false }); }
   const ddBox = document.querySelector('#dinoDetail .box'); if (ddBox) out.push({ el: ddBox, round: false });
   const mm = el('minimap'); if (mm) out.push({ el: mm, round: true });
   return out;
@@ -6035,6 +6982,7 @@ function closeAllPanels() {
   if (mapOpen) toggleMap(false);
   if (settingsOpen) toggleSettings(false);
   if (adminOpen) closeAdminPanel();
+  if (serverOpen) closeServerPanel();
 }
 
 // Dock-Icons (Lucide, stroke = currentColor → erbt Button-Farbe)
@@ -6052,6 +7000,7 @@ const DOCK_ICONS = {
   skin:     dockSvg('<circle cx="13.5" cy="6.5" r=".8" fill="currentColor" stroke="none"/><circle cx="17.5" cy="10.5" r=".8" fill="currentColor" stroke="none"/><circle cx="6.5" cy="12.5" r=".8" fill="currentColor" stroke="none"/><circle cx="8.5" cy="7.5" r=".8" fill="currentColor" stroke="none"/><path d="M12 2C6.5 2 2 6.5 2 12s4.5 10 10 10c.9 0 1.6-.7 1.6-1.7 0-.4-.2-.8-.4-1.1-.3-.3-.4-.7-.4-1.1a1.6 1.6 0 0 1 1.6-1.6H16c3 0 5.5-2.5 5.5-5.5C22 6 17.5 2 12 2z"/>'),
   settings: dockSvg('<circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.6 1.6 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.6 1.6 0 0 0-1.8-.3 1.6 1.6 0 0 0-1 1.5V21a2 2 0 0 1-4 0v-.1a1.6 1.6 0 0 0-1-1.5 1.6 1.6 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.6 1.6 0 0 0 .3-1.8 1.6 1.6 0 0 0-1.5-1H3a2 2 0 0 1 0-4h.1a1.6 1.6 0 0 0 1.5-1 1.6 1.6 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.6 1.6 0 0 0 1.8.3H9a1.6 1.6 0 0 0 1-1.5V3a2 2 0 0 1 4 0v.1a1.6 1.6 0 0 0 1 1.5 1.6 1.6 0 0 0 1.8-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.6 1.6 0 0 0-.3 1.8V9a1.6 1.6 0 0 0 1.5 1H21a2 2 0 0 1 0 4h-.1a1.6 1.6 0 0 0-1.5 1z"/>'),
   admin:    dockSvg('<path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10"/>'),
+  server:   dockSvg('<rect x="2" y="3" width="20" height="6" rx="1"/><rect x="2" y="12" width="20" height="6" rx="1"/><path d="M6 6h.01M6 15h.01"/>'),
   quests:   dockSvg('<path d="M4 22V4a1 1 0 0 1 1-1h12l-2 4 2 4H6"/><line x1="4" y1="22" x2="4" y2="15"/>'),
   notifications: dockSvg('<path d="M6 8a6 6 0 0 1 12 0c0 7 3 9 3 9H3s3-2 3-9"/><path d="M10.3 21a1.94 1.94 0 0 0 3.4 0"/>'),
   close:    dockSvg('<line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/>'),
@@ -6061,6 +7010,7 @@ const DOCK_ICONS = {
 function activeNav() {
   if (settingsOpen) return 'settings';
   if (mapOpen) return 'map';
+  if (serverOpen) return 'server';
   if (adminOpen) return 'admin';
   if (featureOpen === 'skinEditor') return 'skin';
   if (featureOpen === 'dinoInfo') return 'dino';
@@ -6075,11 +7025,13 @@ function updateDockActive() {
 // Klick aufs bereits aktive Icon schließt es wieder (zurück zum reinen Dock).
 function navTo(target) {
   if (target === 'admin' && !isStaff) { showToast('Nur für Staff (Supporter/Moderator+)', 'error'); return; }
+  if (target === 'server' && !isAdmin) { showToast('Nur für Admins', 'error'); return; }
   const wasActive = activeNav() === target;
   closeAllPanels();
   if (!wasActive) {
     if (target === 'map') toggleMap(true);
     else if (target === 'settings') toggleSettings(true);
+    else if (target === 'server') openServerPanel();
     else if (target === 'admin') openAdminPanel();
     else if (target === 'skin') toggleFeature('skinEditor');
     else if (target === 'dino') toggleFeature('dinoInfo');
@@ -6302,6 +7254,8 @@ async function connectWithSession(session) {
     isStaff = isIngame || isTeam;        // sieht das Admin/Support-Panel (Support-Tools)
     { const ab = el('openAdminBtn'); if (ab) ab.style.display = isStaff ? 'block' : 'none'; }
     { const da = el('dockAdmin'); if (da) da.style.display = isStaff ? 'flex' : 'none'; }
+    { const ds = el('dockServer'); if (ds) ds.style.display = isAdmin ? 'flex' : 'none'; }
+    if (isStaff) loadDutyState(); // Dienst-Status beim Start holen → Rand-Glow ohne Panel-Öffnen
     // Tickets/Events/Overlay-Gruppe laden + periodisch (Benachrichtigungen)
     loadMyTickets(); loadMyEvents(); loadOvGroup();
     if (!loadMyTickets._t) loadMyTickets._t = setInterval(loadMyTickets, 20000);
@@ -6318,6 +7272,7 @@ async function connectWithSession(session) {
     // Abo bzw. falls die Discord-Rollen-Auflösung serverseitig mal nicht greift (sonst Schlösser für Teamler).
     setAboTier((data.team || data.admin) ? 'Obsidian' : data.aboTier);
     mySkinFree = !!data.skinFree;   // 🎨 Skin-Creator gratis (ab Knochen ODER Beta-Tester)
+    serverVoice = !!data.serverVoice; // Backend steuert Proximity-Subscriptions → autoSubscribe:false
     setStaff(data.staff);
     pollHud();
     if (!pollHud._timer) pollHud._timer = setInterval(pollHud, 6000);
@@ -6334,13 +7289,17 @@ async function connectWithSession(session) {
 
 async function connect({ token, url }) {
   setMicState('connecting');
+  ensureVoiceCtx(); // eigener AudioContext für webAudioMix — Panner/Lowpass hängen später hier ein
   // webAudioMix: leitet alle Remote-Audios über einen gemeinsamen AudioContext +
   //   GainNodes → setVolume kann >1.0 (Einzel- & Master-Regler wirken wirklich) und
   //   der Context wird auch auf den lokalen Teilnehmer gesetzt (Mikro-Gain-Processor).
   // adaptiveStream/dynacast: nur für Video sinnvoll; für reines Audio aus (vermeidet
   //   pausierte Subscriptions → Cutouts).
   room = new Room({
-    adaptiveStream: false, dynacast: false, webAudioMix: true,
+    // webAudioMix AN (stabil): LiveKit mischt alle Remote-Audios über UNSEREN AudioContext + GainNodes →
+    // setVolume (Proximity/Deafen) wirkt zuverlässig, und wir hängen je Track Panner+Lowpass via
+    // setWebAudioPlugins in die Kette (3D + Unterwasser), ohne LiveKits stabile Pipeline zu ersetzen.
+    adaptiveStream: false, dynacast: false, webAudioMix: voiceCtx ? { audioContext: voiceCtx } : true,
     // 🎧 Bandbreite senken (Voice-Server-Fanout war ~5 Mbit/s/User → Jitter/„roboterhaft"):
     //  • red:false  — keine redundanten Audio-Kopien (halbiert die Audio-Bitrate; Paketverlust ist
     //                 ohnehin minimal, RED bringt hier kaum was).
@@ -6369,32 +7328,36 @@ async function connect({ token, url }) {
         if (msg.t === 'range' && participant) { remoteRanges[participant.identity] = msg.r; updateProximityVolumes(); }
       } catch {}
     })
-    .on(RoomEvent.TrackSubscribed, (track) => {
+    .on(RoomEvent.TrackSubscribed, (track, _pub, participant) => {
       if (track.kind === Track.Kind.Audio) {
-        // Mit webAudioMix mutet LiveKit das Element selbst und spielt über den
-        // AudioContext. Deafen/Lautstärke laufen daher über setVolume (s.u.),
-        // nicht über a.muted.
+        // webAudioMix: LiveKit spielt über den gemeinsamen Context; Lautstärke/Deafen via setVolume.
         const a = track.attach(); a.autoplay = true;
         if (spkDeviceId && a.setSinkId) a.setSinkId(spkDeviceId).catch(() => {});
         document.body.appendChild(a);
+        attachSpatialPlugins(track, participant && participant.identity); // Panner+Lowpass in die Kette (3D)
         updateProximityVolumes();
       }
     })
-    .on(RoomEvent.TrackUnsubscribed, (track) => {
-      // Audio-Elemente beim Verlassen wieder aus dem DOM nehmen (sonst Memory-Leak)
+    .on(RoomEvent.TrackUnsubscribed, (track, _pub, participant) => {
       if (track.kind === Track.Kind.Audio) {
+        if (participant) spatialPlugins.delete(participant.identity);
         track.detach().forEach((el) => el.remove());
         updateProximityVolumes();
       }
     });
   try {
-    await room.connect(url, token);
+    // autoSubscribe:false, wenn das Backend die Proximity-Subscriptions steuert (serverVoice) → der
+    // Server abonniert je Hörer nur die In-Range-Nachbarn. Sonst (Prod/Flag AUS) wie bisher: alle abonnieren.
+    await room.connect(url, token, { autoSubscribe: !serverVoice });
   } catch (e) {
     // Fehlversuch sauber zurückrollen, sonst bleibt ein toter Room hängen
     try { room.disconnect(); } catch {}
     room = null; voiceConnected = false;
     throw e;   // connectWithSession zeigt den Fehler-Toast
   }
+  // LiveKit-Audio + unseren Mix-Context entsperren (Autoplay-Policy).
+  try { await room.startAudio(); } catch {}
+  try { if (voiceCtx && voiceCtx.state === 'suspended') await voiceCtx.resume(); } catch {}
   // Gewählte Audio-Geräte anwenden (falls gesetzt)
   try { if (micDeviceId) await room.switchActiveDevice('audioinput', micDeviceId); } catch {}
   try { if (spkDeviceId) await room.switchActiveDevice('audiooutput', spkDeviceId); } catch {}
@@ -6534,6 +7497,7 @@ const MOVABLE = [
   { id: 'hudInfo',     label: 'Info-Boxen', resize: 'scale' }, // Part 4: entkoppelt verschiebbar + skalierbar
   // Timer-Anzeigen: Standard rechts neben der Punkte-Anzeige (HUD-Pille), verschiebbar + skalierbar.
   { id: 'growTimer',   label: 'Grow-Timer', resize: 'scale' },
+  { id: 'eventPanel',  label: 'Event-Timer', resize: 'scale' },
   { id: 'goldenHud',   label: 'Goldene-Zone-Timer', resize: 'scale' },
   { id: 'parkWarn',    label: 'PvE-Park-Countdown', resize: 'scale' },
   { id: 'settings',    label: 'Einstellungen', resize: true },
@@ -6558,7 +7522,7 @@ function movTransform(id) { return SCALE_IDS.has(id) ? 'scale(var(--info-scale,1
 // ── Timer-Anzeigen (Grow · Goldene Zone · PvE-Park) ─────────────────────────
 // Standard-Layout: rechts neben der HUD-Pille (Punkte-Anzeige), vertikal gestapelt.
 // Sobald der Spieler sie verschiebt, gewinnt die gespeicherte Position (bf-layout).
-const TIMER_IDS = ['growTimer', 'goldenHud', 'parkWarn'];
+const TIMER_IDS = ['growTimer', 'eventPanel', 'goldenHud', 'parkWarn'];
 function ensureTimerLayout(id) {
   const e = el(id), hud = el('hud');
   if (!e || !hud) return;
@@ -6649,7 +7613,7 @@ function removeHideToggle(elm) { const b = elm.querySelector('.bf-hide-toggle');
 let windowShrink = localStorage.getItem('bf-window-shrink') === '1';
 let shrinkTimer = null;
 let lastSentH = -1;   // zuletzt gesendete Höhe (0 = Vollbild) — vermeidet redundante Resizes
-const IDLE_HUD_IDS = ['hud', 'hudHeart', 'minimapWrap', 'hudInfo', 'growTimer', 'serverBanner', 'toasts', 'voiceWarn', 'updateHint', 'calibPrompt', 'parkWarn', 'goldenHud'];
+const IDLE_HUD_IDS = ['hud', 'hudHeart', 'minimapWrap', 'hudInfo', 'growTimer', 'eventPanel', 'serverBanner', 'toasts', 'voiceWarn', 'updateHint', 'calibPrompt', 'parkWarn', 'goldenHud'];
 function computeIdleHudBottom() {
   let bottom = 0;
   for (const id of IDLE_HUD_IDS) {
@@ -6666,7 +7630,7 @@ function updateWindowBounds() {
   if (!window.bf || !window.bf.setOverlayBounds) return;
   if (shrinkTimer) { clearTimeout(shrinkTimer); shrinkTimer = null; }
   const interactive = overlayMode || settingsOpen || mapOpen || adminOpen || !!featureOpen || editMode;
-  if (!windowShrink || interactive) {
+  if (!windowShrink || interactive || dutyOn) { // dutyOn → Vollbild halten, damit der Rand-Glow rundum passt
     if (lastSentH !== 0) { lastSentH = 0; window.bf.setOverlayBounds({ full: true }); }   // Vollbild (sofort)
     return;
   }
@@ -6894,6 +7858,7 @@ function setupEditMode() {
   const fxBtn = el('fxToggleBtn'); if (fxBtn) fxBtn.onclick = toggleFx;
   applyFx();
   const miniBtn = el('miniToggleBtn'); if (miniBtn) miniBtn.onclick = toggleMinimap;
+  const compassBtn = el('compassToggleBtn'); if (compassBtn) compassBtn.onclick = toggleCompass;
   const blurBtn = el('blurToggleBtn'); if (blurBtn) blurBtn.onclick = toggleBlur;
   applyBlur();
   const lsBtn = el('lowSpecBtn'); if (lsBtn) lsBtn.onclick = toggleLowSpec;
@@ -6904,7 +7869,9 @@ function setupEditMode() {
   setupBugReport();
   updateWindowBounds();                        // Anfangszustand ans Fenster melden
   setInterval(updateWindowBounds, 1500);       // transiente HUD-Änderungen (Toasts/Banner) nachziehen
+  loadActiveEvents(); setInterval(loadActiveEvents, 15000); // Event-Timer: Liste holen + Countdown auffrischen
   applyMiniToggle();
+  applyCompassToggle();
   renderThemePicker();
   syncLightningFrames();   // Minimap-Blitzrahmen direkt anzeigen
 }
