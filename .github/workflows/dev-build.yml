@@ -34,10 +34,36 @@ jobs:
       - run: npm ci
       - run: npm run build:renderer
 
-      - name: Installer bauen (KEIN Publish)
+      # Monotone Prerelease-Version pro dev-Push (1.9.2-dev.<run>), damit Test-Clients bei JEDEM
+      # dev-Push ein Update ziehen (electron-updater aktualisiert nur bei höherer Version).
+      - name: Dev-Version setzen
+        shell: bash
+        run: |
+          BASE=$(node -p "require('./package.json').version")
+          DEV="${BASE}-dev.${{ github.run_number }}"
+          node -e "const f='./package.json',p=require(f);p.version='${DEV}';require('fs').writeFileSync(f,JSON.stringify(p,null,2)+'\n')"
+          echo "Dev-Version: $DEV"
+
+      - name: Installer bauen (KEIN GitHub-Publish)
         run: npx electron-builder --win --publish never
 
-      - name: Versionierter Dateiname (gegen Verwechslung mit dem Public-Release)
+      # VOR dem Umbenennen hochladen — latest.yml referenziert den Original-Dateinamen.
+      # Enthüllt Test-Auto-Update: api-test/overlay bekommt Feed + Installer + kuratierte Notes.
+      - name: Test-Artefakte aufs Backend laden (api-test)
+        shell: bash
+        run: |
+          for f in release/latest.yml release/*.exe release/*.exe.blockmap; do
+            [ -e "$f" ] || continue
+            echo "Upload $(basename "$f")"
+            curl -fsS -H "Authorization: Bearer $BF_OVERLAY_UPLOAD_TOKEN" -F "file=@$f" "$API/overlay/upload"
+          done
+          node scripts/changelog-to-json.js --out releases.json
+          curl -fsS -H "Authorization: Bearer $BF_OVERLAY_UPLOAD_TOKEN" -F "file=@releases.json" "$API/overlay/upload"
+        env:
+          API: https://api-test.blackfossil.de
+          BF_OVERLAY_UPLOAD_TOKEN: ${{ secrets.BF_OVERLAY_UPLOAD_TOKEN_TEST }}
+
+      - name: Versionierter Dateiname (Artifact)
         shell: bash
         run: |
           V=$(node -p "require('./package.json').version")
@@ -65,10 +91,29 @@ jobs:
       - run: npm ci
       - run: npm run build:renderer
 
-      - name: Installer bauen (KEIN Publish)
+      - name: Dev-Version setzen
+        run: |
+          BASE=$(node -p "require('./package.json').version")
+          DEV="${BASE}-dev.${{ github.run_number }}"
+          node -e "const f='./package.json',p=require(f);p.version='${DEV}';require('fs').writeFileSync(f,JSON.stringify(p,null,2)+'\n')"
+          echo "Dev-Version: $DEV"
+
+      - name: Installer bauen (KEIN GitHub-Publish)
         run: npx electron-builder --linux --publish never
 
-      - name: Versionierter Dateiname (gegen Verwechslung mit dem Public-Release)
+      # VOR dem Umbenennen hochladen — latest-linux.yml referenziert den Original-Dateinamen.
+      - name: Test-Artefakte aufs Backend laden (api-test)
+        run: |
+          for f in release/latest-linux.yml release/*.AppImage; do
+            [ -e "$f" ] || continue
+            echo "Upload $(basename "$f")"
+            curl -fsS -H "Authorization: Bearer $BF_OVERLAY_UPLOAD_TOKEN" -F "file=@$f" "$API/overlay/upload"
+          done
+        env:
+          API: https://api-test.blackfossil.de
+          BF_OVERLAY_UPLOAD_TOKEN: ${{ secrets.BF_OVERLAY_UPLOAD_TOKEN_TEST }}
+
+      - name: Versionierter Dateiname (Artifact)
         run: |
           V=$(node -p "require('./package.json').version")
           mv "release/BlackFossil-Overlay-Test-Setup.AppImage" "release/BlackFossil-Overlay-TEST-${V}-${GITHUB_SHA::7}.AppImage"

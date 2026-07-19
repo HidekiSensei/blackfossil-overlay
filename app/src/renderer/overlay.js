@@ -297,7 +297,8 @@ function renderUpdateUI() {
     btn.textContent = '📥 Installer herunterladen'; btn.disabled = false;
   }
 }
-const RELEASES_URL = 'https://github.com/HidekiSensei/blackfossil-overlay/releases/latest';
+// Manueller Download-Fallback: eigene Backend-Download-Seite (folgt der API-Base) statt GitHub.
+// URL wird zur Laufzeit aus config.tokenBase gebaut (config ist beim Modul-Eval evtl. noch leer).
 
 // Proximity: Sprechreichweiten in Metern (1 m = 100 Welt-Einheiten/cm).
 // Maßgeblich ist die Reichweite des SPRECHERS — andere hören dich so weit.
@@ -818,7 +819,7 @@ async function init() {
   el('updateBtn').onclick = () => {
     if (updateState === 'available') { updateState = 'downloading'; window.bf.updateDownload?.(); renderUpdateUI(); }
     else if (updateState === 'ready') { window.bf.updateInstall?.(); }
-    else if (updateState === 'error') { window.bf.openExternal?.(RELEASES_URL); }   // manueller Download-Fallback
+    else if (updateState === 'error') { window.bf.openExternal?.(String(config.tokenBase || '').includes('api-test') ? `${config.tokenBase}/overlay/` : 'https://github.com/HidekiSensei/blackfossil-overlay/releases/latest'); }   // manueller Download-Fallback (Test: Backend-Seite, Prod: GitHub-Releases)
   };
   window.bf.onUpdateAvailable?.((version) => {
     updateVersion = version || ''; updateState = 'available'; renderUpdateUI();
@@ -7480,8 +7481,8 @@ function showSettingsTab(t) {
   if (t === 'software') loadSoftwareTab();
 }
 
-// Software-Tab: Version + letzte Release-Notes von GitHub (öffentliches Releases-API).
-const GH_RELEASES_URL = 'https://api.github.com/repos/HidekiSensei/blackfossil-overlay/releases/latest';
+// Software-Tab: Version + letzte Release-Notes vom eigenen Backend (folgt der API-Base → test zeigt
+// api-test-Notes, prod api-Notes). Format: [{ version, date, notes, channel }], neueste zuerst.
 let _swNotesLoaded = false;
 function mdLinkLabel(u) {
   if (/\/compare\//.test(u)) return 'Vergleich ansehen ↗';
@@ -7515,14 +7516,27 @@ async function loadSoftwareTab() {
   if (_swNotesLoaded) return;
   const meta = el('swRelMeta'), notes = el('swRelNotes');
   if (!notes) return;
+  const dateDe = (v) => { try { return new Date(v).toLocaleDateString('de-DE', { day: '2-digit', month: 'short', year: 'numeric' }); } catch { return ''; } };
   try {
-    const r = await fetch(GH_RELEASES_URL, { headers: { Accept: 'application/vnd.github+json' } });
-    if (!r.ok) throw new Error('HTTP ' + r.status);
-    const d = await r.json();
-    let dstr = '';
-    try { dstr = new Date(d.published_at).toLocaleDateString('de-DE', { day: '2-digit', month: 'short', year: 'numeric' }); } catch {}
-    if (meta) meta.textContent = `${d.name || d.tag_name || ''}${dstr ? ' · ' + dstr : ''}`;
-    notes.innerHTML = mdLiteToHtml(String(d.body || '').trim() || 'Keine Notizen.');
+    let metaText = '', notesMd = '';
+    // NUR Test zieht die Notes vom Backend; Prod bleibt (vorerst) beim GitHub-Releases-API — unverändert.
+    if (String(config.tokenBase || '').includes('api-test')) {
+      const list = await (await fetch(`${config.tokenBase}/overlay/releases.json`, { headers: { Accept: 'application/json' } })).json();
+      const d = Array.isArray(list) ? list[0] : null;
+      if (!d) throw new Error('leere Release-Liste');
+      const ds = dateDe(d.date);
+      metaText = `v${d.version || '?'}${ds ? ' · ' + ds : ''}`;
+      notesMd = String(d.notes || '').trim();
+    } else {
+      const r = await fetch('https://api.github.com/repos/HidekiSensei/blackfossil-overlay/releases/latest', { headers: { Accept: 'application/vnd.github+json' } });
+      if (!r.ok) throw new Error('HTTP ' + r.status);
+      const d = await r.json();
+      const ds = dateDe(d.published_at);
+      metaText = `${d.name || d.tag_name || ''}${ds ? ' · ' + ds : ''}`;
+      notesMd = String(d.body || '').trim();
+    }
+    if (meta) meta.textContent = metaText;
+    notes.innerHTML = mdLiteToHtml(notesMd || 'Keine Notizen.');
     notes.querySelectorAll('.sw-lnk').forEach((a) => { a.onclick = (e) => { e.preventDefault(); const h = a.dataset.href; if (h) { try { window.bf.openExternal?.(h); } catch {} } }; });
     _swNotesLoaded = true;
   } catch (e) {

@@ -63,6 +63,15 @@ function setupAutoUpdate() {
   if (!app.isPackaged) return; // im Dev nicht prüfen
   autoUpdater.autoDownload = false;
   autoUpdater.autoInstallOnAppQuit = true; // Fallback: spätestens beim Beenden
+  // NUR die Testversion zieht schon vom Backend-Feed (api-test/overlay). Die Produktivversion bleibt
+  // vorerst UNVERÄNDERT auf dem GitHub-Feed (build.publish "github"), bis Prod bewusst umgestellt wird.
+  // Erkennung test vs prod: patch-prod.js patcht TOKEN_BASE api-test→api nur im Prod-Build.
+  if (TOKEN_BASE.includes('api-test')) {
+    try { autoUpdater.setFeedURL({ provider: 'generic', url: TOKEN_BASE + '/overlay', channel: 'latest' }); } catch {}
+    // Prereleases zulassen: Test-Builds tragen eine monotone Version 1.9.x-dev.<run> und sollen bei
+    // JEDEM dev-Push updaten.
+    autoUpdater.allowPrerelease = true;
+  }
   // Default-Logger von electron-updater ist `console` → schreibt beim Update-Check auf stdout und
   // war die konkrete Crash-Quelle (EPIPE, siehe oben). Update-Status geht ohnehin über die
   // autoUpdater-Events an den Renderer; hier reicht ein No-Op, damit der Updater nicht auf stdout schreibt.

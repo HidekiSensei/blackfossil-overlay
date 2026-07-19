@@ -1,5 +1,45 @@
 # Changelog
 
+<!-- Kuratiert & spielerfreundlich. CI erzeugt daraus releases.json fürs Overlay-Update-Fenster.
+     Neue Version: einen "## vX.Y.Z — Titel"-Abschnitt oben ergänzen (Version MUSS zu package.json
+     passen), Punkte unter "## [Unreleased]" nach oben verschieben. "### Intern" wird aus den
+     öffentlichen Notes herausgefiltert. -->
+
+## [Unreleased]
+
+### Intern
+- Auto-Updates und Release-Notes kommen jetzt vom eigenen Backend (`/overlay`) statt von GitHub —
+  Vorbereitung dafür, dass das Repo privat werden kann. Enthält auch Auto-Update für die Testversion.
+
+## v1.9.2 — Menü-Frischekur & Software-Tab ✨
+
+### ✨ Neu
+- Neuer **Software**-Tab in den Einstellungen: zeigt die Version und die letzten Änderungen.
+- Menüs überarbeitet: echte Reiter-Tabs, einheitliche Buttons/Regler/Schalter, aufgeräumtes Design.
+- Eigener **Ansage**-Tab im Team-Panel für server-weite Durchsagen.
+- Fenster-Transparenz der Menüs umschaltbar (unter „HUD-Sichtbarkeit").
+
+### 🔧 Fixes
+- Einstellungen, Team- und Admin-Fenster sind jetzt gleich groß und scrollen sauber.
+- Player-Audit: der Aktions-Filter ist jetzt ein durchsuchbares Auswahl-Popup statt der fummeligen Liste.
+
+## v1.9.1 — Voice-Hotfix 🔧
+
+### 🔧 Fixes
+- Knistern behoben, Ausgabegerät-Auswahl korrigiert, Not-Aus-Schalter für 3D/Effekte.
+
+## v1.9.0 — Räumlicher Ton & Gottstimme 🎙️
+
+### ✨ Neu
+- Räumlicher Voice-Ton (3D-Panning) — du hörst, aus welcher Richtung jemand spricht.
+- **Gottstimme**: server-weite Admin-Durchsage „von oben" mit dezentem Himmels-Hall.
+- Unterwasser dämpft die Stimmen jetzt hörbar.
+
+## v1.8.2 — Test-Installer parallel 🧪
+
+### ✨ Neu
+- Test-Version läuft parallel zur Produktiv-App (eigener Deep-Link + eigener Datenordner).
+
 ## v1.7.5 — Kalibrierung: endlich alle Punkte an Land ✅
 
 ### 🔧 Fixes
