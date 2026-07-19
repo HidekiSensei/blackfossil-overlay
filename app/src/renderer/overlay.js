@@ -1176,7 +1176,7 @@ const SPATIAL_HEADING_OFF = 0;         // Grad: Blickrichtung→Panner. 0 (Test:
 const UNDERWATER_HZ = 380;             // Lowpass-Grenzfrequenz unter Wasser — deutlich dumpf/gedämpft
 const OPEN_HZ = 20000;                 // offen (keine Dämpfung)
 // ── Gottstimme-Durchsage (Admin) ─────────────────────────────────────────────
-const GODVOICE_GAIN = 0.85;            // Wiedergabe-Pegel des Durchsage-Sprechers (× Master), Headroom für den Hall
+const GODVOICE_GAIN = 0.65;            // Wiedergabe-Pegel des Durchsage-Sprechers (× Master) — bewusst niedrig, kein Übersteuern
 const GODVOICE_DUCK = 0.15;            // Faktor, auf den alle ANDEREN Sprecher während der Durchsage abgesenkt werden
 // „Gott spricht vom Himmel": KEIN Verzerrer (klang übersteuert), sondern ein großer, weicher Hall.
 // Umgesetzt als ConvolverNode-Impulsantwort, die das Direktsignal (Dry-Spike bei t=0) UND einen langen,
@@ -1187,16 +1187,16 @@ function ensureVoiceIRs(ctx) {
   if (godVoiceIR && identityIR) return;
   identityIR = ctx.createBuffer(1, 1, ctx.sampleRate);
   identityIR.getChannelData(0)[0] = 1; // trockener Durchlass
-  const dur = 2.8, n = Math.max(1, Math.floor(ctx.sampleRate * dur));
-  const pre = Math.floor(ctx.sampleRate * 0.045); // ~45ms Predelay → Raum/Weite („von oben")
+  const dur = 1.4, n = Math.max(1, Math.floor(ctx.sampleRate * dur));
+  const pre = Math.floor(ctx.sampleRate * 0.025); // ~25ms Predelay → dezente Weite („von oben")
   godVoiceIR = ctx.createBuffer(2, n, ctx.sampleRate);
   for (let ch = 0; ch < 2; ch++) {
     const d = godVoiceIR.getChannelData(ch);
-    d[0] = 0.92; // Direktsignal (Sprache bleibt klar verständlich)
+    d[0] = 0.85; // Direktsignal dominiert klar → Sprache sauber, Effekt nur ein Hauch
     for (let i = 1; i < n; i++) {
       if (i < pre) { d[i] = 0; continue; }
       const t = (i - pre) / (n - pre);
-      d[i] = (Math.random() * 2 - 1) * Math.pow(1 - t, 2.4) * 0.32; // weich abklingender Kathedralen-Schweif
+      d[i] = (Math.random() * 2 - 1) * Math.pow(1 - t, 3.0) * 0.09; // sehr dezenter, schnell abklingender Schweif
     }
   }
 }
@@ -1363,7 +1363,8 @@ function updateSpatialPanners() {
   const hr = ((me && me.heading != null ? me.heading : 0) + SPATIAL_HEADING_OFF) * Math.PI / 180;
   const fx = Math.cos(hr), fy = Math.sin(hr);   // Forward (Welt)
   const rx = -fy, ry = fx;                        // Right = Forward um +90° (L/R gespiegelt: vorn/hinten stimmte, links/rechts war getauscht)
-  const dbg = [`me:${me ? `h${Math.round(me.heading || 0)}` : 'NULL'} ctx:${ctx.state} spk:${spatialPlugins.size}`];
+  const meUW = !!(me && me.isUnderwater); // ICH untergetaucht → ich höre ALLE gedämpft
+  const dbg = [`me:${me ? `h${Math.round(me.heading || 0)}${meUW ? ' UW' : ''}` : 'NULL'} ctx:${ctx.state} spk:${spatialPlugins.size}`];
   for (const [identity, pl] of spatialPlugins) {
     const pos = players.find((p) => p.steamId === identity);
     const isGod = !!godVoiceId && identity === godVoiceId; // Gottstimme: zentriert, offen, verzerrt — ohne Richtung/Muffling
@@ -1378,12 +1379,16 @@ function updateSpatialPanners() {
     }
     try { pl.panner.positionX.setValueAtTime(px, now); pl.panner.positionY.setValueAtTime(0, now); pl.panner.positionZ.setValueAtTime(pz, now); }
     catch { try { pl.panner.setPosition(px, 0, pz); } catch {} }
-    const hz = isGod ? OPEN_HZ : ((pos && pos.isUnderwater) ? UNDERWATER_HZ : OPEN_HZ);
+    // Unterwasser-Muffel BEIDSEITIG: gedämpft, wenn ICH untergetaucht bin ODER der Sprecher es ist.
+    // Gottstimme durchdringt Wasser (bleibt offen).
+    const spkUW = !!(pos && pos.isUnderwater);
+    const uw = !isGod && (meUW || spkUW);
+    const hz = isGod ? OPEN_HZ : (uw ? UNDERWATER_HZ : OPEN_HZ);
     try { pl.lowpass.frequency.setTargetAtTime(hz, now, 0.08); } catch { pl.lowpass.frequency.value = hz; }
     if (pl.reverb) { const want = isGod ? godVoiceIR : identityIR; if (pl.reverb.buffer !== want) pl.reverb.buffer = want; } // Himmels-Hall nur bei Durchsage
     const nm = (pos && (pos.name || pos.playerName)) || String(identity).slice(-4);
     const side = isGod ? '👑' : (px > 0.05 ? 'R' : px < -0.05 ? 'L' : 'C');
-    dbg.push(`${pos ? '' : '?'}${nm} d=${Math.round(dU / UNITS_PER_M)}m pan=${side}(${px.toFixed(2)})${isGod ? ' GOD' : (pos && pos.isUnderwater) ? ' UW' : ''}`);
+    dbg.push(`${pos ? '' : '?'}${nm} d=${Math.round(dU / UNITS_PER_M)}m pan=${side}(${px.toFixed(2)})${isGod ? ' GOD' : uw ? ' UW' : ''}`);
   }
   renderVoiceDbg(dbg);
 }
