@@ -722,6 +722,8 @@ let deafened = false;                                   // eingehenden Ton stumm
 let amDead = false;                                     // tot / kein Dino → Voice komplett aus (weder hören noch senden)
 let godVoiceId = '';                                    // steamId des aktiven Gottstimme-Sprechers ('' = keine Durchsage) — aus /positions
 let godVoiceMine = false;                               // ob ICH gerade die Gottstimme sende (Admin-Button-Zustand)
+let godVoiceReverbActive = false;                       // Himmels-Hall bei der AKTIVEN Durchsage an? (aus /positions, für alle konsistent)
+let godVoiceReverbPref = localStorage.getItem('bf-godvoice-reverb') !== '0'; // Admin-Wahl beim Starten (Default an); wird mitgesendet
 let micDeviceId = localStorage.getItem('bf-mic-dev') || '';   // gewähltes Mikrofon
 let spkDeviceId = localStorage.getItem('bf-spk-dev') || '';   // gewähltes Ausgabegerät
 // serverVoice (aus /token): Das Backend steuert die Proximity-Subscriptions selbst → Client verbindet
@@ -880,6 +882,7 @@ async function init() {
   { const b = el('serverCloseBtn'); if (b) b.onclick = () => closeServerPanel(); }
   document.querySelectorAll('#serverTabs [data-stab]').forEach((b) => { b.onclick = () => showServerTab(b.dataset.stab); });
   { const b = el('godVoiceBtn'); if (b) b.onclick = () => toggleGodVoice(); }
+  { const c = el('godVoiceReverbChk'); if (c) { c.checked = godVoiceReverbPref; c.onchange = () => setGodVoiceReverbPref(c.checked); } }
   el('admUserLoad').onclick = () => admLoadUserInfo();
   el('admLightningBtn').onclick = () => admLightning();
   { const b = el('msgSendBtn'); if (b) b.onclick = () => admSendToast(); }
@@ -1012,6 +1015,7 @@ function startPositionPolling() {
         const data = await res.json();
         players = data.players || [];
         godVoiceId = data.godVoice || ''; // Gottstimme-Durchsage aktiv? (steamId des Sprechers)
+        godVoiceReverbActive = !!data.godVoiceReverb; // Himmels-Hall der aktiven Durchsage (server-gesynct)
         me = players.find((p) => p.isYou) || null;
         // Button-Zustand an die Server-Wahrheit angleichen (Reconnect / Fremd-Abschaltung).
         const gvMine = !!(godVoiceId && me && godVoiceId === me.steamId);
@@ -1176,7 +1180,7 @@ const SPATIAL_HEADING_OFF = 0;         // Grad: Blickrichtung→Panner. 0 (Test:
 const UNDERWATER_HZ = 380;             // Lowpass-Grenzfrequenz unter Wasser — deutlich dumpf/gedämpft
 const OPEN_HZ = 20000;                 // offen (keine Dämpfung)
 // ── Gottstimme-Durchsage (Admin) ─────────────────────────────────────────────
-const GODVOICE_GAIN = 0.65;            // Wiedergabe-Pegel des Durchsage-Sprechers (× Master) — bewusst niedrig, kein Übersteuern
+const GODVOICE_GAIN = 0.5;             // Wiedergabe-Pegel des Durchsage-Sprechers (× Master) — bewusst leise + Limiter gegen Übersteuern
 const GODVOICE_DUCK = 0.15;            // Faktor, auf den alle ANDEREN Sprecher während der Durchsage abgesenkt werden
 // „Gott spricht vom Himmel": KEIN Verzerrer (klang übersteuert), sondern ein großer, weicher Hall.
 // Umgesetzt als ConvolverNode-Impulsantwort, die das Direktsignal (Dry-Spike bei t=0) UND einen langen,
@@ -1187,16 +1191,16 @@ function ensureVoiceIRs(ctx) {
   if (godVoiceIR && identityIR) return;
   identityIR = ctx.createBuffer(1, 1, ctx.sampleRate);
   identityIR.getChannelData(0)[0] = 1; // trockener Durchlass
-  const dur = 1.4, n = Math.max(1, Math.floor(ctx.sampleRate * dur));
-  const pre = Math.floor(ctx.sampleRate * 0.025); // ~25ms Predelay → dezente Weite („von oben")
+  const dur = 1.3, n = Math.max(1, Math.floor(ctx.sampleRate * dur));
+  const pre = Math.floor(ctx.sampleRate * 0.022); // ~22ms Predelay → dezente Weite („von oben")
   godVoiceIR = ctx.createBuffer(2, n, ctx.sampleRate);
   for (let ch = 0; ch < 2; ch++) {
     const d = godVoiceIR.getChannelData(ch);
-    d[0] = 0.85; // Direktsignal dominiert klar → Sprache sauber, Effekt nur ein Hauch
+    d[0] = 0.9; // Direktsignal dominiert klar → Sprache sauber, Effekt nur ein Hauch
     for (let i = 1; i < n; i++) {
       if (i < pre) { d[i] = 0; continue; }
       const t = (i - pre) / (n - pre);
-      d[i] = (Math.random() * 2 - 1) * Math.pow(1 - t, 3.0) * 0.09; // sehr dezenter, schnell abklingender Schweif
+      d[i] = (Math.random() * 2 - 1) * Math.pow(1 - t, 3.2) * 0.07; // sehr dezenter, schnell abklingender Schweif
     }
   }
 }
@@ -1321,7 +1325,7 @@ async function setGodVoice(on) {
     const res = await fetch(`${config.tokenBase}/voice/godvoice`, {
       method: 'POST',
       headers: { Authorization: `Bearer ${sessionToken}`, 'Content-Type': 'application/json' },
-      body: JSON.stringify({ on: !!on }),
+      body: JSON.stringify({ on: !!on, reverb: godVoiceReverbPref }),
     });
     if (!res.ok) { showToast('Gottstimme fehlgeschlagen', 'error'); return; }
     const data = await res.json().catch(() => ({}));
@@ -1331,10 +1335,18 @@ async function setGodVoice(on) {
   } catch { showToast('Gottstimme fehlgeschlagen', 'error'); }
 }
 function toggleGodVoice() { setGodVoice(!godVoiceMine); }
+// Himmels-Hall an/aus (Admin-Wahl). Läuft gerade MEINE Durchsage, sofort server-seitig nachziehen.
+function setGodVoiceReverbPref(on) {
+  godVoiceReverbPref = !!on;
+  try { localStorage.setItem('bf-godvoice-reverb', godVoiceReverbPref ? '1' : '0'); } catch {}
+  if (godVoiceMine) setGodVoice(true); // aktualisiert reverb server-seitig (alle Hörer sofort)
+  renderGodVoice();
+}
 function renderGodVoice() {
   const btn = el('godVoiceBtn'); if (!btn) return;
   btn.textContent = godVoiceMine ? '⏹️ Gottstimme beenden' : '📣 Gottstimme starten';
   btn.classList.toggle('secondary', godVoiceMine);
+  const chk = el('godVoiceReverbChk'); if (chk) chk.checked = godVoiceReverbPref;
   const hint = el('godVoiceHint');
   if (hint) hint.textContent = !voiceConnected
     ? '⚠️ Nicht im Voice verbunden — die Durchsage wird nicht übertragen.'
@@ -1353,8 +1365,12 @@ function attachSpatialPlugins(track, identity) {
   const lowpass = ctx.createBiquadFilter(); lowpass.type = 'lowpass'; lowpass.frequency.value = OPEN_HZ;
   ensureVoiceIRs(ctx);
   const reverb = ctx.createConvolver(); reverb.normalize = false; reverb.buffer = identityIR; // Passthrough bis zur Gottstimme
-  try { track.setWebAudioPlugins([panner, lowpass, reverb]); } catch { return; } // SDK verbindet source→panner→lowpass→reverb→gain
-  spatialPlugins.set(identity, { panner, lowpass, reverb });
+  // Brick-Wall-Limiter als letztes Glied: fängt nur Spitzen nahe 0 dBFS ab → normale Stimme transparent,
+  // aber die Gottstimme (voller Pegel, ohne Distanz-Abschwächung) kann NICHT mehr übersteuern.
+  const limiter = ctx.createDynamicsCompressor();
+  limiter.threshold.value = -2; limiter.knee.value = 0; limiter.ratio.value = 20; limiter.attack.value = 0.003; limiter.release.value = 0.12;
+  try { track.setWebAudioPlugins([panner, lowpass, reverb, limiter]); } catch { return; } // source→panner→lowpass→reverb→limiter→gain
+  spatialPlugins.set(identity, { panner, lowpass, reverb, limiter });
 }
 // Panner-Richtung (z+heading) + Unterwasser-Lowpass je Sprecher aktualisieren. Gain/Deafen macht weiter setVolume.
 function updateSpatialPanners() {
@@ -1385,7 +1401,7 @@ function updateSpatialPanners() {
     const uw = !isGod && (meUW || spkUW);
     const hz = isGod ? OPEN_HZ : (uw ? UNDERWATER_HZ : OPEN_HZ);
     try { pl.lowpass.frequency.setTargetAtTime(hz, now, 0.08); } catch { pl.lowpass.frequency.value = hz; }
-    if (pl.reverb) { const want = isGod ? godVoiceIR : identityIR; if (pl.reverb.buffer !== want) pl.reverb.buffer = want; } // Himmels-Hall nur bei Durchsage
+    if (pl.reverb) { const want = (isGod && godVoiceReverbActive) ? godVoiceIR : identityIR; if (pl.reverb.buffer !== want) pl.reverb.buffer = want; } // Himmels-Hall nur bei Durchsage + wenn eingeschaltet
     const nm = (pos && (pos.name || pos.playerName)) || String(identity).slice(-4);
     const side = isGod ? '👑' : (px > 0.05 ? 'R' : px < -0.05 ? 'L' : 'C');
     dbg.push(`${pos ? '' : '?'}${nm} d=${Math.round(dU / UNITS_PER_M)}m pan=${side}(${px.toFixed(2)})${isGod ? ' GOD' : uw ? ' UW' : ''}`);
