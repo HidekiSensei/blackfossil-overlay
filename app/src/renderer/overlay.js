@@ -682,6 +682,36 @@ function tickGrowTimer() {
   renderGrowTimer();
 }
 
+// ── Event-Timer-Panel (server-weite Events mit Countdown) ────────────────────
+let activeEventsList = []; // [{ key, name, expiresAtMs }]
+async function loadActiveEvents() {
+  if (!sessionToken) return;
+  try {
+    const r = await fetch(`${config.tokenBase}/events`, { headers: { Authorization: `Bearer ${sessionToken}` } });
+    if (r.ok) { const d = await r.json(); activeEventsList = d.events || []; }
+  } catch {}
+  renderEventPanel();
+}
+// Countdown in EINER Einheit (Tage → Stunden → Minuten), kein Mix.
+function fmtEventCountdown(expiresAtMs) {
+  if (!expiresAtMs) return '∞';
+  const ms = expiresAtMs - Date.now();
+  if (ms <= 0) return '0m';
+  const min = Math.floor(ms / 60000);
+  if (min >= 1440) return Math.floor(min / 1440) + ' Tage';   // ≥ 1 Tag
+  if (min >= 60) return Math.floor(min / 60) + ' Std';        // ≥ 1 Stunde
+  return Math.max(1, min) + ' Min';                           // sonst Minuten (min. 1)
+}
+function renderEventPanel() {
+  const box = el('eventPanel'); if (!box) return;
+  const evs = (activeEventsList || []).filter((e) => !e.expiresAtMs || e.expiresAtMs > Date.now()); // lokal abgelaufene raus
+  if (!evs.length) { box.style.display = 'none'; box.innerHTML = ''; return; }
+  box.style.display = 'block';
+  box.innerHTML = `<div class="ev-head">🎉 Aktive Events</div>` + evs.map((e) =>
+    `<div class="ev-row"><span class="ev-name">${escapeHtml(e.name || e.key)}</span><span class="ev-time">${fmtEventCountdown(e.expiresAtMs)}</span></div>`).join('');
+  ensureTimerLayout('eventPanel'); // nach display → Breite messbar (Rand-Klemmung, wie growTimer)
+}
+
 let config = { hotkeys: {} };
 let room = null;
 let micEnabled = false;
@@ -2570,13 +2600,31 @@ async function renderSvWelt() {
     <div style="display:flex;flex-wrap:wrap;gap:6px;margin:8px 0 14px">${presets.map((p) => `<button class="secondary" data-weather="${escapeHtml(String(p))}" style="width:auto;padding:6px 12px">${escapeHtml(String(p))}</button>`).join('')}</div>
     <div class="sec-title">🌱 Wachstum</div>
     <label style="display:flex;align-items:center;gap:8px;font-size:13px;margin:8px 0"><input id="svGrow" type="checkbox" ${grow.enabled ? 'checked' : ''}> Grow-Stop (Wachstum aller Dinos einfrieren)</label>
-    <label style="display:flex;align-items:center;gap:8px;font-size:13px;margin:8px 0"><input id="svFreeGender" type="checkbox" ${fgs.enabled ? 'checked' : ''}> Event: Free Gender Swap (ALLE Spieler dürfen kostenlos das Geschlecht wechseln)</label>`;
+    <div class="sec-title">🎉 Events</div>
+    <label style="display:flex;align-items:center;gap:8px;font-size:13px;margin:8px 0"><input id="svFreeGender" type="checkbox" ${fgs.enabled ? 'checked' : ''}> Free Gender Swap — ALLE wechseln kostenlos${fgs.enabled && fgs.expiresAtMs ? ` <span class="dt-muted">(noch ${fmtEventCountdown(fgs.expiresAtMs)})</span>` : ''}</label>
+    <div style="display:flex;align-items:center;gap:8px;margin:2px 0 8px">
+      <span class="dt-muted">Dauer:</span>
+      <input id="svFreeGenderHours" type="number" min="0" step="1" value="24" style="width:70px;padding:6px;border-radius:6px;border:1px solid var(--border);background:var(--input-bg);color:#eee">
+      <span class="dt-muted">Stunden (0 = unbegrenzt). Läuft danach automatisch ab.</span>
+    </div>`;
   el('svTod').oninput = () => { el('svTodVal').textContent = svFmtTod(parseFloat(el('svTod').value)); };
   el('svTodApply').onclick = async () => { try { await svApi('POST', '/admin/world/time', { timeOfDay: parseFloat(el('svTod').value) }); showToast('🕑 Tageszeit gesetzt', 'success'); } catch (e) { showToast(e.message, 'error'); } };
   el('svPause').onchange = async () => { try { await svApi('POST', '/admin/world/time', { paused: el('svPause').checked }); showToast(el('svPause').checked ? '⏸️ Zeit eingefroren' : '▶️ Zeit läuft', 'success'); } catch (e) { showToast(e.message, 'error'); } };
   box.querySelectorAll('[data-weather]').forEach((b) => b.onclick = async () => { try { await svApi('POST', '/admin/world/weather', { weather: b.dataset.weather }); showToast('🌦️ Wetter: ' + b.dataset.weather, 'success'); } catch (e) { showToast(e.message, 'error'); } });
   el('svGrow').onchange = async () => { try { await svApi('POST', '/admin/world/growth-stop', { enabled: el('svGrow').checked }); showToast(el('svGrow').checked ? '🌱 Grow-Stop AN' : '🌱 Grow-Stop AUS', 'success'); } catch (e) { el('svGrow').checked = !el('svGrow').checked; showToast(e.message, 'error'); } };
-  el('svFreeGender').onchange = async () => { try { await svApi('POST', '/free-gender-swap', { enabled: el('svFreeGender').checked }); freeGenderSwap = el('svFreeGender').checked; showToast(el('svFreeGender').checked ? '⚧️ Free Gender Swap AN — alle kostenlos' : '⚧️ Free Gender Swap AUS', 'success'); } catch (e) { el('svFreeGender').checked = !el('svFreeGender').checked; showToast(e.message, 'error'); } };
+  const applyFreeGender = async () => {
+    const on = el('svFreeGender').checked;
+    const hours = on ? Math.max(0, parseFloat(el('svFreeGenderHours').value) || 0) : 0;
+    try {
+      await svApi('POST', '/free-gender-swap', { enabled: on, durationHours: hours });
+      freeGenderSwap = on;
+      showToast(on ? (hours ? `⚧️ Free Gender Swap AN — ${hours} Std` : '⚧️ Free Gender Swap AN — unbegrenzt') : '⚧️ Free Gender Swap AUS', 'success');
+      loadActiveEvents();          // Event-Timer-HUD sofort aktualisieren
+      if (serverTab === 'welt') renderSvWelt(); // Restzeit-Anzeige im Tab aktualisieren
+    } catch (e) { el('svFreeGender').checked = !on; showToast(e.message, 'error'); }
+  };
+  el('svFreeGender').onchange = applyFreeGender;
+  el('svFreeGenderHours').onchange = () => { if (el('svFreeGender').checked) applyFreeGender(); }; // Dauer ändern → neu setzen
 }
 
 // 🤖 AI: mod-eigenes /ai/encounters-Framework — Master + read-only Liste + Detail-Editor
@@ -7276,6 +7324,7 @@ const MOVABLE = [
   { id: 'hudInfo',     label: 'Info-Boxen', resize: 'scale' }, // Part 4: entkoppelt verschiebbar + skalierbar
   // Timer-Anzeigen: Standard rechts neben der Punkte-Anzeige (HUD-Pille), verschiebbar + skalierbar.
   { id: 'growTimer',   label: 'Grow-Timer', resize: 'scale' },
+  { id: 'eventPanel',  label: 'Event-Timer', resize: 'scale' },
   { id: 'goldenHud',   label: 'Goldene-Zone-Timer', resize: 'scale' },
   { id: 'parkWarn',    label: 'PvE-Park-Countdown', resize: 'scale' },
   { id: 'settings',    label: 'Einstellungen', resize: true },
@@ -7300,7 +7349,7 @@ function movTransform(id) { return SCALE_IDS.has(id) ? 'scale(var(--info-scale,1
 // ── Timer-Anzeigen (Grow · Goldene Zone · PvE-Park) ─────────────────────────
 // Standard-Layout: rechts neben der HUD-Pille (Punkte-Anzeige), vertikal gestapelt.
 // Sobald der Spieler sie verschiebt, gewinnt die gespeicherte Position (bf-layout).
-const TIMER_IDS = ['growTimer', 'goldenHud', 'parkWarn'];
+const TIMER_IDS = ['growTimer', 'eventPanel', 'goldenHud', 'parkWarn'];
 function ensureTimerLayout(id) {
   const e = el(id), hud = el('hud');
   if (!e || !hud) return;
@@ -7391,7 +7440,7 @@ function removeHideToggle(elm) { const b = elm.querySelector('.bf-hide-toggle');
 let windowShrink = localStorage.getItem('bf-window-shrink') === '1';
 let shrinkTimer = null;
 let lastSentH = -1;   // zuletzt gesendete Höhe (0 = Vollbild) — vermeidet redundante Resizes
-const IDLE_HUD_IDS = ['hud', 'hudHeart', 'minimapWrap', 'hudInfo', 'growTimer', 'serverBanner', 'toasts', 'voiceWarn', 'updateHint', 'calibPrompt', 'parkWarn', 'goldenHud'];
+const IDLE_HUD_IDS = ['hud', 'hudHeart', 'minimapWrap', 'hudInfo', 'growTimer', 'eventPanel', 'serverBanner', 'toasts', 'voiceWarn', 'updateHint', 'calibPrompt', 'parkWarn', 'goldenHud'];
 function computeIdleHudBottom() {
   let bottom = 0;
   for (const id of IDLE_HUD_IDS) {
@@ -7647,6 +7696,7 @@ function setupEditMode() {
   setupBugReport();
   updateWindowBounds();                        // Anfangszustand ans Fenster melden
   setInterval(updateWindowBounds, 1500);       // transiente HUD-Änderungen (Toasts/Banner) nachziehen
+  loadActiveEvents(); setInterval(loadActiveEvents, 15000); // Event-Timer: Liste holen + Countdown auffrischen
   applyMiniToggle();
   applyCompassToggle();
   renderThemePicker();
