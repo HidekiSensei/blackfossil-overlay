@@ -2819,7 +2819,60 @@ function showServerTab(t) {
   else if (t === 'server') { renderServer(); svRenderClassLimits(); }
   else if (t === 'godvoice') renderGodVoice();
   else if (t === 'teamaudit') renderTeamAudit();
+  else if (t === 'evrima') renderEvrima();
   bfScheduleFrameSync && bfScheduleFrameSync();
+}
+
+// ── Evrima-Versionen (Steam-Build-Infos, vom Backend gecacht — Quelle steamcmd.net/PICS) ──────
+// Der öffentliche evrima-Branch trägt keinen Semver → wir zeigen die Steam-Build-ID (wie SteamDB)
+// plus Last-Updated. Refresh bei jeder Tab-Anzeige (Backend cached 5 min).
+function evrimaAgo(unixSec) {
+  if (!unixSec) return '—';
+  const s = Math.max(0, Math.floor(Date.now() / 1000) - unixSec);
+  const d = Math.floor(s / 86400), h = Math.floor((s % 86400) / 3600), m = Math.floor((s % 3600) / 60);
+  if (d > 0) return `vor ${d} Tag${d === 1 ? '' : 'en'}`;
+  if (h > 0) return `vor ${h} Std`;
+  if (m > 0) return `vor ${m} Min`;
+  return 'gerade eben';
+}
+async function renderEvrima() {
+  const box = el('evrimaBody'); if (!box) return;
+  box.innerHTML = '<div class="dt-muted" style="padding:12px">Lade…</div>';
+  let d;
+  try {
+    const r = await fetch(`${config.tokenBase}/evrima-versions`, { headers: { Authorization: `Bearer ${sessionToken}` } });
+    if (!r.ok) throw new Error(r.status === 403 ? 'Nicht berechtigt.' : `Fehler ${r.status}`);
+    d = await r.json();
+  } catch (e) {
+    box.innerHTML = `<div class="dt-muted" style="padding:12px">Konnte Versionen nicht laden: ${escapeHtml(e.message)}</div>`;
+    return;
+  }
+  const td = 'padding:8px 10px;vertical-align:top';
+  const th = (l) => `<th style="padding:6px 10px;text-align:left;color:var(--muted);font-weight:600;white-space:nowrap">${l}</th>`;
+  const row = (label, icon, b) => {
+    const build = b && b.buildId ? b.buildId : '—';
+    const upd = b && b.updated ? new Date(b.updated * 1000) : null;
+    const tip = upd ? escapeHtml(upd.toLocaleString('de-DE')) : 'unbekannt';
+    const desc = b && b.desc ? `<div style="font-size:10px;opacity:.6">${escapeHtml(b.desc)}</div>` : '';
+    return `<tr style="border-top:1px solid var(--border)">
+      <td style="${td}">${icon} <b>${label}</b>${desc}</td>
+      <td style="${td};font-family:monospace">${escapeHtml(build)}</td>
+      <td style="${td};white-space:nowrap" title="${tip}">${evrimaAgo(b && b.updated)}</td>
+    </tr>`;
+  };
+  const stand = d && d.fetchedAt ? `zuletzt geprüft ${evrimaAgo(d.fetchedAt)}` : 'noch nicht abgerufen';
+  box.innerHTML = `
+    <div class="sec-title">🏷️ Evrima — aktuelle Builds</div>
+    <table style="width:100%;border-collapse:collapse;font-size:13px;margin:8px 0">
+      <thead><tr>${th('')}${th('Build-ID')}${th('Zuletzt aktualisiert')}</tr></thead>
+      <tbody>
+        ${row('Server', '🖥️', d && d.server)}
+        ${row('Game', '🎮', d && d.game)}
+      </tbody>
+    </table>
+    <div class="dt-muted" style="font-size:11px;margin-top:6px">Steam-Build-ID (der öffentliche evrima-Branch hat keinen Versionsnamen). Quelle: steamcmd.net (Steam PICS) · ${stand}</div>
+    <button id="evrimaRefresh" class="secondary" style="width:auto;padding:4px 12px;font-size:12px;margin-top:10px">🔄 Aktualisieren</button>`;
+  const rb = el('evrimaRefresh'); if (rb) rb.onclick = () => renderEvrima();
 }
 // Class-Limits im Server-Tab (dieselben /dino-limits-Endpoints wie das Admin-Panel; das Admin-Panel
 // bleibt unangetastet — hier eine eigene Ansicht in #svClassBody).
