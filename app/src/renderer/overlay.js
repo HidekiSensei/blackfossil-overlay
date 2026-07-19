@@ -2821,7 +2821,148 @@ function showServerTab(t) {
   else if (t === 'godvoice') renderGodVoice();
   else if (t === 'teamaudit') renderTeamAudit();
   else if (t === 'evrima') renderEvrima();
+  else if (t === 'ops') renderOps();
   bfScheduleFrameSync && bfScheduleFrameSync();
+}
+
+// ── 🛠️ Betrieb (Ops-Interface): Status-Matrix + Versionen/Branches + Log-Viewer ──────────────
+// Read-only-Diagnose ohne SSH: Backend /admin/ops/* (admin-gated). Polling läuft NUR solange
+// der Tab offen ist (Guard in den Intervallen — Tab-/Panel-Wechsel stoppt von selbst).
+let opsLogState = { name: '', nextByte: null, lines: [] }; // Follow-Zustand je gewähltem Log
+const OPS_LOG_MAX_LINES = 4000;
+
+function opsActive() { return serverOpen && serverTab === 'ops'; }
+
+function renderOps() {
+  renderOpsHealth(); renderOpsSpark(); renderOpsVersions(); opsInitLogs();
+  // 10s-Health-Poll, nur solange der Tab offen ist (Selbstabschaltung über Guard).
+  if (!renderOps._timer) {
+    renderOps._timer = setInterval(() => {
+      if (!opsActive()) { clearInterval(renderOps._timer); renderOps._timer = null; return; }
+      renderOpsHealth();
+    }, 10000);
+  }
+  if (!renderOps._logTimer) {
+    renderOps._logTimer = setInterval(() => {
+      if (!opsActive()) { clearInterval(renderOps._logTimer); renderOps._logTimer = null; return; }
+      const f = el('opsLogFollow');
+      if (f && f.checked) opsLoadLog(false); // inkrementell (fromByte)
+    }, 2000);
+  }
+}
+
+async function renderOpsHealth() {
+  const box = el('opsHealth'); if (!box) return;
+  try {
+    const d = await svApi('GET', '/admin/ops/health');
+    const dot = (c) => (c.ok ? (c.warn ? '🟡' : '🟢') : '🔴');
+    const label = { db: 'Datenbank', mod_api: 'Mod-API (Poller)', game_process: 'Game-Server', control_server: 'Game-Box (control)', livekit: 'Voice (LiveKit)', peer_backend: 'Peer-Backend' };
+    box.innerHTML = `<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(215px,1fr));gap:6px">` +
+      (d.checks || []).map((c) =>
+        `<div style="border:1px solid var(--border);border-radius:8px;padding:7px 9px;font-size:12px">${dot(c)} <b>${escapeHtml(label[c.id] || c.id)}</b>` +
+        `<span style="color:var(--muted)"> ${c.latencyMs} ms</span>` +
+        (c.detail ? `<div style="color:var(--muted);font-size:11px;margin-top:2px">${escapeHtml(c.detail)}</div>` : '') + `</div>`
+      ).join('') + `</div><div style="font-size:10px;color:var(--muted);margin-top:4px">Umgebung: ${escapeHtml(d.env || '?')} · ${new Date().toLocaleTimeString()}</div>`;
+  } catch (e) { box.innerHTML = `<span style="color:#f87171">Health nicht ladbar: ${escapeHtml(e.message || '?')}</span>`; }
+}
+
+async function renderOpsSpark() {
+  const cv = el('opsSpark'); if (!cv) return;
+  try {
+    const d = await svApi('GET', '/admin/ops/metrics/players?hours=24');
+    const pts = d.points || [];
+    const ctx = cv.getContext('2d'); ctx.clearRect(0, 0, cv.width, cv.height);
+    if (!pts.length) { ctx.fillStyle = 'rgba(255,255,255,0.35)'; ctx.font = '12px sans-serif'; ctx.fillText('Noch keine Daten', 10, 40); return; }
+    const maxN = Math.max(5, ...pts.map((p) => p.n));
+    const t0 = new Date(pts[0].t).getTime(), t1 = new Date(pts[pts.length - 1].t).getTime() || t0 + 1;
+    ctx.strokeStyle = '#7dd3fc'; ctx.lineWidth = 1.5; ctx.beginPath();
+    pts.forEach((p, i) => {
+      const x = ((new Date(p.t).getTime() - t0) / Math.max(1, t1 - t0)) * (cv.width - 8) + 4;
+      const y = cv.height - 6 - (p.n / maxN) * (cv.height - 16);
+      i ? ctx.lineTo(x, y) : ctx.moveTo(x, y);
+    });
+    ctx.stroke();
+    ctx.fillStyle = 'rgba(255,255,255,0.45)'; ctx.font = '10px sans-serif';
+    ctx.fillText(`max ${maxN}`, 6, 12);
+    ctx.fillText(`aktuell ${pts[pts.length - 1].n}`, cv.width - 70, 12);
+  } catch {}
+}
+
+async function renderOpsVersions() {
+  const box = el('opsVersions'); if (!box) return;
+  try {
+    const [v, br] = await Promise.all([svApi('GET', '/admin/ops/version'), svApi('GET', '/admin/ops/branches')]);
+    const short = (s) => (s ? String(s).slice(0, 7) : '—');
+    const rows = [];
+    const be = v.backend || {};
+    rows.push(`<tr><td>⚙️ Backend (${escapeHtml(v.env || '?')})</td><td><code>${short(be.sha)}</code>${be.modified ? ' <span style="color:#fbbf24">+lokal</span>' : ''}</td><td>${escapeHtml(be.builtAt || '—')}</td></tr>`);
+    if (v.mod) rows.push(`<tr><td>🧩 Mod (.asi)</td><td><code>${short(v.mod.sha)}</code> ${escapeHtml(v.mod.branch || '')}</td><td>${escapeHtml(v.mod.builtAt || '—')}</td></tr>`);
+    else rows.push(`<tr><td>🧩 Mod (.asi)</td><td colspan="2" style="color:var(--muted)">keine Selbstauskunft (älterer Build oder Box offline)</td></tr>`);
+    if (v.control && v.control.controlServer) rows.push(`<tr><td>🎛️ control-server</td><td colspan="2">seit ${escapeHtml(v.control.controlServer.startedAt || '?')}${v.control.mod && v.control.mod.exists ? ` · .asi ${escapeHtml((v.control.mod.sha256 || '').slice(0, 10))} (${escapeHtml(v.control.mod.mtime || '')})` : ''}</td></tr>`);
+    const verd = (t) => {
+      if (t.component === 'backend') {
+        if (t.deployed) return '<span style="color:#4ade80">✅ deployt</span>';
+        if (t.behind > 0) return `<span style="color:#fbbf24">${t.behind} Commit(s) hinterm Tip</span>`;
+      }
+      return '';
+    };
+    const brRows = (br.branches || []).map((t) =>
+      `<tr><td>${escapeHtml(t.component)}/${escapeHtml(t.branch)}</td><td><code>${short(t.sha)}</code>${t.err ? ' <span style="color:#f87171">API-Fehler</span>' : ''}</td><td>${escapeHtml((t.date || '').slice(0, 16).replace('T', ' '))} ${verd(t)}</td></tr>`
+    ).join('');
+    box.innerHTML = `<table style="width:100%;font-size:12px;border-collapse:collapse">` +
+      `<tr style="color:var(--muted)"><th style="text-align:left">Komponente</th><th style="text-align:left">Stand</th><th style="text-align:left">Zeit</th></tr>` +
+      rows.join('') + brRows + `</table>`;
+  } catch (e) { box.innerHTML = `<span style="color:#f87171">Versionen nicht ladbar: ${escapeHtml(e.message || '?')}</span>`; }
+}
+
+// ── Log-Viewer ───────────────────────────────────────────────────────────────
+async function opsInitLogs() {
+  const sel = el('opsLogSel'); if (!sel) return;
+  if (!opsInitLogs._wired) {
+    opsInitLogs._wired = true;
+    sel.onchange = () => opsLoadLog(true);
+    el('opsLogReload').onclick = () => opsLoadLog(true);
+    el('opsLogFilter').oninput = () => opsRenderLog();
+    el('opsLogCopy').onclick = () => { try { navigator.clipboard.writeText(opsLogState.lines.join('\n')); showToast('Log kopiert', 'success'); } catch {} };
+  }
+  try {
+    const d = await svApi('GET', '/admin/ops/logs');
+    const names = { backend: '⚙️ Backend', game: '🦖 Game-Server', mod: '🧩 Mod', inject: '💉 Inject', control: '🎛️ control-server' };
+    const cur = sel.value;
+    sel.innerHTML = (d.logs || []).map((l) =>
+      `<option value="${escapeHtml(l.name)}"${l.exists ? '' : ' disabled'}>${escapeHtml(names[l.name] || l.name)}${l.exists ? '' : ' (fehlt)'}</option>`
+    ).join('');
+    if (cur && [...sel.options].some((o) => o.value === cur)) sel.value = cur;
+    if (!opsLogState.name || opsLogState.name !== sel.value) opsLoadLog(true);
+  } catch {}
+}
+
+async function opsLoadLog(reset) {
+  const sel = el('opsLogSel'); if (!sel || !sel.value) return;
+  const name = sel.value;
+  if (reset || opsLogState.name !== name) opsLogState = { name, nextByte: null, lines: [] };
+  try {
+    const q = opsLogState.nextByte != null ? `&fromByte=${opsLogState.nextByte}` : '';
+    const d = await svApi('GET', `/admin/ops/logs/tail?name=${encodeURIComponent(name)}${q}`);
+    if (d.exists === false) { opsLogState.lines = ['(Datei existiert nicht)']; opsRenderLog(); return; }
+    // Rotation: Server setzte vorn neu auf → Ansicht zurücksetzen, sonst doppelte Zeilen.
+    if (opsLogState.nextByte != null && d.fromByte < opsLogState.nextByte) opsLogState.lines = [];
+    opsLogState.nextByte = d.nextByte;
+    if (d.data) {
+      opsLogState.lines.push(...String(d.data).split('\n').filter((l) => l !== ''));
+      if (opsLogState.lines.length > OPS_LOG_MAX_LINES) opsLogState.lines = opsLogState.lines.slice(-OPS_LOG_MAX_LINES);
+    }
+    opsRenderLog();
+  } catch (e) { const box = el('opsLogBox'); if (box) box.textContent = `Log nicht ladbar: ${e.message || '?'}`; }
+}
+
+function opsRenderLog() {
+  const box = el('opsLogBox'); if (!box) return;
+  const q = (el('opsLogFilter') && el('opsLogFilter').value.trim().toLowerCase()) || '';
+  const lines = q ? opsLogState.lines.filter((l) => l.toLowerCase().includes(q)) : opsLogState.lines;
+  const stick = box.scrollTop + box.clientHeight >= box.scrollHeight - 30; // am Ende? → weiter ans Ende springen
+  box.textContent = lines.join('\n');
+  if (stick) box.scrollTop = box.scrollHeight;
 }
 
 // ── Evrima-Versionen (Steam-Build-Infos, vom Backend gecacht — Quelle steamcmd.net/PICS) ──────
