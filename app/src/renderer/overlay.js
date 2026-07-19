@@ -96,7 +96,7 @@ let fxOff = localStorage.getItem('bf-noblitz') === '1';
 function applyFx() {
   document.body.classList.toggle('bf-noblitz', fxOff);
   const b = document.getElementById('fxToggleBtn');
-  if (b) { b.textContent = fxOff ? '⚡ Effekte: Aus' : '⚡ Effekte: An'; b.classList.toggle('secondary', fxOff); }
+  if (b) b.classList.toggle('secondary', fxOff);
   if (typeof updateLowSpecBtn === 'function') updateLowSpecBtn();
 }
 function toggleFx() { fxOff = !fxOff; localStorage.setItem('bf-noblitz', fxOff ? '1' : '0'); applyFx(); }
@@ -116,11 +116,20 @@ let blurOff = localStorage.getItem('bf-noblur') === '1';
 function applyBlur() {
   document.body.classList.toggle('bf-noblur', blurOff);
   const b = document.getElementById('blurToggleBtn');
-  if (b) { b.textContent = blurOff ? '🌫️ Weichzeichner: Aus' : '🌫️ Weichzeichner: An'; b.classList.toggle('secondary', blurOff); }
+  if (b) b.classList.toggle('secondary', blurOff);
   updateLowSpecBtn();
 }
 function toggleBlur() { blurOff = !blurOff; localStorage.setItem('bf-noblur', blurOff ? '1' : '0'); applyBlur(); }
 document.addEventListener('DOMContentLoaded', applyBlur);
+
+// Dialog-Transparenz (nur die über das Dock geöffneten Panels; kein HUD/Minimap/Kompass).
+// Standard = AN (transparent). Aus => bf-solid-dialogs (blickdicht). In HUD-Sichtbarkeit als Switch.
+let dialogTransparent = localStorage.getItem('bf-dialog-transparent') !== '0';
+function applyDialogTransparency() {
+  document.body.classList.toggle('bf-solid-dialogs', !dialogTransparent);
+}
+function toggleDialogTransparent() { dialogTransparent = !dialogTransparent; localStorage.setItem('bf-dialog-transparent', dialogTransparent ? '1' : '0'); applyDialogTransparency(); }
+document.addEventListener('DOMContentLoaded', applyDialogTransparency);
 
 // ── Master „Low-Spec-Modus" — schaltet Blur + Effekte in einem Rutsch ───────────────────────
 function lowSpecActive() { return blurOff && fxOff; }
@@ -128,7 +137,6 @@ function updateLowSpecBtn() {
   const b = document.getElementById('lowSpecBtn');
   if (!b) return;
   const on = lowSpecActive();
-  b.textContent = on ? '⚡ Low-Spec-Modus: AN' : '⚡ Low-Spec-Modus aktivieren';
   b.classList.toggle('secondary', !on);
 }
 function toggleLowSpec() {
@@ -1238,7 +1246,7 @@ function renderVoiceUsers() {
 // ── Sprechreichweite ─────────────────────────────────────────────────────────
 function updateRangeDisplay() {
   const rb = document.getElementById('rangeBox'); if (rb) rb.textContent = `🔊 Reichweite: ${myRange} m`;
-  document.querySelectorAll('#rangeBtns [data-range]').forEach((b) => { b.className = parseFloat(b.dataset.range) === myRange ? '' : 'secondary'; });
+  document.querySelectorAll('#rangeBtns [data-range]').forEach((b) => { b.className = parseFloat(b.dataset.range) === myRange ? 'active' : 'secondary'; });
 }
 function setRange(r, announce) {
   myRange = r;
@@ -7168,19 +7176,22 @@ const HIDEABLE = [
 // Einheitliche HUD-Sichtbarkeits-Toggles im Settings→UI-Tab. Minimap/Kompass haben eigene
 // Persistenz (miniHidden/compassHidden); der Rest läuft über das HIDEABLE-System (toggleHidden).
 const HUD_TOGGLES_UI = [
-  { id: 'minimapWrap', label: 'Minimap',       hidden: () => miniHidden,                toggle: toggleMinimap },
-  { id: 'compassWrap', label: 'Kompass',       hidden: () => compassHidden,             toggle: toggleCompass },
-  { id: 'eventPanel',  label: 'Aktive Events', hidden: () => hiddenEls.has('eventPanel'), toggle: () => toggleHidden('eventPanel') },
-  { id: 'hudHeart',    label: 'Lebensanzeige', hidden: () => hiddenEls.has('hudHeart'),   toggle: () => toggleHidden('hudHeart') },
-  { id: 'hudInfo',     label: 'Infoboxen',     hidden: () => hiddenEls.has('hudInfo'),    toggle: () => toggleHidden('hudInfo') },
-  { id: 'growTimer',   label: 'Grow-Timer',    hidden: () => hiddenEls.has('growTimer'),  toggle: () => toggleHidden('growTimer') },
-  { id: 'goldenHud',   label: 'Goldene Zone',  hidden: () => hiddenEls.has('goldenHud'),  toggle: () => toggleHidden('goldenHud') },
+  { id: 'minimapWrap', label: 'Minimap',       desc: 'Kleine Karte mit Spielern in deiner Nähe.',            hidden: () => miniHidden,                  toggle: toggleMinimap },
+  { id: 'compassWrap', label: 'Kompass',       desc: 'Himmelsrichtungs-Leiste am oberen Rand.',              hidden: () => compassHidden,               toggle: toggleCompass },
+  { id: 'eventPanel',  label: 'Aktive Events', desc: 'Laufende Server-Events mit Countdown.',                hidden: () => hiddenEls.has('eventPanel'), toggle: () => toggleHidden('eventPanel') },
+  { id: 'hudHeart',    label: 'Lebensanzeige', desc: 'Dein Herz-/Lebens-Balken.',                            hidden: () => hiddenEls.has('hudHeart'),   toggle: () => toggleHidden('hudHeart') },
+  { id: 'hudInfo',     label: 'Infoboxen',     desc: 'Status-Boxen (Sprechreichweite, Zone …).',            hidden: () => hiddenEls.has('hudInfo'),    toggle: () => toggleHidden('hudInfo') },
+  { id: 'growTimer',   label: 'Grow-Timer',    desc: 'Fortschritt deines Dino-Wachstums.',                  hidden: () => hiddenEls.has('growTimer'),  toggle: () => toggleHidden('growTimer') },
+  { id: 'goldenHud',   label: 'Goldene Zone',  desc: 'Anzeige der aktiven Goldenen Zone.',                   hidden: () => hiddenEls.has('goldenHud'),  toggle: () => toggleHidden('goldenHud') },
+  { id: 'dialogTransp', label: 'Dialog-Transparenz', desc: 'Menü-Dialoge durchscheinend (aus = blickdicht).', hidden: () => !dialogTransparent,         toggle: toggleDialogTransparent },
 ];
 function renderHudToggles() {
   const box = el('hudVisToggles'); if (!box) return;
   box.innerHTML = HUD_TOGGLES_UI.map((t) => {
-    const off = t.hidden();
-    return `<button data-hudvis="${t.id}"${off ? ' class="secondary"' : ''}>${escapeHtml(t.label)}: ${off ? 'Aus' : 'An'}</button>`;
+    const on = !t.hidden();   // sichtbar = Switch AN
+    return `<div class="bf-toggle-row"><div class="bf-tg-txt"><span class="bf-tg-lbl">${escapeHtml(t.label)}</span>`
+      + `${t.desc ? `<span class="bf-tg-desc">${escapeHtml(t.desc)}</span>` : ''}</div>`
+      + `<button class="bf-switch${on ? '' : ' secondary'}" data-hudvis="${t.id}" role="switch" aria-checked="${on}" aria-label="${escapeHtml(t.label)}"></button></div>`;
   }).join('');
   box.querySelectorAll('[data-hudvis]').forEach((b) => b.onclick = () => {
     const t = HUD_TOGGLES_UI.find((x) => x.id === b.dataset.hudvis); if (t) { t.toggle(); renderHudToggles(); }
@@ -7257,7 +7268,7 @@ function updateWindowBounds() {
     if (Math.abs(h - lastSentH) >= 2) { lastSentH = h; window.bf.setOverlayBounds({ height: h }); }
   }, 300);
 }
-function updateShrinkBtn() { const b = el('shrinkToggleBtn'); if (b) b.textContent = '🪟 Fenster-Shrink: ' + (windowShrink ? 'An' : 'Aus'); }
+function updateShrinkBtn() { const b = el('shrinkToggleBtn'); if (b) b.classList.toggle('secondary', !windowShrink); }
 
 // ── Bug melden (Overlay → Backend → Dev-Board) ──────────────────────────────
 // Button unten links (nur bei offenem Dock). Titel + Beschreibung + optionaler Screenshot
@@ -7476,6 +7487,7 @@ function setupEditMode() {
   const compassBtn = el('compassToggleBtn'); if (compassBtn) compassBtn.onclick = toggleCompass;
   const blurBtn = el('blurToggleBtn'); if (blurBtn) blurBtn.onclick = toggleBlur;
   applyBlur();
+  applyDialogTransparency();
   const lsBtn = el('lowSpecBtn'); if (lsBtn) lsBtn.onclick = toggleLowSpec;
   updateLowSpecBtn();
   const shBtn = el('shrinkToggleBtn'); if (shBtn) shBtn.onclick = toggleWindowShrink;
