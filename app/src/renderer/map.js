@@ -240,7 +240,7 @@ export function drawFullMap(view, players, waypoints = [], teleports = [], hover
         if (hot) drawNameTag(ctx, c.px, c.py, c.items[0].p.label1 || '', c.items[0].p.label2 || '', iconScale);
         else if (c.items[0].p.label1) labels.push({ px: c.px, py: c.py, p: c.items[0].p });
       } else {
-        drawCluster(ctx, c.px, c.py, c.items.length, iconScale, hot);
+        drawCluster(ctx, c.px, c.py, c.items.length, iconScale, hot, topRank(c.items));
       }
     }
     if (opts.labels !== false) placeLabels(ctx, labels, iconScale, opts, w, h);
@@ -496,7 +496,7 @@ function drawArrow(ctx, px, py, angle, size, color) {
   ctx.lineTo(-size * 0.72, -size * 0.66);
   ctx.closePath();
   ctx.fillStyle = color; ctx.fill();
-  ctx.lineWidth = Math.max(0.5, size * 0.17); ctx.strokeStyle = 'rgba(0,0,0,0.8)'; ctx.stroke();
+  ctx.lineWidth = size * 0.17; ctx.strokeStyle = 'rgba(0,0,0,0.8)'; ctx.stroke();
   ctx.restore();
 }
 // Heading → Karten-Winkel: den Blick-Vektor durch DIESELBE Welt→Karte-Projektion
@@ -517,7 +517,7 @@ function drawGroupMember(ctx, px, py, p, scale) {
   if (p.isFlying) { // Fly-/Admin-Modus: Punkt statt Pfeil (keine Blickrichtung)
     ctx.beginPath(); ctx.arc(px, py, 4 * scale, 0, Math.PI * 2);
     ctx.fillStyle = col; ctx.fill();
-    ctx.lineWidth = Math.max(0.5, 1.2 * scale); ctx.strokeStyle = 'rgba(0,0,0,0.8)'; ctx.stroke();
+    ctx.lineWidth = 1.2 * scale; ctx.strokeStyle = 'rgba(0,0,0,0.8)'; ctx.stroke();
   } else {
     drawArrow(ctx, px, py, arrowAngle(p), 6.5 * scale, col);
   }
@@ -570,14 +570,36 @@ export function drawAiEncounters(ctx, w, h, sc, encounters, speciesShort = (x) =
 // Der Renderer bleibt bewusst dumm bezueglich Label-INHALT: der Aufrufer haengt
 // label1/label2 an die Spieler-Objekte (siehe shared/players.js). So bleiben
 // userLabel/baseClass aus der Karte heraus und sind einzeln testbar.
+// Rangfarbe des Rands. Reihenfolge = Rangfolge: Admin schlaegt Team schlaegt
+// Spieler. Bei Ansammlungen gewinnt derselbe Weg ueber den hoechsten Rang darin.
+export const RANK_BORDER = { admin: '#ef4444', team: '#f59e0b', none: 'rgba(0,0,0,0.85)' };
+
+function rankOf(p) { return p.admin ? 'admin' : (p.team ? 'team' : 'none'); }
+
+// Hoechster Rang einer Menge Spieler.
+function topRank(items) {
+  let r = 'none';
+  for (const it of items) {
+    const x = rankOf(it.p);
+    if (x === 'admin') return 'admin';
+    if (x === 'team') r = 'team';
+  }
+  return r;
+}
+
 function drawPlayerDot(ctx, px, py, p, scale, hot) {
   const col = hot ? '#f59e0b' : (p.roleColor || groupColorFor(p.steamId));
+  const rank = rankOf(p);
   const r = (hot ? 9 : 7.5) * scale;
   if (hot) { ctx.save(); ctx.shadowColor = '#f59e0b'; ctx.shadowBlur = 9 * scale; }
   ctx.beginPath(); ctx.arc(px, py, r, 0, Math.PI * 2);
   ctx.fillStyle = col; ctx.fill();
-  ctx.lineWidth = Math.max(0.6, 1.5 * scale);
-  ctx.strokeStyle = hot ? '#fff' : 'rgba(0,0,0,0.85)'; ctx.stroke();
+  // KEINE Math.max-Untergrenze: die waere in Karten-Einheiten und liesse den
+  // Rand beim Reinzoomen mitwachsen (drawTeleport hatte sie nie — deshalb sahen
+  // die Teleports richtig aus, die Spielerpunkte nicht).
+  ctx.lineWidth = (rank === 'none' ? 1.5 : 2.2) * scale;
+  ctx.strokeStyle = hot ? '#fff' : RANK_BORDER[rank];
+  ctx.stroke();
   if (hot) ctx.restore();
 }
 
@@ -634,7 +656,7 @@ function clusterPoints(pts, radius) {
 
 // Ansammlung: groesserer Ball in eigener Farbe + Anzahl. Bewusst NICHT in der
 // Spielerfarbe, damit "hier stehen mehrere" nicht wie ein einzelner Spieler wirkt.
-function drawCluster(ctx, px, py, n, scale, hot) {
+function drawCluster(ctx, px, py, n, scale, hot, rank = 'none') {
   const r = (9 + Math.min(8, n * 0.7)) * scale;
   // Helle Fuellung mit dunkler Zahl: bindet die Ansammlung optisch an die
   // Spielerpunkte und trennt sie von den Teleports, die ebenfalls nummerierte
@@ -643,8 +665,8 @@ function drawCluster(ctx, px, py, n, scale, hot) {
   ctx.beginPath(); ctx.arc(px, py, r, 0, Math.PI * 2);
   ctx.fillStyle = hot ? '#f59e0b' : '#e8e6ef';
   ctx.fill();
-  ctx.lineWidth = Math.max(1, 2 * scale);
-  ctx.strokeStyle = 'rgba(0,0,0,0.9)';
+  ctx.lineWidth = (rank === 'none' ? 2 : 2.8) * scale;
+  ctx.strokeStyle = rank === 'none' ? 'rgba(0,0,0,0.9)' : RANK_BORDER[rank];
   ctx.stroke();
   // KEINE Math.max-Untergrenze: scale ist 1/Gesamtskalierung, `11 * scale` ist
   // damit konstante 11 Bildschirm-Pixel. Eine Untergrenze in Karten-Einheiten
@@ -736,13 +758,13 @@ function drawPlayer(ctx, px, py, p, scale) {
     // Fly-/Admin-Modus: keine Blickrichtung → Punkt statt Pfeil.
     ctx.beginPath(); ctx.arc(px, py, sz * 0.5, 0, Math.PI * 2);
     ctx.fillStyle = SELF_COLOR; ctx.fill();
-    ctx.lineWidth = Math.max(0.5, sz * 0.14); ctx.strokeStyle = 'rgba(0,0,0,0.8)'; ctx.stroke();
+    ctx.lineWidth = sz * 0.14; ctx.strokeStyle = 'rgba(0,0,0,0.8)'; ctx.stroke();
     ctx.restore(); return;
   }
   // Basis-Punkt unter dem Pfeil → immer als eigene Position erkennbar, auch bei viel Zoom.
   ctx.beginPath(); ctx.arc(px, py, sz * 0.34, 0, Math.PI * 2);
   ctx.fillStyle = SELF_COLOR; ctx.fill();
-  ctx.lineWidth = Math.max(0.5, sz * 0.12); ctx.strokeStyle = 'rgba(0,0,0,0.8)'; ctx.stroke();
+  ctx.lineWidth = sz * 0.12; ctx.strokeStyle = 'rgba(0,0,0,0.8)'; ctx.stroke();
   ctx.shadowBlur = 0;
   drawArrow(ctx, px, py, arrowAngle(p), sz, SELF_COLOR);
   ctx.restore();
@@ -755,7 +777,7 @@ function drawWaypoint(ctx, px, py, scale = 1) {
   ctx.shadowColor = WP_COLOR; ctx.shadowBlur = 6 * scale;
   ctx.fillStyle = WP_COLOR;
   ctx.beginPath(); ctx.moveTo(px, py-8*s); ctx.lineTo(px+5*s, py); ctx.lineTo(px, py+8*s); ctx.lineTo(px-5*s, py); ctx.closePath();
-  ctx.fill(); ctx.strokeStyle = 'rgba(0,0,0,0.6)'; ctx.lineWidth = Math.max(0.5, 1.2 * s); ctx.stroke();
+  ctx.fill(); ctx.strokeStyle = 'rgba(0,0,0,0.6)'; ctx.lineWidth = 1.2 * s; ctx.stroke();
   ctx.restore();
 }
 

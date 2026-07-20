@@ -77,11 +77,33 @@ let plList = null;                // offene Spielerliste (zum Nachziehen beim Po
 // Spuren: die letzten TRAIL_LEN Positionen je Spieler. Bewusst NUR im Speicher —
 // nichts davon wird gespeichert oder ans Backend geschickt, und beim Neustart ist
 // die Spur weg. Pro Spieler einzeln, auch innerhalb einer Gruppe.
-const TRAIL_LEN = 10;
-const trails = new Map();         // steamId -> [{x,y}, …]
+// Gestaffelte Aufloesung: je aelter, desto grober. Die Spur reicht dadurch weit
+// zurueck, ohne 160 Punkte je Spieler zu halten.
+//   Alter <=  10 Abfragen: jeder Punkt   (1er-Schritte)
+//   Alter <=  60 Abfragen: jeder 5.      (5er-Schritte)
+//   Alter <= 160 Abfragen: jeder 10.     (10er-Schritte)
+// Ergibt rund 30 Punkte je Spieler ueber ~160 s Verlauf. Bei 80 Spielern sind
+// das ~2400 Punkte, also ein paar Dutzend KB — vernachlaessigbar.
+const TRAIL_TIERS = [
+  { maxAge: 10, step: 1 },
+  { maxAge: 60, step: 5 },
+  { maxAge: 160, step: 10 },
+];
+const TRAIL_MAX_AGE = TRAIL_TIERS[TRAIL_TIERS.length - 1].maxAge;
+const trails = new Map();         // steamId -> [{x,y,t}, …]
+let pollTick = 0;                 // Abfragezaehler als Zeitbasis
 let showTrails = localStorage.getItem('bf-cp-trail') === '1';
 
+// Behalten? Punkt bleibt, wenn er im Raster seiner Altersstufe liegt.
+function trailKeep(age, t) {
+  for (const tier of TRAIL_TIERS) {
+    if (age <= tier.maxAge) return t % tier.step === 0;
+  }
+  return false;
+}
+
 function pushTrail(list) {
+  pollTick++;
   const seen = new Set();
   for (const p of list) {
     if (p.isDead || !p.steamId) continue;
@@ -91,10 +113,12 @@ function pushTrail(list) {
     // Nur bei echter Bewegung anhaengen, sonst fuellt Stillstand die Spur mit
     // identischen Punkten und die Linie zeigt nichts mehr.
     if (!last || Math.hypot(last.x - p.x, last.y - p.y) > 150) {
-      t.push({ x: p.x, y: p.y });
-      if (t.length > TRAIL_LEN) t.shift();
-      trails.set(p.steamId, t);
+      t.push({ x: p.x, y: p.y, t: pollTick });
     }
+    // Ausduennen nach Alter — laeuft auch ohne neuen Punkt, damit die Spur
+    // waehrend eines Stillstands weiter vergroebert statt einzufrieren.
+    const pruned = t.filter((pt) => trailKeep(pollTick - pt.t, pt.t));
+    trails.set(p.steamId, pruned.length ? pruned : t.slice(-1));
   }
   // Offline gegangene Spieler nicht ewig mitschleppen.
   for (const id of trails.keys()) if (!seen.has(id)) trails.delete(id);

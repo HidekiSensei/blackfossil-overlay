@@ -14,6 +14,10 @@ eq(baseClass(null), '', 'baseClass null');
 eq(fmtGrow(0.756), '76%', 'fmtGrow rundet');
 eq(fmtGrow(0), '0%', 'fmtGrow 0 (nicht leer!)');
 eq(fmtGrow(null), '', 'fmtGrow null');
+eq(fmtGrow(-3.337e37), '', 'fmtGrow Muellwert (AdminPawn) wird verschwiegen');
+eq(fmtGrow(NaN), '', 'fmtGrow NaN');
+eq(fmtGrow(Infinity), '', 'fmtGrow Infinity');
+eq(fmtGrow(1.2), '120%', 'fmtGrow ueber 100% bleibt erlaubt');
 eq(fmtGrow(undefined), '', 'fmtGrow undefined');
 
 eq(escapeHtml('<a href="x">&'), '&lt;a href=&quot;x&quot;&gt;&amp;', 'escapeHtml');
