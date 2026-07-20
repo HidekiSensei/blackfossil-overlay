@@ -310,3 +310,55 @@ input[type="range"] { accent-color: var(--accent); }
 .cp-tgl[aria-pressed="false"] .cp-leg-swatch { opacity: .25; }
 .cp-tgl:disabled { opacity: .35; cursor: not-allowed; }
 .cp-tgl:focus-visible { outline: 2px solid rgba(var(--accent-rgb), .7); outline-offset: 1px; }
+
+/* ── Karten-Tooltip (Hover ueber Spieler/Ansammlung) ────────────────────── */
+#cpMapTip {
+  position: absolute; z-index: 5; pointer-events: none;
+  max-width: 260px; padding: var(--cp-s2) var(--cp-s3);
+  border-radius: var(--cp-r-sm); font-size: 12px; line-height: 1.45;
+  background: rgba(13, 9, 24, 0.94); border: 1px solid var(--cp-line);
+  box-shadow: 0 6px 20px rgba(0, 0, 0, .5);
+}
+.cp-tip-head { font-size: 10.5px; color: var(--muted); text-transform: uppercase; letter-spacing: .06em; margin-bottom: 3px; }
+.cp-tip-row { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.cp-tip-more { color: var(--muted); font-size: 11px; margin-top: 2px; }
+
+/* ── Verschiebbare Flaeche ueber der Karte ──────────────────────────────── */
+.cp-float {
+  position: absolute; z-index: 8; display: flex; flex-direction: column;
+  max-height: calc(100% - 32px);
+  background: rgba(13, 9, 24, 0.95); border: 1px solid var(--cp-line);
+  border-radius: var(--cp-r-md); box-shadow: 0 10px 34px rgba(0, 0, 0, .55);
+  backdrop-filter: blur(6px); overflow: hidden;
+}
+.cp-float-bar {
+  display: flex; align-items: center; justify-content: space-between; gap: var(--cp-s2);
+  padding: var(--cp-s2) var(--cp-s2) var(--cp-s2) var(--cp-s3);
+  background: rgba(255, 255, 255, .05); border-bottom: 1px solid var(--cp-line);
+  cursor: move; user-select: none;
+}
+.cp-float-title { font-size: 12px; font-weight: 650; }
+.cp-float-x {
+  border: 0; background: transparent; color: var(--muted);
+  cursor: pointer; font-size: 13px; line-height: 1; padding: 3px 5px; border-radius: 5px;
+}
+.cp-float-x:hover { background: rgba(255,255,255,.1); color: #fff; }
+.cp-float-body { padding: var(--cp-s3); overflow: auto; display: flex; flex-direction: column; gap: var(--cp-s2); }
+.cp-float-search { height: 30px; font-size: 12px; }
+.cp-float-actions { display: flex; align-items: center; justify-content: space-between; gap: var(--cp-s2); }
+.cp-float-list { display: flex; flex-direction: column; gap: 2px; max-height: 340px; overflow-y: auto; }
+
+.cp-pl-row {
+  display: flex; align-items: center; gap: var(--cp-s2);
+  width: 100%; text-align: left; padding: 5px var(--cp-s2);
+  font: inherit; font-size: 12px; color: #ddd;
+  background: transparent; border: 1px solid transparent; border-radius: var(--cp-r-sm);
+  cursor: pointer;
+}
+.cp-pl-row:hover { background: var(--cp-surface-2); }
+.cp-pl-row.on { background: rgba(245, 158, 11, .16); border-color: rgba(245, 158, 11, .5); color: #fff; }
+.cp-pl-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--muted); flex: none; }
+.cp-pl-row.on .cp-pl-dot { background: #f59e0b; }
+.cp-pl-main { min-width: 0; display: flex; flex-direction: column; }
+.cp-pl-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.cp-pl-sub { font-size: 10.5px; color: var(--muted); }

@@ -206,20 +206,43 @@ export function drawFullMap(view, players, waypoints = [], teleports = [], hover
   // eigenen Dino, also kein isYou — sonst bliebe die Karte dort komplett leer.
   const self = players.find((p) => p.isYou);
   const showAll = !!opts.showAll;
-  const labels = [];
-  for (const p of players) {
-    if (p.isYou || p.isDead) continue;
-    if (!showAll) {
+  const highlight = opts.highlight instanceof Set ? opts.highlight : null;
+
+  if (!showAll) {
+    for (const p of players) {
+      if (p.isYou || p.isDead) continue;
       const inGroup = (self && self.groupId && p.groupId === self.groupId) || p.ovgroup;
       if (!inGroup) continue;
+      const { nx, ny } = worldToNorm(p.x, p.y);
+      drawGroupMember(ctx, nx * w, ny * h, p, iconScale);
     }
-    const { nx, ny } = worldToNorm(p.x, p.y);
-    const px = nx * w, py = ny * h;
-    if (!showAll) { drawGroupMember(ctx, px, py, p, iconScale); continue; }
-    drawPlayerDot(ctx, px, py, p, iconScale);
-    if (p.label1) labels.push({ px, py, p });
+  } else {
+    // Overwatch: erst gruppieren, dann zeichnen. Bei 80 Spielern liegen viele so
+    // dicht beieinander, dass einzelne Punkte zu einem Fleck verschmelzen — eine
+    // Ansammlung mit Zahl ist ehrlicher als uebereinanderliegende Punkte.
+    const pts = [];
+    for (const p of players) {
+      if (p.isYou || p.isDead) continue;
+      const { nx, ny } = worldToNorm(p.x, p.y);
+      pts.push({ p, px: nx * w, py: ny * h });
+    }
+    const clusters = clusterPoints(pts, (opts.clusterRadius ?? 13) * iconScale);
+    const labels = [];
+    for (const c of clusters) {
+      const hot = highlight && c.items.some((it) => highlight.has(it.p.steamId));
+      if (c.items.length === 1) {
+        drawPlayerDot(ctx, c.px, c.py, c.items[0].p, iconScale, hot);
+        // Hervorgehobene bekommen ihr Label IMMER, unabhaengig vom Zoom.
+        if (hot) drawNameTag(ctx, c.px, c.py, c.items[0].p.label1 || '', c.items[0].p.label2 || '', iconScale);
+        else if (c.items[0].p.label1) labels.push({ px: c.px, py: c.py, p: c.items[0].p });
+      } else {
+        drawCluster(ctx, c.px, c.py, c.items.length, iconScale, hot);
+      }
+    }
+    if (opts.labels !== false) placeLabels(ctx, labels, iconScale, opts, w, h);
+    // Trefferflaechen fuer Hover/Klick an den Aufrufer zurueck (Karten-Koordinaten).
+    if (opts.onHits) opts.onHits(clusters);
   }
-  if (showAll && opts.labels !== false) placeLabels(ctx, labels, iconScale, opts, w, h);
   if (self && !self.isDead) {
     const { nx, ny } = worldToNorm(self.x, self.y);
     drawPlayer(ctx, nx * w, ny * h, self, iconScale);
@@ -538,12 +561,60 @@ export function drawAiEncounters(ctx, w, h, sc, encounters, speciesShort = (x) =
 // Der Renderer bleibt bewusst dumm bezueglich Label-INHALT: der Aufrufer haengt
 // label1/label2 an die Spieler-Objekte (siehe shared/players.js). So bleiben
 // userLabel/baseClass aus der Karte heraus und sind einzeln testbar.
-function drawPlayerDot(ctx, px, py, p, scale) {
-  const col = p.roleColor || groupColorFor(p.steamId);
-  ctx.beginPath(); ctx.arc(px, py, 3.5 * scale, 0, Math.PI * 2);
+function drawPlayerDot(ctx, px, py, p, scale, hot) {
+  const col = hot ? '#f59e0b' : (p.roleColor || groupColorFor(p.steamId));
+  const r = (hot ? 7 : 5.5) * scale;
+  if (hot) { ctx.save(); ctx.shadowColor = '#f59e0b'; ctx.shadowBlur = 9 * scale; }
+  ctx.beginPath(); ctx.arc(px, py, r, 0, Math.PI * 2);
   ctx.fillStyle = col; ctx.fill();
-  ctx.lineWidth = Math.max(0.5, 1.2 * scale);
-  ctx.strokeStyle = 'rgba(0,0,0,0.85)'; ctx.stroke();
+  ctx.lineWidth = Math.max(0.6, 1.5 * scale);
+  ctx.strokeStyle = hot ? '#fff' : 'rgba(0,0,0,0.85)'; ctx.stroke();
+  if (hot) ctx.restore();
+}
+
+// Einfaches Greedy-Clustering im Bildraum: der erste Punkt oeffnet eine Gruppe,
+// alles innerhalb von `radius` faellt hinein. Kein k-means noetig — es geht nur
+// darum, uebereinanderliegende Punkte zusammenzufassen, und das Ergebnis muss
+// bei 80 Punkten und 60 fps stabil sein.
+function clusterPoints(pts, radius) {
+  const r2 = radius * radius;
+  const out = [];
+  for (const it of pts) {
+    let hit = null;
+    for (const c of out) {
+      const dx = c.px - it.px, dy = c.py - it.py;
+      if (dx * dx + dy * dy <= r2) { hit = c; break; }
+    }
+    if (hit) {
+      hit.items.push(it);
+      // Mittelpunkt nachfuehren, damit die Ansammlung mittig sitzt
+      hit.px = hit.items.reduce((a, x) => a + x.px, 0) / hit.items.length;
+      hit.py = hit.items.reduce((a, x) => a + x.py, 0) / hit.items.length;
+    } else {
+      out.push({ px: it.px, py: it.py, r: radius, items: [it] });
+    }
+  }
+  return out;
+}
+
+// Ansammlung: groesserer Ball in eigener Farbe + Anzahl. Bewusst NICHT in der
+// Spielerfarbe, damit "hier stehen mehrere" nicht wie ein einzelner Spieler wirkt.
+function drawCluster(ctx, px, py, n, scale, hot) {
+  const r = (7 + Math.min(6, n * 0.6)) * scale;
+  // Helle Fuellung mit dunkler Zahl: bindet die Ansammlung optisch an die
+  // Spielerpunkte und trennt sie von den Teleports, die ebenfalls nummerierte
+  // Kreise sind — nur eben in Lila. Gleiche Optik fuer zweierlei Bedeutung war
+  // im ersten Wurf genau der Fehler.
+  ctx.beginPath(); ctx.arc(px, py, r, 0, Math.PI * 2);
+  ctx.fillStyle = hot ? '#f59e0b' : '#e8e6ef';
+  ctx.fill();
+  ctx.lineWidth = Math.max(1, 2 * scale);
+  ctx.strokeStyle = 'rgba(0,0,0,0.9)';
+  ctx.stroke();
+  ctx.font = `bold ${Math.max(8, 10 * scale)}px system-ui`;
+  ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+  ctx.fillStyle = hot ? '#1a1a1a' : '#0d0918';
+  ctx.fillText(String(n), px, py + 0.5 * scale);
 }
 
 // Zweizeiliger Namenstag: Zeile 1 "RP (Steam, Discord)", Zeile 2 "Dino · Grow".

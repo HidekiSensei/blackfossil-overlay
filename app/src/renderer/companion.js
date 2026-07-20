@@ -6,11 +6,12 @@ import { el, makeApi } from './shared/core.js';
 import { decoratePositions, buildUserDir } from './shared/players.js';
 import { usersFrom } from './shared/users.js';
 import { makePerms, can } from './shared/perms.js';
+import { openPlayerList, closePlayerList, isPlayerListOpen } from './companion/playerlist.js';
 import {
   loadMapImage, drawFullMap, drawHeatmap, drawAiEncounters, setZones, setCalAffine,
   ZONE_LAYERS, ZONE_META, setZoneLayer, isZoneLayerVisible,
 } from './map.js';
-import { baseClass } from './shared/format.js';
+import { baseClass, escapeHtml } from './shared/format.js';
 import { initServer, renderServer, stopServer } from './companion/panels/server.js';
 import { initAdmin, renderAdmin } from './companion/panels/admin.js';
 import { initTeam, renderTeam } from './companion/panels/team.js';
@@ -68,6 +69,9 @@ let dirty = true;             // Dirty-Flag: neu zeichnen nur bei Poll oder Pan/
 let showAll = localStorage.getItem('bf-cp-showall') === '1';
 let labelMinZoom = Number(localStorage.getItem('bf-cp-labelzoom') || 1.6);
 let lastStat = { total: 0, drawn: 0, belowZoom: false };
+let hits = [];                    // Cluster aus dem letzten Zeichnen (Karten-Koordinaten)
+let highlight = new Set();        // hervorgehobene SteamIDs (Spielerliste)
+let plList = null;                // offene Spielerliste (zum Nachziehen beim Poll)
 
 function render() {
   const cv = el('cpMapCanvas');
@@ -106,7 +110,9 @@ function render() {
     centerX: (view.x0 + view.x1) / 2,
     centerY: (view.y0 + view.y1) / 2,
     viewX0: view.x0, viewY0: view.y0, viewX1: view.x1, viewY1: view.y1,
+    highlight,
     onLabelStats: (s) => { lastStat = s; },
+    onHits: (h) => { hits = h; },
   });
   if (showAi && encounters.length) drawAiEncounters(ctx, MAP_SIZE, MAP_SIZE, 1 / sc, encounters, baseClass);
   ctx.setTransform(1, 0, 0, 1, 0, 0);
@@ -156,6 +162,8 @@ async function pollPositions() {
     // ist. Aendert sich das, muss die Navigation nachziehen.
     const online = players.some((p) => p.isYou) || !!(d.you && d.you.steamId);
     if (online !== perms.online) { perms.online = online; applyNavPermissions(); }
+    // Die offene Spielerliste lebt von denselben Daten.
+    if (plList && isPlayerListOpen()) plList.refresh();
     dirty = true;
   } catch (err) {
     const s = el('cpMapStat');
@@ -220,7 +228,14 @@ function initMapInteraction() {
     dirty = true;
   }, { passive: false });
 
-  cv.addEventListener('mousedown', (e) => { dragging = true; lastX = e.clientX; lastY = e.clientY; });
+  cv.addEventListener('mousedown', (e) => { dragging = true; lastX = e.clientX; lastY = e.clientY; hideTip(); });
+  cv.addEventListener('mouseleave', hideTip);
+  cv.addEventListener('mousemove', (e) => {
+    if (dragging) return;
+    const r = cv.getBoundingClientRect();
+    const c = hitAt(e.clientX - r.left, e.clientY - r.top);
+    if (c) showTip(c, e.clientX - r.left, e.clientY - r.top); else hideTip();
+  });
   window.addEventListener('mouseup', () => { dragging = false; });
   window.addEventListener('mousemove', (e) => {
     if (!dragging) return;
@@ -232,12 +247,70 @@ function initMapInteraction() {
   });
 }
 
-// Pan so begrenzen, dass nie ueber den Kartenrand hinaus geschaut wird.
+// Pan begrenzen — aber mit Spielraum ueber den Rand hinaus, damit sich auch die
+// Kartenkante mittig legen laesst. Der dabei entstehende leere Bereich ist
+// gewollt; ohne den Spielraum klebt der Rand immer am Fensterrand.
+const PAN_MARGIN = 0.45;   // Anteil der Ansichtsgroesse, den man ueberziehen darf
 function clampPan() {
   const sc = totalScale();
   const mapW = MAP_SIZE * sc, mapH = MAP_SIZE * sc;
-  panX = Math.min(0, Math.max(cw - mapW, panX));
-  panY = Math.min(0, Math.max(ch - mapH, panY));
+  const mx = cw * PAN_MARGIN, my = ch * PAN_MARGIN;
+  panX = Math.min(mx, Math.max(cw - mapW - mx, panX));
+  panY = Math.min(my, Math.max(ch - mapH - my, panY));
+}
+
+// Karten- -> Bildschirmkoordinaten (CSS-Pixel im Wrapper)
+function toScreen(mx, my) {
+  const sc = totalScale();
+  return { x: mx * sc + panX, y: my * sc + panY };
+}
+
+function hitAt(sx, sy) {
+  const sc = totalScale();
+  let best = null, bestD = Infinity;
+  for (const c of hits) {
+    const s0 = toScreen(c.px, c.py);
+    const d = Math.hypot(s0.x - sx, s0.y - sy);
+    // Trefferradius mindestens 12 px, damit auch einzelne Punkte gut zu treffen sind
+    const r = Math.max(12, (c.items.length > 1 ? 13 : 7) * 1 + 4);
+    if (d <= r && d < bestD) { best = c; bestD = d; }
+  }
+  return best;
+}
+
+function showTip(c, sx, sy) {
+  const tip = el('cpMapTip');
+  if (!tip) return;
+  const names = c.items.map((it) => it.p.label1 || it.p.name || it.p.steamId);
+  const sub = c.items.length === 1 ? (c.items[0].p.label2 || '') : `${c.items.length} Spieler`;
+  tip.innerHTML = `<div class="cp-tip-head">${escapeHtml(sub)}</div>`
+    + names.slice(0, 20).map((n) => `<div class="cp-tip-row">${escapeHtml(n)}</div>`).join('')
+    + (names.length > 20 ? `<div class="cp-tip-more">und ${names.length - 20} weitere…</div>` : '');
+  tip.hidden = false;
+  // Am Rand nach innen kippen, damit der Tooltip nicht aus dem Fenster laeuft
+  const r = tip.getBoundingClientRect();
+  const wrap = el('cpMapWrap').getBoundingClientRect();
+  let x = sx + 14, y = sy + 14;
+  if (x + r.width > wrap.width) x = sx - r.width - 14;
+  if (y + r.height > wrap.height) y = sy - r.height - 14;
+  tip.style.left = Math.max(4, x) + 'px';
+  tip.style.top = Math.max(4, y) + 'px';
+}
+
+function hideTip() { const t = el('cpMapTip'); if (t) t.hidden = true; }
+
+// Auf einen Spieler zentrieren (Alt-Klick in der Spielerliste).
+function centerOnPlayer(steamId) {
+  const p = players.find((x) => x.steamId === steamId);
+  if (!p) return;
+  const c = hits.find((h) => h.items.some((it) => it.p.steamId === steamId));
+  const mx = c ? c.px : null;
+  if (mx === null) return;
+  const sc = totalScale();
+  panX = cw / 2 - c.px * sc;
+  panY = ch / 2 - c.py * sc;
+  clampPan();
+  dirty = true;
 }
 
 function resetView() {
@@ -435,6 +508,22 @@ async function boot() {
     dirty = true;
   };
   el('cpMapReset').onclick = resetView;
+
+  // Spielerliste (Team-only) — dieselbe Bedingung wie die Overwatch-Ansicht.
+  const plBtn = el('cpPlayersBtn');
+  if (plBtn) {
+    plBtn.hidden = !can(perms, 'map.showAll');
+    plBtn.onclick = () => {
+      if (isPlayerListOpen()) { closePlayerList(); plBtn.setAttribute('aria-pressed', 'false'); return; }
+      plList = openPlayerList({
+        players: () => players,
+        highlight,
+        onChange: () => { dirty = true; },
+        onFocus: (steamId) => centerOnPlayer(steamId),
+      });
+      plBtn.setAttribute('aria-pressed', 'true');
+    };
+  }
 
   if (!can(perms, 'map.showAll')) { showAll = false; showHeat = false; }
   restoreZonePrefs();
