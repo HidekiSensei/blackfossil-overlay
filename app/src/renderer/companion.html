@@ -31,7 +31,6 @@
     <main id="cpMain">
       <section class="cp-view" data-view="map">
         <div class="cp-bar">
-          <label class="cp-check"><input type="checkbox" id="cpShowAll" /> Alle Spieler anzeigen</label>
           <span id="cpMapStat" class="cp-muted"></span>
           <div class="cp-bar-right">
             <span class="cp-muted">Tags ab Zoom</span>
@@ -40,7 +39,10 @@
             <button id="cpMapReset" class="cp-btn cp-btn-sm">Ansicht zurücksetzen</button>
           </div>
         </div>
-        <div id="cpMapWrap"><canvas id="cpMapCanvas" width="1000" height="1000"></canvas></div>
+        <div id="cpMapWrap">
+          <canvas id="cpMapCanvas"></canvas>
+          <div id="cpLegend"></div>
+        </div>
       </section>
 
       <section class="cp-view" data-view="team" hidden></section>

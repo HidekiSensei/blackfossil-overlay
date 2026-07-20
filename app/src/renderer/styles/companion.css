@@ -263,3 +263,27 @@ input[type="range"] { accent-color: var(--accent); }
   border-radius: var(--cp-r-md); text-align: left; word-break: break-word;
 }
 .cp-msg-mine .cp-msg-body { background: rgba(var(--accent-rgb), 0.16); border-color: rgba(var(--accent-rgb), 0.34); }
+
+/* ── Karten-Legende (schwebt über der Canvas) ───────────────────────────── */
+#cpLegend {
+  position: absolute; left: var(--cp-s3); bottom: var(--cp-s3);
+  padding: var(--cp-s3); border-radius: var(--cp-r-md);
+  background: rgba(13, 9, 24, 0.86); border: 1px solid var(--cp-line);
+  backdrop-filter: blur(6px); font-size: 12px; user-select: none;
+}
+.cp-leg-title {
+  font-size: 10px; font-weight: 650; text-transform: uppercase;
+  letter-spacing: 0.07em; color: var(--muted); margin-bottom: 5px;
+}
+.cp-leg-row { display: flex; align-items: center; gap: var(--cp-s2); cursor: pointer; padding: 2px 0; }
+.cp-leg-row input { width: auto; margin: 0; cursor: pointer; accent-color: var(--accent); }
+.cp-leg-swatch { width: 11px; height: 11px; border-radius: 3px; flex: none; border: 1px solid rgba(0,0,0,.5); }
+.cp-leg-tp { background: #38bdf8; border-radius: 50%; }
+.cp-leg-ai { background: #ef4444; transform: rotate(45deg); border-radius: 2px; }
+.cp-leg-player { background: #e8e6ef; border-radius: 50%; }
+
+/* Canvas fuellt jetzt den Bereich — kein aspect-ratio, keine toten Balken mehr */
+#cpMapCanvas { display: block; width: 100%; height: 100%; cursor: grab; touch-action: none; }
+#cpMapCanvas:active { cursor: grabbing; }
+.cp-leg-heat { background: linear-gradient(135deg, #f59e0b, #ef4444); }
+.cp-leg-off { opacity: .4; cursor: default; }

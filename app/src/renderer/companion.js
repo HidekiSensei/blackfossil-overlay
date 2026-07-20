@@ -5,7 +5,11 @@
 import { el, makeApi } from './shared/core.js';
 import { decoratePositions, buildUserDir } from './shared/players.js';
 import { usersFrom } from './shared/users.js';
-import { loadMapImage, drawFullMap, setZones, loadZoneLayer, setCalAffine } from './map.js';
+import {
+  loadMapImage, drawFullMap, drawHeatmap, drawAiEncounters, setZones, setCalAffine,
+  ZONE_LAYERS, ZONE_META, setZoneLayer, isZoneLayerVisible,
+} from './map.js';
+import { baseClass } from './shared/format.js';
 import { initServer, renderServer, stopServer } from './companion/panels/server.js';
 import { initAdmin, renderAdmin } from './companion/panels/admin.js';
 import { initTeam, renderTeam } from './companion/panels/team.js';
@@ -32,6 +36,21 @@ function toast(msg, kind = '') {
 let players = [];
 let userDir = new Map();
 let zoom = 1, panX = 0, panY = 0;
+let teleports = [];
+let encounters = [];
+let showTp = localStorage.getItem('bf-cp-tp') !== '0';
+let showAi = localStorage.getItem('bf-cp-ai') !== '0';
+let showHeat = localStorage.getItem('bf-cp-heat') === '1';
+const MAX_ZOOM = 10;
+
+// Die Canvas fuellt den verfuegbaren Bereich; das Kartenbild ist quadratisch.
+// baseScale bildet die 1000x1000-Karte so ab, dass sie den Bereich VOLLSTAENDIG
+// bedeckt (cover, nicht contain) — sonst blieben bei einem breiten Fenster
+// links und rechts tote Balken. Was ueber den Rand laeuft, erreicht man per Pan.
+const MAP_SIZE = 1000;
+let cw = MAP_SIZE, ch = MAP_SIZE;   // Canvas-Groesse in CSS-Pixeln
+function baseScale() { return Math.max(cw / MAP_SIZE, ch / MAP_SIZE); }
+function totalScale() { return baseScale() * zoom; }
 let dirty = true;             // Dirty-Flag: neu zeichnen nur bei Poll oder Pan/Zoom
 let showAll = localStorage.getItem('bf-cp-showall') === '1';
 let labelMinZoom = Number(localStorage.getItem('bf-cp-labelzoom') || 1.6);
@@ -41,32 +60,67 @@ function render() {
   const cv = el('cpMapCanvas');
   if (!cv) return;
   const ctx = cv.getContext('2d');
-  const w = cv.width, h = cv.height;
+  const dpr = window.devicePixelRatio || 1;
+  const sc = totalScale();
   ctx.setTransform(1, 0, 0, 1, 0, 0);
-  ctx.clearRect(0, 0, w, h);
-  ctx.setTransform(zoom, 0, 0, zoom, panX, panY);
-  drawFullMap({ ctx, w, h }, players, [], [], null, 1 / zoom, {
+  ctx.clearRect(0, 0, cv.width, cv.height);
+  // DPR zuerst, dann Karten-Transform — so bleibt alles in CSS-Pixeln gerechnet
+  // und die Karte ist auf HiDPI-Schirmen trotzdem scharf.
+  ctx.setTransform(dpr * sc, 0, 0, dpr * sc, dpr * panX, dpr * panY);
+
+  const view = {
+    x0: -panX / sc, y0: -panY / sc,
+    x1: (cw - panX) / sc, y1: (ch - panY) / sc,
+  };
+
+  // Heatmap ersetzt die Einzeldarstellung: sie zeigt nur Ansammlungen (ab 4
+  // Dinos) und keine exakten Positionen — dafuer gaebe es sonst zwei
+  // widerspruechliche Ebenen uebereinander. Kein `me`, die Companion hat
+  // keinen eigenen Dino.
+  if (showHeat) {
+    drawHeatmap({ ctx, w: MAP_SIZE, h: MAP_SIZE }, players, null);
+    ctx.setTransform(1, 0, 0, 1, 0, 0);
+    lastStat = { total: 0, drawn: 0, belowZoom: false, heat: true };
+    updateMapStat();
+    return;
+  }
+
+  drawFullMap({ ctx, w: MAP_SIZE, h: MAP_SIZE }, players, [], showTp ? teleports : [], null, 1 / sc, {
     showAll,
     zoom,
     labelMinZoom,
     maxLabels: 60,
-    centerX: (w / 2 - panX) / zoom,
-    centerY: (h / 2 - panY) / zoom,
-    // Sichtbarer Ausschnitt, damit Tags am Rand nach innen geklemmt werden
-    viewX0: -panX / zoom,
-    viewY0: -panY / zoom,
-    viewX1: (w - panX) / zoom,
-    viewY1: (h - panY) / zoom,
+    centerX: (view.x0 + view.x1) / 2,
+    centerY: (view.y0 + view.y1) / 2,
+    viewX0: view.x0, viewY0: view.y0, viewX1: view.x1, viewY1: view.y1,
     onLabelStats: (s) => { lastStat = s; },
   });
+  if (showAi && encounters.length) drawAiEncounters(ctx, MAP_SIZE, MAP_SIZE, 1 / sc, encounters, baseClass);
   ctx.setTransform(1, 0, 0, 1, 0, 0);
   updateMapStat();
+}
+
+// Canvas an den Container anpassen (CSS-Pixel + DPR fuer scharfe Darstellung).
+function resizeCanvas() {
+  const cv = el('cpMapCanvas'), wrap = el('cpMapWrap');
+  if (!cv || !wrap) return;
+  const r = wrap.getBoundingClientRect();
+  if (r.width < 2 || r.height < 2) return;
+  const dpr = window.devicePixelRatio || 1;
+  cw = r.width; ch = r.height;
+  cv.width = Math.round(cw * dpr);
+  cv.height = Math.round(ch * dpr);
+  cv.style.width = cw + 'px';
+  cv.style.height = ch + 'px';
+  clampPan();
+  dirty = true;
 }
 
 function updateMapStat() {
   const s = el('cpMapStat');
   if (!s) return;
   const alive = players.filter((p) => !p.isDead).length;
+  if (showHeat) { s.textContent = `${alive} online · Heatmap (nur Ansammlungen ab 4)`; return; }
   if (!showAll) { s.textContent = `${alive} online`; return; }
   s.textContent = lastStat.belowZoom
     ? `${alive} online · Namen ab ${labelMinZoom.toFixed(1)}× Zoom`
@@ -107,9 +161,19 @@ async function loadCalibration() {
 }
 
 async function loadZones() {
-  try { setZones(await api('GET', '/zones')); } catch {}
-  for (const k of ['sanctuary', 'patrol', 'migration']) { try { await loadZoneLayer(k); } catch {} }
+  try { setZones(await api('GET', '/zones')); } catch { /* Karte ohne Zonen */ }
   dirty = true;
+}
+
+async function loadTeleports() {
+  try { const d = await api('GET', '/teleports'); teleports = d.teleports || d || []; dirty = true; }
+  catch { /* Teleports optional */ }
+}
+
+async function loadEncounters() {
+  // Staff-gated und statische Konfiguration — einmal beim Start reicht.
+  try { const d = await api('GET', '/ai/encounters'); encounters = d.encounters || d || []; dirty = true; }
+  catch { /* Encounter optional */ }
 }
 
 // ── Karten-Interaktion ─────────────────────────────────────────────────────
@@ -122,12 +186,13 @@ function initMapInteraction() {
     // Um den Cursor zoomen, nicht um die Ecke — sonst verliert man beim
     // Reinzoomen sofort die Stelle, die man ansehen wollte.
     const r = cv.getBoundingClientRect();
-    const cx = (e.clientX - r.left) * (cv.width / r.width);
-    const cy = (e.clientY - r.top) * (cv.height / r.height);
+    const cx = e.clientX - r.left, cy = e.clientY - r.top;   // CSS-Pixel
     const f = e.deltaY < 0 ? 1.15 : 1 / 1.15;
-    const nz = Math.min(8, Math.max(1, zoom * f));
-    panX = cx - (cx - panX) * (nz / zoom);
-    panY = cy - (cy - panY) * (nz / zoom);
+    const nz = Math.min(MAX_ZOOM, Math.max(1, zoom * f));
+    if (nz === zoom) return;
+    const k = nz / zoom;
+    panX = cx - (cx - panX) * k;
+    panY = cy - (cy - panY) * k;
     zoom = nz;
     clampPan();
     dirty = true;
@@ -137,24 +202,30 @@ function initMapInteraction() {
   window.addEventListener('mouseup', () => { dragging = false; });
   window.addEventListener('mousemove', (e) => {
     if (!dragging) return;
-    const r = cv.getBoundingClientRect();
-    const sc = cv.width / r.width;
-    panX += (e.clientX - lastX) * sc;
-    panY += (e.clientY - lastY) * sc;
+    panX += e.clientX - lastX;
+    panY += e.clientY - lastY;
     lastX = e.clientX; lastY = e.clientY;
     clampPan();
     dirty = true;
   });
 }
 
+// Pan so begrenzen, dass nie ueber den Kartenrand hinaus geschaut wird.
 function clampPan() {
-  const cv = el('cpMapCanvas');
-  const min = cv.width - cv.width * zoom;
-  panX = Math.min(0, Math.max(min, panX));
-  panY = Math.min(0, Math.max(min, panY));
+  const sc = totalScale();
+  const mapW = MAP_SIZE * sc, mapH = MAP_SIZE * sc;
+  panX = Math.min(0, Math.max(cw - mapW, panX));
+  panY = Math.min(0, Math.max(ch - mapH, panY));
 }
 
-function resetView() { zoom = 1; panX = 0; panY = 0; dirty = true; }
+function resetView() {
+  zoom = 1;
+  // Bei cover ist eine Achse groesser als der Bereich — mittig ausrichten.
+  const sc = totalScale();
+  panX = (cw - MAP_SIZE * sc) / 2;
+  panY = (ch - MAP_SIZE * sc) / 2;
+  dirty = true;
+}
 
 // ── Panels ─────────────────────────────────────────────────────────────────
 // Ein ctx statt globaler Zugriffe: die Panels kennen weder window.bf noch den
@@ -174,6 +245,64 @@ const PANELS = {
   support: renderSupport,
   lexikon: renderLexikon,
 };
+
+// ── Legende & Layer ────────────────────────────────────────────────────────
+// Zonen-Sichtbarkeit lebt in map.js (ZONE_LAYERS), damit Karte und Legende nicht
+// auseinanderlaufen. Hier steht nur die Bedienung — der Zustand wird zusaetzlich
+// in der localStorage gehalten, damit er einen Neustart ueberlebt.
+function renderLegend() {
+  const box = el('cpLegend');
+  if (!box) return;
+  const rows = Object.keys(ZONE_LAYERS).map((k) => {
+    const meta = ZONE_META[k] || {};
+    const on = isZoneLayerVisible(k);
+    return `<label class="cp-leg-row"><input type="checkbox" data-zone="${k}"${on ? ' checked' : ''}>`
+      + `<span class="cp-leg-swatch" style="background:${meta.color || '#888'}"></span>`
+      + `<span>${meta.label || k}</span></label>`;
+  }).join('');
+  box.innerHTML = `<div class="cp-leg-title">Zonen</div>${rows}`
+    + `<div class="cp-leg-title" style="margin-top:var(--cp-s3)">Marker</div>`
+    + `<label class="cp-leg-row${showHeat ? ' cp-leg-off' : ''}"><input type="checkbox" data-marker="tp"${showTp ? ' checked' : ''}${showHeat ? ' disabled' : ''}>`
+    + `<span class="cp-leg-swatch cp-leg-tp"></span><span>Teleports</span></label>`
+    + `<label class="cp-leg-row${showHeat ? ' cp-leg-off' : ''}"><input type="checkbox" data-marker="ai"${showAi ? ' checked' : ''}${showHeat ? ' disabled' : ''}>`
+    + `<span class="cp-leg-swatch cp-leg-ai"></span><span>KI-Encounter</span></label>`
+    + `<label class="cp-leg-row${showHeat ? ' cp-leg-off' : ''}"><input type="checkbox" data-marker="players"${showAll ? ' checked' : ''}${showHeat ? ' disabled' : ''}>`
+    + `<span class="cp-leg-swatch cp-leg-player"></span><span>Spieler</span></label>`
+    + `<label class="cp-leg-row"><input type="checkbox" data-marker="heat"${showHeat ? ' checked' : ''}>`
+    + `<span class="cp-leg-swatch cp-leg-heat"></span><span>Heatmap</span></label>`;
+
+  box.querySelectorAll('[data-zone]').forEach((c) => {
+    c.onchange = () => {
+      setZoneLayer(c.dataset.zone, c.checked);
+      localStorage.setItem('bf-cp-zone-' + c.dataset.zone, c.checked ? '1' : '0');
+      dirty = true;
+    };
+  });
+  box.querySelectorAll('[data-marker]').forEach((c) => {
+    c.onchange = () => {
+      const k = c.dataset.marker;
+      if (k === 'tp') { showTp = c.checked; localStorage.setItem('bf-cp-tp', c.checked ? '1' : '0'); }
+      else if (k === 'ai') { showAi = c.checked; localStorage.setItem('bf-cp-ai', c.checked ? '1' : '0'); }
+      else if (k === 'heat') {
+        showHeat = c.checked;
+        localStorage.setItem('bf-cp-heat', c.checked ? '1' : '0');
+        // Die uebrigen Marker sind im Heatmap-Modus wirkungslos — ausgrauen,
+        // statt sie anklickbar zu lassen und nichts zu tun.
+        renderLegend();
+      }
+      else { showAll = c.checked; localStorage.setItem('bf-cp-showall', c.checked ? '1' : '0'); }
+      dirty = true;
+    };
+  });
+}
+
+// Gespeicherte Layer-Zustaende beim Start in map.js zurueckspielen.
+function restoreZonePrefs() {
+  for (const k of Object.keys(ZONE_LAYERS)) {
+    const v = localStorage.getItem('bf-cp-zone-' + k);
+    if (v !== null) setZoneLayer(k, v === '1');
+  }
+}
 
 // ── Navigation ─────────────────────────────────────────────────────────────
 function navTo(view) {
@@ -236,9 +365,6 @@ async function boot() {
   // Admin-only-Punkte ausblenden statt deaktivieren — tote Buttons verrotten.
   if (!roles.admin) document.querySelectorAll('.cp-nav-btn[data-view="admin"], .cp-nav-btn[data-view="server"]').forEach((b) => { b.hidden = true; });
 
-  const showAllChk = el('cpShowAll');
-  showAllChk.checked = showAll;
-  showAllChk.onchange = () => { showAll = showAllChk.checked; localStorage.setItem('bf-cp-showall', showAll ? '1' : '0'); dirty = true; };
   const lz = el('cpLabelZoom');
   lz.value = String(labelMinZoom);
   el('cpLabelZoomVal').textContent = labelMinZoom.toFixed(1) + '×';
@@ -250,12 +376,21 @@ async function boot() {
   };
   el('cpMapReset').onclick = resetView;
 
+  restoreZonePrefs();
+  renderLegend();
   navTo(localStorage.getItem('bf-cp-view') || 'map');
   initMapInteraction();
+  resizeCanvas();
+  resetView();
+  // Fenstergroesse und Panel-Wechsel aendern die verfuegbare Flaeche.
+  new ResizeObserver(() => resizeCanvas()).observe(el('cpMapWrap'));
+
   await loadMapImage('assets/map.jpg');
   dirty = true;
   await loadCalibration();
   loadZones();
+  loadTeleports();
+  loadEncounters();
   if (roles.staff) await loadUserDir();
   await pollPositions();
   setInterval(pollPositions, 1000);

@@ -143,7 +143,13 @@ export function loadMapImage(src) {
 // sondern aus den vom Team GEZEICHNETEN Zonen als reiner UMRISS gerendert (siehe drawZones).
 // ZONE_LAYERS hält nur noch den Ein/Aus-Status pro Typ (Default sichtbar). loadZoneLayer bleibt
 // als No-Op erhalten, damit bestehende Aufrufer nicht brechen.
+// Sichtbarkeit je Zonentyp. Frueher nur die drei Umriss-Typen — pvp/pve waren
+// gar nicht schaltbar. Alle fuenf stehen jetzt drin und sind per Default an,
+// das Overlay verhaelt sich also unveraendert; nur die Companion bietet
+// Schalter fuer alle an.
 export const ZONE_LAYERS = {
+  pvp:       { visible: true, label: '⚔️ PvP' },
+  pve:       { visible: true, label: '🕊️ PvE' },
   sanctuary: { visible: true, label: '🛡️ Sanctuary' },
   patrol:    { visible: true, label: '🐾 Patrol' },
   migration: { visible: true, label: '🧭 Migration' },
@@ -379,9 +385,9 @@ function drawZones(ctx, project) {
     const meta = ZONE_META[z.type] || ZONE_META.pvp;
     const outline = OUTLINE_TYPES.has(z.type);
     const isGolden = !!(z.id && z.id === goldenZoneId);
-    // Umriss-Zonen (Sanctuary/Patrol/Migration) nur zeichnen, wenn ihr Layer sichtbar ist.
-    // Die goldene Zone wird IMMER hervorgehoben — auch bei ausgeblendetem Patrol-Layer.
-    if (outline && !isGolden && !isZoneLayerVisible(z.type)) continue;
+    // Layer-Sichtbarkeit gilt fuer ALLE Typen. Die goldene Zone wird IMMER
+    // hervorgehoben — auch bei ausgeblendetem Patrol-Layer.
+    if (!isGolden && !isZoneLayerVisible(z.type)) continue;
 
     const color = meta.color;
     // Punkte in Aufnahme-Reihenfolge (unterstützt komplexe/konkave Formen)
@@ -497,6 +503,37 @@ function drawGroupMember(ctx, px, py, p, scale) {
     }
   }
 }
+// ── KI-Encounter-Layer (Staff) ──────────────────────────────────────────────
+// Spawnpunkte als rote Rauten, Patrouillen als gestrichelte Linien. Aus
+// overlay.js hierher gezogen, damit Overlay und Companion dasselbe zeichnen.
+// speciesShort wird injiziert, damit map.js nichts ueber Dino-Klassennamen
+// wissen muss (dafuer gibt es shared/format.js baseClass).
+export function drawAiEncounters(ctx, w, h, sc, encounters, speciesShort = (x) => x) {
+  const placed = (p) => p && (p.x !== 0 || p.y !== 0);
+  for (const e of encounters || []) {
+    if (e.enabled === false || !placed(e.spawn)) continue;
+    const s0 = worldToNorm(e.spawn.x, e.spawn.y);
+    const sx = s0.nx * w, sy = s0.ny * h;
+    const patrol = Array.isArray(e.patrol) ? e.patrol.filter(placed) : [];
+    if (patrol.length >= 2) {
+      ctx.beginPath();
+      patrol.forEach((pt, i) => { const n = worldToNorm(pt.x, pt.y); const x = n.nx * w, y = n.ny * h; i ? ctx.lineTo(x, y) : ctx.moveTo(x, y); });
+      ctx.setLineDash([6 * sc, 4 * sc]); ctx.lineWidth = 2 * sc; ctx.strokeStyle = 'rgba(248,113,113,0.9)'; ctx.stroke(); ctx.setLineDash([]);
+      for (const pt of patrol) { const n = worldToNorm(pt.x, pt.y); ctx.beginPath(); ctx.arc(n.nx * w, n.ny * h, 3 * sc, 0, 2 * Math.PI); ctx.fillStyle = '#f87171'; ctx.fill(); }
+    }
+    const d = 6 * sc;
+    ctx.save(); ctx.translate(sx, sy); ctx.rotate(Math.PI / 4);
+    ctx.fillStyle = '#ef4444'; ctx.fillRect(-d, -d, 2 * d, 2 * d);
+    ctx.lineWidth = 1.5 * sc; ctx.strokeStyle = '#fff'; ctx.strokeRect(-d, -d, 2 * d, 2 * d);
+    ctx.restore();
+    const night = e.params && e.params.activeAt === 'night';
+    const label = `${e.name || speciesShort(e.species)}${e.count > 1 ? ' ×' + e.count : ''}${night ? ' 🌙' : ''}`;
+    ctx.font = `bold ${Math.max(9, Math.round(11 * sc))}px sans-serif`; ctx.textAlign = 'center'; ctx.textBaseline = 'bottom';
+    ctx.lineWidth = 3 * sc; ctx.strokeStyle = 'rgba(0,0,0,0.85)'; ctx.strokeText(label, sx, sy - 10 * sc);
+    ctx.fillStyle = '#fecaca'; ctx.fillText(label, sx, sy - 10 * sc);
+  }
+}
+
 // ── Overwatch-Darstellung (Companion): alle Spieler als Punkt + zweizeiliger Tag ──
 // Der Renderer bleibt bewusst dumm bezueglich Label-INHALT: der Aufrufer haengt
 // label1/label2 an die Spieler-Objekte (siehe shared/players.js). So bleiben

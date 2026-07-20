@@ -1,5 +1,5 @@
 import { Room, RoomEvent, Track, ParticipantEvent, AudioPresets } from 'livekit-client';
-import { loadMapImage, drawFullMap, drawMinimap, drawHeatmap, normToWorld, worldToNorm, zoneAt, zonesAt, resetCal, solveAffine, getCal, setCalAffine, setZones, newZone, ZONES, ZONE_TYPES, ZONE_META, loadZoneLayer, setZoneLayer, isZoneLayerVisible, setGoldenZone, goldenZoneCenter, groupColorFor, setMarkerStyle } from './map.js';
+import { loadMapImage, drawFullMap, drawMinimap, drawHeatmap, normToWorld, worldToNorm, zoneAt, zonesAt, resetCal, solveAffine, getCal, setCalAffine, setZones, newZone, ZONES, ZONE_TYPES, ZONE_META, loadZoneLayer, setZoneLayer, isZoneLayerVisible, setGoldenZone, goldenZoneCenter, groupColorFor, setMarkerStyle, drawAiEncounters } from './map.js';
 import { el, apiErr, makeApi, makeApiAction, armConfirm } from './shared/core.js';
 import { baseClass, fmtGrow, escapeHtml, fmtTod } from './shared/format.js';
 import { USER_POOLS, userLabel, warnItemUser, matchUser } from './shared/users.js';
@@ -1708,7 +1708,7 @@ function renderBigMap() {
   const view = { ctx, w: cv.width, h: cv.height };
   if (heatmapMode) drawHeatmap(view, players, me);
   else drawFullMap(view, players, waypoints, teleports, hoveredTp, 1 / mapZoom);
-  if (!heatmapMode && isTeam && aiLayerOn) drawAiEncounters(ctx, cv.width, cv.height, 1 / mapZoom);
+  if (!heatmapMode && isTeam && aiLayerOn) drawAiEncounters(ctx, cv.width, cv.height, 1 / mapZoom, aiEncounters, baseClass);
   ctx.setTransform(1, 0, 0, 1, 0, 0);
   if (calibMode) drawCalibOverlay(ctx, cv.width, cv.height);
   renderMapGroup();
@@ -1747,34 +1747,6 @@ function renderMapGroup() {
 // Zeichnet die vom Game-Server (/ai/encounters) gelieferten Spawnpunkte (rote Rauten) und
 // Patrouillen (gestrichelte Linien) auf die große Karte. Platzhalter-Einträge mit Spawn {0,0}
 // (noch nicht platziert) werden übersprungen. sc = 1/mapZoom hält Marker/Text zoom-konstant.
-function drawAiEncounters(ctx, w, h, sc) {
-  const placed = (p) => p && (p.x !== 0 || p.y !== 0);
-  for (const e of aiEncounters) {
-    if (e.enabled === false || !placed(e.spawn)) continue;
-    const s = worldToNorm(e.spawn.x, e.spawn.y);
-    const sx = s.nx * w, sy = s.ny * h;
-    // Patrouille: gestrichelte Linie + Stützpunkte
-    const patrol = Array.isArray(e.patrol) ? e.patrol.filter(placed) : [];
-    if (patrol.length >= 2) {
-      ctx.beginPath();
-      patrol.forEach((pt, i) => { const n = worldToNorm(pt.x, pt.y); const x = n.nx * w, y = n.ny * h; i ? ctx.lineTo(x, y) : ctx.moveTo(x, y); });
-      ctx.setLineDash([6 * sc, 4 * sc]); ctx.lineWidth = 2 * sc; ctx.strokeStyle = 'rgba(248,113,113,0.9)'; ctx.stroke(); ctx.setLineDash([]);
-      for (const pt of patrol) { const n = worldToNorm(pt.x, pt.y); ctx.beginPath(); ctx.arc(n.nx * w, n.ny * h, 3 * sc, 0, 2 * Math.PI); ctx.fillStyle = '#f87171'; ctx.fill(); }
-    }
-    // Spawn-Marker: rote Raute mit weißem Rand
-    const d = 6 * sc;
-    ctx.save(); ctx.translate(sx, sy); ctx.rotate(Math.PI / 4);
-    ctx.fillStyle = '#ef4444'; ctx.fillRect(-d, -d, 2 * d, 2 * d);
-    ctx.lineWidth = 1.5 * sc; ctx.strokeStyle = '#fff'; ctx.strokeRect(-d, -d, 2 * d, 2 * d);
-    ctx.restore();
-    // Label: Encounter-Name + Anzahl + Nacht-Icon
-    const night = e.params && e.params.activeAt === 'night';
-    const label = `${e.name || baseClass(e.species)}${e.count > 1 ? ' ×' + e.count : ''}${night ? ' 🌙' : ''}`;
-    ctx.font = `bold ${Math.max(9, Math.round(11 * sc))}px sans-serif`; ctx.textAlign = 'center'; ctx.textBaseline = 'bottom';
-    ctx.lineWidth = 3 * sc; ctx.strokeStyle = 'rgba(0,0,0,0.85)'; ctx.strokeText(label, sx, sy - 10 * sc);
-    ctx.fillStyle = '#fecaca'; ctx.fillText(label, sx, sy - 10 * sc);
-  }
-}
 // Encounters vom Backend holen (staff-gated). Statische Konfig → ein Fetch pro Karten-Öffnen reicht.
 async function loadAiEncounters() {
   if (!isTeam || !sessionToken) return;
