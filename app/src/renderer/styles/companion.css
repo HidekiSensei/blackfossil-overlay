@@ -435,3 +435,32 @@ input[type="range"] { accent-color: var(--accent); }
    etwas tut. */
 #cpMapCanvas.cp-editing { cursor: crosshair; }
 #cpMapCanvas.cp-editing:active { cursor: grabbing; }
+
+/* ── Schiebeschalter ────────────────────────────────────────────────────── */
+/* role="switch" + aria-checked ist das richtige Muster fuer einen Umschalter
+   (aria-pressed beschreibt einen gedrueckten Knopf, nicht einen Zustand). */
+.cp-switch {
+  display: inline-flex; align-items: center; gap: var(--cp-s2);
+  padding: 0; height: 28px; flex: none;
+  font: inherit; font-size: 12px; font-weight: 550; color: var(--muted);
+  background: transparent; border: 0; cursor: pointer;
+}
+.cp-switch:hover { color: #e8e6ef; }
+.cp-switch[aria-checked="true"] { color: #e8e6ef; }
+.cp-switch-track {
+  position: relative; width: 34px; height: 19px; flex: none;
+  background: rgba(255, 255, 255, 0.14);
+  border: 1px solid var(--cp-line); border-radius: 999px;
+  transition: background .16s, border-color .16s;
+}
+.cp-switch[aria-checked="true"] .cp-switch-track {
+  background: var(--accent); border-color: transparent;
+}
+.cp-switch-thumb {
+  position: absolute; top: 2px; left: 2px; width: 13px; height: 13px;
+  background: #fff; border-radius: 50%;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, .5);
+  transition: transform .16s;
+}
+.cp-switch[aria-checked="true"] .cp-switch-thumb { transform: translateX(15px); }
+.cp-switch:focus-visible { outline: 2px solid rgba(var(--accent-rgb), .7); outline-offset: 2px; border-radius: 6px; }

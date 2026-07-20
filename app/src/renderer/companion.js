@@ -312,7 +312,7 @@ function selectFromMap(ids, add) {
 function setEditMode(on) {
   editMode = !!on && can(perms, 'world.write');
   const em = el('cpEditMode'), cb = el('cpCreateBtn');
-  if (em) em.setAttribute('aria-pressed', editMode ? 'true' : 'false');
+  if (em) em.setAttribute('aria-checked', editMode ? 'true' : 'false');
   if (cb) cb.hidden = !editMode;
   // Beim Verlassen alles Angefangene aufraeumen — sonst bliebe eine halb
   // gesetzte Zone im Hintergrund haengen.
@@ -564,11 +564,14 @@ function objectAt(sx, sy) {
     const n = worldToNorm(wx, wy);
     return { x: n.nx * MAP_SIZE * sc + panX, y: n.ny * MAP_SIZE * sc + panY };
   };
-  for (const t of teleports) {
+  // Ausgeblendete Ebenen sind nicht bearbeitbar. Sonst oeffnet ein Rechtsklick
+  // einen Editor fuer etwas, das gar nicht zu sehen ist — man wuesste nicht,
+  // was man da bearbeitet.
+  if (showTp) for (const t of teleports) {
     const p = toScr(t.x, t.y);
     if (Math.hypot(p.x - sx, p.y - sy) <= 14) return { kind: 'teleport', obj: t };
   }
-  for (const enc of encounters) {
+  if (showAi) for (const enc of encounters) {
     if (!enc.spawn || (enc.spawn.x === 0 && enc.spawn.y === 0)) continue;
     const p = toScr(enc.spawn.x, enc.spawn.y);
     if (Math.hypot(p.x - sx, p.y - sy) <= 14) return { kind: 'encounter', obj: enc };
@@ -579,7 +582,8 @@ function objectAt(sx, sy) {
   // deshalb immer auf dem ersten Eintrag (pvp), und ein Loeschen haette jede
   // Zone ohne id mitgenommen.
   const z = zoneObjectAt(w.x, w.y);
-  if (z) return { kind: 'zone', obj: z };
+  // Auch hier: eine ausgeblendete Zonenebene ist nicht bearbeitbar.
+  if (z && isZoneLayerVisible(z.type)) return { kind: 'zone', obj: z };
   return null;
 }
 
