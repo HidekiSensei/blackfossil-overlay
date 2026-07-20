@@ -38,6 +38,7 @@
       "src/main.js",
       "src/preload.js",
       "src/renderer/*.html",
+      "src/renderer/styles/**",
       "src/renderer/dist/**",
       "src/renderer/assets/**",
       "package.json"
