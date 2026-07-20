@@ -31,6 +31,14 @@ patch('app/package.json', [
   // protocols.schemes — quotiert, trifft nur die Scheme-Zeile, nicht die appId
   // (de.blackfossil.overlay.test enthält "blackfossil-test" nicht als Teilstring).
   ['"blackfossil-test"', '"blackfossil"'],
+  // Linux-Binary + .desktop-Eintrag. Ohne eigenen Namen leitet electron-builder ihn
+  // aus package.json.name ab — Test und Prod hießen dann beide "blackfossil-overlay"
+  // und überschrieben sich unter Linux gegenseitig den Desktop-Eintrag (unter Windows
+  // trennt NSIS sie über appId/productName, deshalb fiel es dort nie auf).
+  // Der Prod-Wert bleibt "blackfossil-overlay" — bestehende Installationen ändern sich
+  // nicht. Steht bewusst NACH dem "blackfossil-test"-Replace: das greift hier nicht,
+  // weil vor "test" ein Bindestrich statt eines Quotes steht.
+  ['"executableName": "blackfossil-overlay-test"', '"executableName": "blackfossil-overlay"'],
 ]);
 
 // ── Companion-App ───────────────────────────────────────────────────────────
