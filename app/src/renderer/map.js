@@ -198,6 +198,7 @@ export function drawFullMap(view, players, waypoints = [], teleports = [], hover
   // Spuren gehoeren zwischen Karte und Marker: darueber gezeichnet verdecken
   // sie die Punkte, die sie erklaeren sollen.
   if (opts.trails) drawTrails(ctx, w, h, iconScale, opts.trails, opts.highlight);
+  if (opts.editZone) drawZoneEdit(ctx, w, h, iconScale, opts.editZone, opts.editHandle);
 
   // Teleport-Punkte (nummeriert; hervorgehoben beim Hover)
   for (const t of teleports) {
@@ -646,6 +647,36 @@ function drawTrails(ctx, w, h, scale, trails, highlight) {
   }
 }
 
+// Die gerade bearbeitete Zone: gefuellt, mit quadratischen Anfassern an den
+// Eckpunkten. Bewusst deutlich auffaelliger als die uebrigen Zonen — beim
+// Bearbeiten muss unmissverstaendlich sein, welche gemeint ist.
+export function drawZoneEdit(ctx, w, h, scale, zone, activeHandle) {
+  const pts = (zone.points || []).map((p) => {
+    const n = worldToNorm(p.x, p.y);
+    return { x: n.nx * w, y: n.ny * h };
+  });
+  if (pts.length < 2) return;
+  const color = (ZONE_META[zone.type] || ZONE_META.pvp).color;
+
+  ctx.beginPath();
+  pts.forEach((p, i) => (i ? ctx.lineTo(p.x, p.y) : ctx.moveTo(p.x, p.y)));
+  ctx.closePath();
+  ctx.fillStyle = color + '55';
+  ctx.fill();
+  ctx.lineWidth = 2.5 * scale; ctx.strokeStyle = color; ctx.stroke();
+
+  // Anfasser als Quadrate — von den runden Spieler- und Teleport-Markern
+  // dadurch auf einen Blick zu unterscheiden.
+  const s0 = 6 * scale;
+  pts.forEach((p, i) => {
+    const on = i === activeHandle;
+    ctx.fillStyle = on ? '#f59e0b' : '#fff';
+    ctx.fillRect(p.x - s0, p.y - s0, s0 * 2, s0 * 2);
+    ctx.lineWidth = 2 * scale; ctx.strokeStyle = '#000';
+    ctx.strokeRect(p.x - s0, p.y - s0, s0 * 2, s0 * 2);
+  });
+}
+
 // Einfaches Greedy-Clustering im Bildraum: der erste Punkt oeffnet eine Gruppe,
 // alles innerhalb von `radius` faellt hinein. Kein k-means noetig — es geht nur
 // darum, uebereinanderliegende Punkte zusammenzufassen, und das Ergebnis muss
@@ -826,6 +857,16 @@ export function zoneAt(wx, wy) {
   }
   return null;
 }
+// Das ZONEN-OBJEKT an einem Punkt — mit id und points, im Gegensatz zu zoneAt
+// (liefert nur einen Anzeigenamen) und zonesAt (liefert eine Projektion ohne id).
+// Wer eine Zone bearbeiten will, braucht das Original.
+export function zoneObjectAt(wx, wy) {
+  for (const z of ZONES) {
+    if (z.points && z.points.length >= 3 && pointInPolygon(wx, wy, z.points)) return z;
+  }
+  return null;
+}
+
 // ALLE Zonen an einem Punkt (Zonen sind NICHT exklusiv → Mehrfach-Zugehörigkeit).
 // Liefert [{ type, name, label }] in Zonen-Reihenfolge.
 export function zonesAt(wx, wy) {

@@ -15,6 +15,12 @@ import * as U from './ui.js';
 let C = null;
 // { kind: 'teleport'|'zone'|'encounter', points: [{x,y}] } waehrend des Setzens
 let placing = null;
+// Die gerade bearbeitete Zone (Kopie!). Die Karte zeichnet sie hervorgehoben und
+// meldet Verschiebungen ueber setZonePoints zurueck.
+let editZone = null;
+
+export function editingZone() { return editZone; }
+export function setZonePoints(points) { if (editZone) editZone.points = points; }
 
 export function initEditor(ctx) { C = ctx; }
 
@@ -35,7 +41,16 @@ export function addPlacementPoint(x, y) {
   C.redraw();
 }
 
-export function cancelPlacing() { placing = null; close('editor'); C.redraw(); }
+// Ein einziger Aufraeumer fuer alle Wege aus dem Bearbeiten heraus: Abbrechen,
+// das X der Flaeche und Escape. Frueher raeumte nur Abbrechen auf — nach einem
+// Klick aufs X blieb die Zone hervorgehoben und die Karte im Bearbeiten-Modus.
+function leaveEditing() {
+  placing = null;
+  editZone = null;
+  if (C) C.redraw();
+}
+
+export function cancelPlacing() { leaveEditing(); close('editor'); }
 
 // ── Menue "Erstellen" ──────────────────────────────────────────────────────
 export function openCreateMenu() {
@@ -78,7 +93,7 @@ function renderZoneForm() {
     + `<div style="height:var(--cp-s2)"></div>` + U.btn('zCancel', 'Abbrechen', { size: 'sm', block: true });
 
   const prev = document.querySelector('#floatPos-editor');
-  floatingPanel('editor', { title: 'Zone erstellen', body, width: 260, x: 24, y: 24 });
+  floatingPanel('editor', { title: 'Zone erstellen', body, width: 260, x: 24, y: 24, onClose: leaveEditing });
   el('zUndo').onclick = () => { if (placing && placing.points.length) { placing.points.pop(); renderZoneForm(); C.redraw(); } };
   el('zCancel').onclick = cancelPlacing;
   el('zSave').onclick = saveNewZone;
@@ -133,9 +148,9 @@ function openForm(kind, existing, point) {
   const title = kind === 'teleport'
     ? (existing ? 'Teleport bearbeiten' : 'Teleport anlegen')
     : (existing ? 'Encounter bearbeiten' : 'Encounter anlegen');
-  floatingPanel('editor', { title, body, width: 280, x: 24, y: 24 });
+  floatingPanel('editor', { title, body, width: 280, x: 24, y: 24, onClose: leaveEditing });
 
-  el('fmCancel').onclick = () => { placing = null; close('editor'); C.redraw(); };
+  el('fmCancel').onclick = () => { leaveEditing(); close('editor'); };
   el('fmSave').onclick = () => (kind === 'teleport' ? saveTeleport(existing, point) : saveEncounter(existing, point));
   const del = el('fmDel');
   if (del) del.onclick = () => armConfirm(del, 'Wirklich löschen?', () => remove(kind, existing));
@@ -190,6 +205,8 @@ async function remove(kind, obj) {
       await C.api('DELETE', `/admin/mod-ai/encounters/${encodeURIComponent(obj.id)}`);
       await C.reloadEncounters();
     } else {
+      // Ohne id wuerde der Filter unten JEDE Zone ohne id mitloeschen.
+      if (!obj.id) { C.toast('Diese Zone hat keine id — Löschen abgebrochen.', 'error'); return; }
       const cur = await C.api('GET', '/zones');
       const zones = ((cur && cur.zones) || []).filter((z) => z.id !== obj.id);
       await C.api('POST', '/zones', { zones });
@@ -203,6 +220,10 @@ async function remove(kind, obj) {
 // ── Bearbeiten per Rechtsklick ─────────────────────────────────────────────
 export function openEdit(kind, obj) {
   if (kind === 'zone') {
+    // Auf einer KOPIE arbeiten: solange nicht gespeichert ist, darf die Karte
+    // ihren Originalzustand behalten (Abbrechen muss folgenlos sein).
+    editZone = { id: obj.id, type: obj.type, name: obj.name, points: (obj.points || []).map((p) => ({ ...p })) };
+    C.redraw();
     const body = document.createElement('div');
     body.innerHTML = U.select('zeType', 'Typ',
         [{ value: 'pvp', label: 'PvP' }, { value: 'pve', label: 'PvE' },
@@ -212,20 +233,24 @@ export function openEdit(kind, obj) {
       + U.field('zeName', 'Name', { value: obj.name || '' })
       + `<div style="height:var(--cp-s2)"></div>`
       + `<div class="cp-muted">${(obj.points || []).length} Eckpunkte</div>`
-      + U.hint('Die Form lässt sich hier nicht ändern — dafür die Zone löschen und neu setzen.')
+      + U.hint('Eckpunkte lassen sich auf der Karte ziehen; Ziehen innerhalb der Fläche verschiebt die ganze Zone.')
       + `<div style="height:var(--cp-s3)"></div>`
       + U.btnRow(U.btn('fmSave', 'Speichern', { variant: 'primary', size: 'sm' }),
                  U.btn('fmDel', 'Löschen', { variant: 'danger', size: 'sm' }))
       + `<div style="height:var(--cp-s2)"></div>` + U.btn('fmCancel', 'Abbrechen', { size: 'sm', block: true });
-    floatingPanel('editor', { title: 'Zone bearbeiten', body, width: 280, x: 24, y: 24 });
-    el('fmCancel').onclick = () => close('editor');
+    floatingPanel('editor', { title: 'Zone bearbeiten', body, width: 280, x: 24, y: 24, onClose: leaveEditing });
+    el('fmCancel').onclick = () => { leaveEditing(); close('editor'); };
     el('fmSave').onclick = async () => {
+      if (!obj.id) { C.toast('Diese Zone hat keine id — Speichern abgebrochen.', 'error'); return; }
       try {
         const cur = await C.api('GET', '/zones');
         const zones = ((cur && cur.zones) || []).map((z) =>
-          z.id === obj.id ? { ...z, type: el('zeType').value, name: (el('zeName').value || '').trim() } : z);
+          z.id === obj.id
+            ? { ...z, type: el('zeType').value, name: (el('zeName').value || '').trim(), points: editZone.points }
+            : z);
         await C.api('POST', '/zones', { zones });
         C.toast('Zone gespeichert', 'success');
+        leaveEditing();
         close('editor');
         await C.reloadZones();
       } catch (e) { C.toast(e.message, 'error'); }
@@ -237,5 +262,5 @@ export function openEdit(kind, obj) {
   openForm(kind, obj, null);
 }
 
-export function closeEditor() { close('editor'); close('create'); placing = null; }
+export function closeEditor() { close('editor'); close('create'); leaveEditing(); }
 export { escapeHtml };

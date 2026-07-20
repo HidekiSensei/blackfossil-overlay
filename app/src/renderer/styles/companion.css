@@ -430,3 +430,8 @@ input[type="range"] { accent-color: var(--accent); }
   background: rgba(245, 158, 11, .14);
   border-radius: 2px;
 }
+
+/* Bearbeiten-Modus sichtbar machen: der Cursor sagt, dass der Rechtsklick jetzt
+   etwas tut. */
+#cpMapCanvas.cp-editing { cursor: crosshair; }
+#cpMapCanvas.cp-editing:active { cursor: grabbing; }

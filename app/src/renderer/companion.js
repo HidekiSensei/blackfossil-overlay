@@ -9,12 +9,12 @@ import { makePerms, can } from './shared/perms.js';
 import { openPlayerList, closePlayerList, isPlayerListOpen } from './companion/playerlist.js';
 import {
   initEditor, openCreateMenu, openEdit, isPlacing, placingKind, placingPoints,
-  addPlacementPoint, cancelPlacing,
+  addPlacementPoint, cancelPlacing, editingZone, setZonePoints, closeEditor,
 } from './companion/editor.js';
 import {
   loadMapImage, drawFullMap, drawHeatmap, drawAiEncounters, setZones, setCalAffine,
   ZONE_LAYERS, ZONE_META, setZoneLayer, isZoneLayerVisible,
-  normToWorld, worldToNorm, zoneAt,
+  normToWorld, worldToNorm, zoneObjectAt,
 } from './map.js';
 import { baseClass, escapeHtml } from './shared/format.js';
 import { initServer, renderServer, stopServer } from './companion/panels/server.js';
@@ -169,6 +169,8 @@ function render() {
     // Auswahl UND Hover teilen sich dieselbe Hervorhebung — die Spur des
     // Spielers unter dem Zeiger leuchtet damit automatisch mit.
     highlight: activeHighlight(),
+    editZone: editingZone(),
+    editHandle: zoneDrag ? zoneDrag.index : -1,
     trails: (showTrails && showAll) ? trails : null,
     onLabelStats: (s) => { lastStat = s; },
     onHits: (h) => { hits = h; },
@@ -218,6 +220,40 @@ function resizeCanvas() {
   cv.style.height = ch + 'px';
   clampPan();
   dirty = true;
+}
+
+// ── Zonen-Bearbeitung: Anfasser ziehen ─────────────────────────────────────
+let zoneDrag = null;   // { index } — index -1 = ganze Zone verschieben
+
+// Bearbeiten-Modus. Ohne ihn reagiert der Rechtsklick nicht und "Erstellen" ist
+// nicht sichtbar — sonst oeffnet ein versehentlicher Rechtsklick beim Anschauen
+// der Karte einen Editor. Bewusst NICHT gespeichert: nach einem Neustart ist
+// man wieder im Ansichts-Modus.
+let editMode = false;
+
+// Welcher Eckpunkt liegt unter dem Zeiger? Trefferflaeche etwas grosszuegiger
+// als das gezeichnete Quadrat, sonst muss man pixelgenau treffen.
+function zoneHandleAt(zone, sx, sy) {
+  const sc = totalScale();
+  for (let i = 0; i < (zone.points || []).length; i++) {
+    const n = worldToNorm(zone.points[i].x, zone.points[i].y);
+    const x = n.nx * MAP_SIZE * sc + panX, y = n.ny * MAP_SIZE * sc + panY;
+    if (Math.abs(x - sx) <= 10 && Math.abs(y - sy) <= 10) return i;
+  }
+  return -1;
+}
+
+// Punkt-in-Polygon gegen die BEARBEITETE Kopie, nicht gegen den gespeicherten
+// Stand — sonst spraenge die Flaeche beim Verschieben zurueck.
+function pointInZone(zone, wx, wy) {
+  const pts = zone.points || [];
+  if (pts.length < 3) return false;
+  let inside = false;
+  for (let i = 0, j = pts.length - 1; i < pts.length; j = i++) {
+    const xi = pts[i].x, yi = pts[i].y, xj = pts[j].x, yj = pts[j].y;
+    if ((yi > wy) !== (yj > wy) && wx < ((xj - xi) * (wy - yi)) / (yj - yi) + xi) inside = !inside;
+  }
+  return inside;
 }
 
 // ── Rechteck-Auswahl (Strg + Ziehen) ───────────────────────────────────────
@@ -270,6 +306,18 @@ function selectFromMap(ids, add) {
     if (btn) { btn.click(); return; }   // click() rendert die Liste bereits
   }
   if (plList) plList.refresh();
+  dirty = true;
+}
+
+function setEditMode(on) {
+  editMode = !!on && can(perms, 'world.write');
+  const em = el('cpEditMode'), cb = el('cpCreateBtn');
+  if (em) em.setAttribute('aria-pressed', editMode ? 'true' : 'false');
+  if (cb) cb.hidden = !editMode;
+  // Beim Verlassen alles Angefangene aufraeumen — sonst bliebe eine halb
+  // gesetzte Zone im Hintergrund haengen.
+  if (!editMode) closeEditor();
+  el('cpMapCanvas')?.classList.toggle('cp-editing', editMode);
   dirty = true;
 }
 
@@ -380,6 +428,21 @@ function initMapInteraction() {
   cv.addEventListener('mousedown', (e) => {
     downX = e.clientX; downY = e.clientY;
     hideTip();
+    // Zonen-Bearbeitung hat Vorrang vor allem anderen: Anfasser ziehen den
+    // Eckpunkt, ein Griff INNERHALB der Flaeche verschiebt die ganze Zone.
+    const ez = editingZone();
+    if (ez && !e.ctrlKey && !e.metaKey) {
+      const r0 = cv.getBoundingClientRect();
+      const hx = e.clientX - r0.left, hy = e.clientY - r0.top;
+      const idx = zoneHandleAt(ez, hx, hy);
+      if (idx >= 0) { zoneDrag = { index: idx }; e.preventDefault(); return; }
+      const w0 = screenToWorld(hx, hy);
+      if (pointInZone(ez, w0.x, w0.y)) {
+        zoneDrag = { index: -1, from: w0, orig: ez.points.map((p) => ({ ...p })) };
+        e.preventDefault();
+        return;
+      }
+    }
     // Strg (bzw. Cmd) + Ziehen spannt ein Auswahl-Rechteck auf statt die Karte
     // zu verschieben. Beides gleichzeitig ginge nicht — man kann nur eines
     // sinnvoll auf die linke Taste legen.
@@ -410,7 +473,7 @@ function initMapInteraction() {
   // Rechtsklick bearbeitet das Objekt darunter (Admin-only).
   cv.addEventListener('contextmenu', (e) => {
     e.preventDefault();
-    if (!can(perms, 'world.write')) return;
+    if (!editMode || !can(perms, 'world.write')) return;
     const r = cv.getBoundingClientRect();
     const hit = objectAt(e.clientX - r.left, e.clientY - r.top);
     if (hit) openEdit(hit.kind, hit.obj);
@@ -430,10 +493,29 @@ function initMapInteraction() {
     }
   });
   window.addEventListener('mouseup', () => {
+    if (zoneDrag) { zoneDrag = null; dirty = true; return; }
     if (marquee) { finishMarquee(); return; }
     dragging = false;
   });
   window.addEventListener('mousemove', (e) => {
+    if (zoneDrag) {
+      const ez = editingZone();
+      if (!ez) { zoneDrag = null; return; }
+      const r0 = cv.getBoundingClientRect();
+      const w0 = screenToWorld(e.clientX - r0.left, e.clientY - r0.top);
+      if (zoneDrag.index >= 0) {
+        const pts = ez.points.map((p, i) => (i === zoneDrag.index ? { ...p, x: w0.x, y: w0.y } : p));
+        setZonePoints(pts);
+      } else {
+        // Ganze Zone: alle Punkte um dieselbe Strecke versetzen. Bezug ist der
+        // Originalstand beim Anfassen, nicht der letzte Frame — sonst
+        // summieren sich Rundungsfehler ueber den Zug hinweg auf.
+        const dx = w0.x - zoneDrag.from.x, dy = w0.y - zoneDrag.from.y;
+        setZonePoints(zoneDrag.orig.map((p) => ({ ...p, x: p.x + dx, y: p.y + dy })));
+      }
+      dirty = true;
+      return;
+    }
     if (marquee) {
       const r = cv.getBoundingClientRect();
       marquee.x1 = e.clientX - r.left;
@@ -492,7 +574,11 @@ function objectAt(sx, sy) {
     if (Math.hypot(p.x - sx, p.y - sy) <= 14) return { kind: 'encounter', obj: enc };
   }
   const w = screenToWorld(sx, sy);
-  const z = zoneAt(w.x, w.y);
+  // zoneObjectAt statt zoneAt: letzteres liefert nur einen ANZEIGENAMEN als
+  // String. Damit hatte der Editor nie id, type oder points — der Typ stand
+  // deshalb immer auf dem ersten Eintrag (pvp), und ein Loeschen haette jede
+  // Zone ohne id mitgenommen.
+  const z = zoneObjectAt(w.x, w.y);
   if (z) return { kind: 'zone', obj: z };
   return null;
 }
@@ -767,9 +853,18 @@ async function boot() {
   el('cpMapReset').onclick = resetView;
   { const ra = el('cpRaidAtlas'); if (ra) ra.onclick = () => window.bf.openExternal('https://raidatlas.app/'); }
 
-  // Erstellen-Menue nur fuer Admins — dieselbe Bedingung wie Welt-Aenderungen.
-  { const cb = el('cpCreateBtn');
-    if (cb) { cb.hidden = !can(perms, 'world.write'); cb.onclick = () => openCreateMenu(); } }
+  // Bearbeiten-Modus und Erstellen nur fuer Admins — dieselbe Bedingung wie
+  // Welt-Aenderungen.
+  {
+    const mayEdit = can(perms, 'world.write');
+    const em = el('cpEditMode'), cb = el('cpCreateBtn');
+    if (em) {
+      em.hidden = !mayEdit;
+      em.onclick = () => setEditMode(!editMode);
+    }
+    if (cb) cb.onclick = () => openCreateMenu();
+    setEditMode(false);
+  }
 
   // Spielerliste (Team-only) — dieselbe Bedingung wie die Overwatch-Ansicht.
   const plBtn = el('cpPlayersBtn');
