@@ -8,8 +8,13 @@ import { usersFrom } from './shared/users.js';
 import { makePerms, can } from './shared/perms.js';
 import { openPlayerList, closePlayerList, isPlayerListOpen } from './companion/playerlist.js';
 import {
+  initEditor, openCreateMenu, openEdit, isPlacing, placingKind, placingPoints,
+  addPlacementPoint, cancelPlacing,
+} from './companion/editor.js';
+import {
   loadMapImage, drawFullMap, drawHeatmap, drawAiEncounters, setZones, setCalAffine,
   ZONE_LAYERS, ZONE_META, setZoneLayer, isZoneLayerVisible,
+  normToWorld, worldToNorm, zoneAt,
 } from './map.js';
 import { baseClass, escapeHtml } from './shared/format.js';
 import { initServer, renderServer, stopServer } from './companion/panels/server.js';
@@ -169,8 +174,34 @@ function render() {
     onHits: (h) => { hits = h; },
   });
   if (showAi && encounters.length) drawAiEncounters(ctx, MAP_SIZE, MAP_SIZE, 1 / sc, encounters, baseClass);
+  drawPlacement(ctx, 1 / sc);
   ctx.setTransform(1, 0, 0, 1, 0, 0);
   updateMapStat();
+}
+
+// Vorschau der bereits gesetzten Punkte, damit man beim Aufziehen einer Zone
+// sieht, was man tut.
+function drawPlacement(ctx, scale) {
+  if (!isPlacing()) return;
+  const pts = placingPoints();
+  if (!pts.length) return;
+  const p2 = pts.map((p) => {
+    const n = worldToNorm(p.x, p.y);
+    return { x: n.nx * MAP_SIZE, y: n.ny * MAP_SIZE };
+  });
+  if (p2.length > 1) {
+    ctx.beginPath();
+    p2.forEach((p, i) => (i ? ctx.lineTo(p.x, p.y) : ctx.moveTo(p.x, p.y)));
+    if (placingKind() === 'zone' && p2.length > 2) ctx.closePath();
+    ctx.setLineDash([6 * scale, 4 * scale]);
+    ctx.lineWidth = 2 * scale; ctx.strokeStyle = '#f59e0b'; ctx.stroke();
+    ctx.setLineDash([]);
+  }
+  for (const p of p2) {
+    ctx.beginPath(); ctx.arc(p.x, p.y, 5 * scale, 0, Math.PI * 2);
+    ctx.fillStyle = '#f59e0b'; ctx.fill();
+    ctx.lineWidth = 1.5 * scale; ctx.strokeStyle = '#fff'; ctx.stroke();
+  }
 }
 
 // Canvas an den Container anpassen (CSS-Pixel + DPR fuer scharfe Darstellung).
@@ -367,9 +398,22 @@ function initMapInteraction() {
     if (e.ctrlKey || e.metaKey) return;   // gehoert zur Rechteck-Auswahl
     if (Math.hypot(e.clientX - downX, e.clientY - downY) > 4) return;
     const r = cv.getBoundingClientRect();
-    const c = hitAt(e.clientX - r.left, e.clientY - r.top);
+    const sx = e.clientX - r.left, sy = e.clientY - r.top;
+    // Im Platzierungs-Modus liefert der Klick Koordinaten, statt Spieler
+    // auszuwaehlen — sonst waere beides nicht auseinanderzuhalten.
+    if (isPlacing()) { const w = screenToWorld(sx, sy); addPlacementPoint(w.x, w.y); return; }
+    const c = hitAt(sx, sy);
     if (!c) return;
     selectFromMap(c.items.map((it) => it.p.steamId), e.shiftKey);
+  });
+
+  // Rechtsklick bearbeitet das Objekt darunter (Admin-only).
+  cv.addEventListener('contextmenu', (e) => {
+    e.preventDefault();
+    if (!can(perms, 'world.write')) return;
+    const r = cv.getBoundingClientRect();
+    const hit = objectAt(e.clientX - r.left, e.clientY - r.top);
+    if (hit) openEdit(hit.kind, hit.obj);
   });
   cv.addEventListener('mouseleave', () => { hideTip(); if (hoverIds.size) { hoverIds = new Set(); dirty = true; } });
   cv.addEventListener('mousemove', (e) => {
@@ -422,6 +466,35 @@ function clampPan() {
 function toScreen(mx, my) {
   const sc = totalScale();
   return { x: mx * sc + panX, y: my * sc + panY };
+}
+
+// Bildschirm- -> Weltkoordinaten (fuer das Setzen neuer Objekte).
+function screenToWorld(sx, sy) {
+  const sc = totalScale();
+  return normToWorld(((sx - panX) / sc) / MAP_SIZE, ((sy - panY) / sc) / MAP_SIZE);
+}
+
+// Welches Karten-Objekt liegt unter dem Zeiger? Reihenfolge = Prioritaet:
+// Punkt-Objekte vor Flaechen, sonst traefe man immer die darunterliegende Zone.
+function objectAt(sx, sy) {
+  const sc = totalScale();
+  const toScr = (wx, wy) => {
+    const n = worldToNorm(wx, wy);
+    return { x: n.nx * MAP_SIZE * sc + panX, y: n.ny * MAP_SIZE * sc + panY };
+  };
+  for (const t of teleports) {
+    const p = toScr(t.x, t.y);
+    if (Math.hypot(p.x - sx, p.y - sy) <= 14) return { kind: 'teleport', obj: t };
+  }
+  for (const enc of encounters) {
+    if (!enc.spawn || (enc.spawn.x === 0 && enc.spawn.y === 0)) continue;
+    const p = toScr(enc.spawn.x, enc.spawn.y);
+    if (Math.hypot(p.x - sx, p.y - sy) <= 14) return { kind: 'encounter', obj: enc };
+  }
+  const w = screenToWorld(sx, sy);
+  const z = zoneAt(w.x, w.y);
+  if (z) return { kind: 'zone', obj: z };
+  return null;
 }
 
 function hitAt(sx, sy) {
@@ -494,6 +567,15 @@ function resetView() {
 // Ein ctx statt globaler Zugriffe: die Panels kennen weder window.bf noch den
 // Session-Token. Was sie brauchen, steht hier — und nur das.
 let currentView = 'map';
+const editorCtx = {
+  api,
+  toast,
+  redraw: () => { dirty = true; },
+  reloadZones: () => loadZones(),
+  reloadTeleports: () => loadTeleports(),
+  reloadEncounters: () => loadEncounters(),
+};
+
 const panelCtx = {
   api,
   toast,
@@ -665,6 +747,7 @@ async function boot() {
   el('cpSetRank').textContent = perms.rank;
   initTeam(panelCtx); initAdmin(panelCtx); initServer(panelCtx);
   initSupport(panelCtx); initLexikon(panelCtx);
+  initEditor(editorCtx);
   window.bf.getVersion().then((v) => { el('cpVersion').textContent = v; });
   el('cpLogout').onclick = () => window.bf.logout();
 
@@ -683,6 +766,10 @@ async function boot() {
   };
   el('cpMapReset').onclick = resetView;
   { const ra = el('cpRaidAtlas'); if (ra) ra.onclick = () => window.bf.openExternal('https://raidatlas.app/'); }
+
+  // Erstellen-Menue nur fuer Admins — dieselbe Bedingung wie Welt-Aenderungen.
+  { const cb = el('cpCreateBtn');
+    if (cb) { cb.hidden = !can(perms, 'world.write'); cb.onclick = () => openCreateMenu(); } }
 
   // Spielerliste (Team-only) — dieselbe Bedingung wie die Overwatch-Ansicht.
   const plBtn = el('cpPlayersBtn');
@@ -703,6 +790,7 @@ async function boot() {
   if (!can(perms, 'map.showAll')) { showAll = false; showHeat = false; }
   restoreZonePrefs();
   renderLegend();
+  window.addEventListener('keydown', (e) => { if (e.key === 'Escape' && isPlacing()) cancelPlacing(); });
   navTo(localStorage.getItem('bf-cp-view') || 'map');
   initMapInteraction();
   resizeCanvas();
