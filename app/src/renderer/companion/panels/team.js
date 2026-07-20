@@ -11,11 +11,16 @@ let C = null;
 let tab = 'suche';
 let users = [];
 
+// Rechte wie im Backend. Achtung auf die Feinheiten:
+//   /admin/users      = staff, aber /admin/user-info = INGAME+ — ein Supporter
+//                       darf also suchen, aber kein Profil oeffnen.
+//   /admin/staff-audit= ADMIN (requireAdminHuman, strenger als Player-Audit:
+//                       es zeigt, was jedes Staff-Mitglied getan hat).
 const TABS = [
-  { id: 'suche', label: 'Spieler' },
-  { id: 'warnings', label: 'Verwarnungen' },
-  { id: 'paudit', label: 'Player-Audit' },
-  { id: 'taudit', label: 'Team-Audit' },
+  { id: 'suche', label: 'Spieler', cap: 'team.users' },
+  { id: 'warnings', label: 'Verwarnungen', cap: 'team.warnings' },
+  { id: 'paudit', label: 'Player-Audit', cap: 'team.playerAudit' },
+  { id: 'taudit', label: 'Team-Audit', cap: 'team.staffAudit' },
 ];
 
 // Beide Audits paginieren SERVERSEITIG (items/total/limit/offset) — nie alles
@@ -54,9 +59,11 @@ function pager(prefix, offset, total, onPage) {
 export function initTeam(ctx) { C = ctx; }
 
 export function renderTeam(root) {
+  const tabs = TABS.filter((t) => C.can(t.cap));
+  if (!tabs.some((t) => t.id === tab)) tab = tabs.length ? tabs[0].id : null;
   root.innerHTML = `<div class="cp-pad cp-pad-narrow">
     ${U.header('Team', 'Spieler nachschlagen und Verwarnungen einsehen.')}
-    ${U.tabs(TABS, tab)}
+    ${tabs.length ? U.tabs(tabs, tab) : ''}
     <div id="tmBody"></div>
   </div>`;
   root.querySelectorAll('.cp-tab').forEach((b) => {
@@ -81,7 +88,10 @@ async function renderSearch() {
       `<div class="cp-field"><label class="cp-label" for="tmQ">Spieler</label>`
       + `<input id="tmQ" class="cp-input" list="tmList" placeholder="RP-, Steam- oder Discord-Name, SteamID64…" autocomplete="off">`
       + `<datalist id="tmList"></datalist></div>`,
-      U.btn('tmGo', 'Lade Spielerliste…', { variant: 'primary', disabled: true })))}
+      C.can('team.userInfo')
+        ? U.btn('tmGo', 'Lade Spielerliste…', { variant: 'primary', disabled: true })
+        : ''))}
+    ${C.can('team.userInfo') ? '' : U.hint('Profile öffnen ist Moderatoren und Admins vorbehalten.')}
     <div id="tmResult"></div>`;
 
   const inp = el('tmQ');
@@ -90,7 +100,7 @@ async function renderSearch() {
   // haelt es fuer "nicht gefunden".
   const list = await ensureUsers();
   const go = el('tmGo');
-  if (!go) return;                       // Tab wurde waehrenddessen gewechselt
+  if (!go) return;   // Tab gewechselt — oder kein Recht, Profile zu oeffnen
   go.disabled = false;
   go.textContent = 'Nachschlagen';
   // Datalist wird beim Tippen dynamisch mit Top-Treffern befuellt: Chromium zeigt

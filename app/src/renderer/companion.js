@@ -5,6 +5,7 @@
 import { el, makeApi } from './shared/core.js';
 import { decoratePositions, buildUserDir } from './shared/players.js';
 import { usersFrom } from './shared/users.js';
+import { makePerms, can } from './shared/perms.js';
 import {
   loadMapImage, drawFullMap, drawHeatmap, drawAiEncounters, setZones, setCalAffine,
   ZONE_LAYERS, ZONE_META, setZoneLayer, isZoneLayerVisible,
@@ -18,7 +19,17 @@ import { initLexikon, renderLexikon } from './companion/panels/lexikon.js';
 
 let config = { tokenBase: '' };
 let sessionToken = null;
-let roles = { admin: false, ingame: false, team: false, staff: false, name: '', rank: '' };
+let perms = makePerms({});
+
+// ── Beta-Riegel ────────────────────────────────────────────────────────────
+// Die App ist so gebaut, dass auch normale Spieler sie oeffnen koennen: die
+// Navigation filtert ueber Faehigkeiten (shared/perms.js), und spielerbezogene
+// Ansichten haengen an `online`. Fuer die Beta bleibt sie dennoch dem Team
+// vorbehalten.
+//
+// ZUM OEFFNEN FUER ALLE: diese eine Konstante auf false setzen. Sonst nichts —
+// die Rechte-Logik darunter ist bereits vollstaendig.
+const BETA_STAFF_ONLY = true;
 
 const api = makeApi({ tokenBase: () => config.tokenBase, token: () => sessionToken });
 
@@ -52,6 +63,8 @@ let cw = MAP_SIZE, ch = MAP_SIZE;   // Canvas-Groesse in CSS-Pixeln
 function baseScale() { return Math.max(cw / MAP_SIZE, ch / MAP_SIZE); }
 function totalScale() { return baseScale() * zoom; }
 let dirty = true;             // Dirty-Flag: neu zeichnen nur bei Poll oder Pan/Zoom
+// Aus der localStorage wiederhergestellt, aber nach dem Login gegen die Rechte
+// geprueft — sonst behielte ein herabgestufter Staff seine Overwatch-Ansicht.
 let showAll = localStorage.getItem('bf-cp-showall') === '1';
 let labelMinZoom = Number(localStorage.getItem('bf-cp-labelzoom') || 1.6);
 let lastStat = { total: 0, drawn: 0, belowZoom: false };
@@ -139,6 +152,10 @@ async function pollPositions() {
   try {
     const d = await api('GET', '/positions');
     players = decoratePositions(d.players || [], userDir);
+    // Spieler-Ansichten haengen daran, ob der eigene Dino gerade auf dem Server
+    // ist. Aendert sich das, muss die Navigation nachziehen.
+    const online = players.some((p) => p.isYou) || !!(d.you && d.you.steamId);
+    if (online !== perms.online) { perms.online = online; applyNavPermissions(); }
     dirty = true;
   } catch (err) {
     const s = el('cpMapStat');
@@ -239,7 +256,8 @@ let currentView = 'map';
 const panelCtx = {
   api,
   toast,
-  roles: () => roles,
+  perms: () => perms,
+  can: (c) => can(perms, c),
   players: () => players,
   isActive: (v) => currentView === v,
 };
@@ -250,6 +268,30 @@ const PANELS = {
   support: renderSupport,
   lexikon: renderLexikon,
 };
+
+// Sichtbarkeit der Navigationspunkte. `cap` ist die schwaechste Faehigkeit, die
+// im Panel ueberhaupt etwas zeigt — die Feinheiten (einzelne Tabs, Buttons)
+// entscheiden die Panels selbst ueber dieselbe can()-Pruefung.
+// `needsOnline` markiert Ansichten, die ohne eigenen Dino auf dem Server leer
+// waeren; Staff-Werkzeuge haengen bewusst NICHT daran.
+const NAV = {
+  map:      { cap: null,            needsOnline: false },
+  team:     { cap: 'team.users',    needsOnline: false },
+  admin:    { cap: 'world.read',    needsOnline: false },
+  server:   { cap: 'server.status', needsOnline: false },
+  support:  { cap: 'support.read',  needsOnline: false },
+  lexikon:  { cap: null,            needsOnline: false },
+  settings: { cap: null,            needsOnline: false },
+};
+
+function applyNavPermissions() {
+  for (const [view, def] of Object.entries(NAV)) {
+    const btn = document.querySelector(`.cp-nav-btn[data-view="${view}"]`);
+    if (!btn) continue;
+    const allowed = (!def.cap || can(perms, def.cap)) && (!def.needsOnline || perms.online);
+    btn.hidden = !allowed;
+  }
+}
 
 // ── Legende & Layer ────────────────────────────────────────────────────────
 // Zonen-Sichtbarkeit lebt in map.js (ZONE_LAYERS), damit Karte und Legende nicht
@@ -273,9 +315,9 @@ function renderLegend() {
   box.innerHTML = `<div class="cp-leg-title">Zonen</div><div class="cp-leg-grid">${zones}</div>`
     + `<div class="cp-leg-title" style="margin-top:var(--cp-s3)">Marker</div><div class="cp-leg-grid">`
     + tgl('data-marker', 'tp', '', 'Teleports', showTp, showHeat)
-    + tgl('data-marker', 'ai', '', 'KI-Encounter', showAi, showHeat)
-    + tgl('data-marker', 'players', '', 'Spieler', showAll, showHeat)
-    + tgl('data-marker', 'heat', '', 'Heatmap', showHeat, false)
+    + (can(perms, 'map.encounters') ? tgl('data-marker', 'ai', '', 'KI-Encounter', showAi, showHeat) : '')
+    + (can(perms, 'map.showAll') ? tgl('data-marker', 'players', '', 'Spieler', showAll, showHeat) : '')
+    + (can(perms, 'map.showAll') ? tgl('data-marker', 'heat', '', 'Heatmap', showHeat, false) : '')
     + `</div>`;
   // Marker-Farbtupfer per Klasse (die Zonen tragen ihre Farbe inline)
   for (const [k, cls] of [['tp', 'cp-leg-tp'], ['ai', 'cp-leg-ai'], ['players', 'cp-leg-player'], ['heat', 'cp-leg-heat']]) {
@@ -360,28 +402,28 @@ async function boot() {
   try { t = await api('GET', '/token'); }
   catch (err) { showGate('Anmeldung abgelaufen oder Backend nicht erreichbar: ' + err.message, true); return; }
 
-  roles = {
-    admin: !!t.admin, ingame: !!t.ingame, team: !!t.team,
-    staff: !!(t.ingame || t.team || t.admin),
-    name: t.name || '', rank: t.rank || '',
-  };
-  // Vorerst bewusst Staff-only — die App zeigt ausschliesslich Moderations-Werkzeuge.
-  if (!roles.staff) { showGate('Die Companion-App ist derzeit nur für das Team.', false); return; }
+  perms = makePerms(t);
+
+  if (BETA_STAFF_ONLY && !perms.staff) {
+    showGate('Die Companion-App ist noch in der Beta und derzeit dem Team vorbehalten. '
+      + 'Schau später wieder vorbei — sie kommt für alle.', false);
+    return;
+  }
 
   el('cpGate').hidden = true;
   el('cpApp').hidden = false;
-  el('cpWhoName').textContent = roles.name;
-  el('cpWhoRank').textContent = roles.rank;
-  el('cpSetWho').textContent = roles.name;
-  el('cpSetRank').textContent = roles.rank;
+  el('cpWhoName').textContent = perms.name;
+  el('cpWhoRank').textContent = perms.rank;
+  el('cpSetWho').textContent = perms.name;
+  el('cpSetRank').textContent = perms.rank;
   initTeam(panelCtx); initAdmin(panelCtx); initServer(panelCtx);
   initSupport(panelCtx); initLexikon(panelCtx);
   window.bf.getVersion().then((v) => { el('cpVersion').textContent = v; });
   el('cpLogout').onclick = () => window.bf.logout();
 
   document.querySelectorAll('.cp-nav-btn').forEach((b) => { b.onclick = () => navTo(b.dataset.view); });
-  // Admin-only-Punkte ausblenden statt deaktivieren — tote Buttons verrotten.
-  if (!roles.admin) document.querySelectorAll('.cp-nav-btn[data-view="admin"], .cp-nav-btn[data-view="server"]').forEach((b) => { b.hidden = true; });
+  // Nicht erlaubte Punkte ausblenden statt deaktivieren — tote Buttons verrotten.
+  applyNavPermissions();
 
   const lz = el('cpLabelZoom');
   lz.value = String(labelMinZoom);
@@ -394,6 +436,7 @@ async function boot() {
   };
   el('cpMapReset').onclick = resetView;
 
+  if (!can(perms, 'map.showAll')) { showAll = false; showHeat = false; }
   restoreZonePrefs();
   renderLegend();
   navTo(localStorage.getItem('bf-cp-view') || 'map');
@@ -410,9 +453,9 @@ async function boot() {
   await loadMapImage('assets/map.jpg');
   dirty = true;
   loadZones();
-  loadTeleports();
-  loadEncounters();
-  if (roles.staff) await loadUserDir();
+  if (can(perms, 'map.teleports')) loadTeleports();
+  if (can(perms, 'map.encounters')) loadEncounters();
+  if (can(perms, 'team.users')) await loadUserDir();
   await pollPositions();
   setInterval(pollPositions, 1000);
   setInterval(loadUserDir, 5 * 60 * 1000);

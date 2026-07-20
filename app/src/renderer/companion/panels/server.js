@@ -11,8 +11,11 @@ let statusTimer = null;
 export function initServer(ctx) { C = ctx; }
 
 export function renderServer(root) {
-  const admin = C.roles().admin;
-  const ingame = C.roles().ingame;
+  // Rechte 1:1 wie im Backend (internal/admin/admin_server.go):
+  //   announce/status = staff · wipecorpses = ingame+ · control = admin
+  const mayWipe = C.can('server.wipe');
+  const mayControl = C.can('server.control');
+  const mayAnnounce = C.can('server.announce');
 
   root.innerHTML = `<div class="cp-pad cp-pad-narrow">
     ${U.header('Server', 'Status, Ansagen und Steuerung des Spielservers.')}
@@ -21,16 +24,15 @@ export function renderServer(root) {
     ${U.card(`<div id="svStatus" class="cp-muted">Lade…</div>
       <div id="svPlayers" class="cp-list cp-scroll"></div>`)}
 
-    ${U.sec('Ansage')}
-    ${U.card(U.textarea('svMsg', 'Nachricht an alle Spieler', 'Text der Durchsage…')
+    ${mayAnnounce ? U.sec('Ansage') + U.card(U.textarea('svMsg', 'Nachricht an alle Spieler', 'Text der Durchsage…')
       + `<div style="height:var(--cp-s3)"></div>`
-      + U.btn('svSend', 'Ansage senden', { variant: 'primary', block: true }))}
+      + U.btn('svSend', 'Ansage senden', { variant: 'primary', block: true })) : ''}
 
-    ${ingame ? U.sec('Wartung') + U.card(
+    ${mayWipe ? U.sec('Wartung') + U.card(
       U.btn('svWipe', 'Kadaver leeren', { block: true })
       + U.hint('Entfernt alle Leichen auf der Karte. Zweimal klicken zum Bestätigen.')) : ''}
 
-    ${admin ? U.sec('Server-Steuerung') + U.card(
+    ${mayControl ? U.sec('Server-Steuerung') + U.card(
       U.btnRow(
         U.btn('svStart', 'Start', { variant: 'primary' }),
         U.btn('svRestart', 'Neustart'),
@@ -39,7 +41,8 @@ export function renderServer(root) {
       'cp-card-danger') : ''}
   </div>`;
 
-  el('svSend').onclick = sendAnnounce;
+  // Nur binden, was auch gerendert wurde.
+  { const b = el('svSend'); if (b) b.onclick = sendAnnounce; }
   // Alle destruktiven Aktionen laufen ueber dieselbe Zwei-Klick-Bestaetigung —
   // kein Sonderweg pro Button.
   bindArmed('svWipe', 'Kadaver wirklich leeren?', () => post('/admin/server/wipecorpses', {}, 'Kadaver geleert'));

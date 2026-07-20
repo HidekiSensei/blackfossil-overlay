@@ -72,13 +72,15 @@ async function loadMessages(quiet) {
         + `<div style="height:var(--cp-s3)"></div>`
         + U.btnRow(
             U.btn('supSend', 'Senden', { variant: 'primary' }),
-            U.btn('supClaim', 'Annehmen'),
-            U.btn('supClose', 'Schließen', { variant: 'danger' })))}`;
+            // claim/close sind Staff-Aktionen; Spieler sehen nur ihren Verlauf.
+            ...(C.can('support.handle') ? [
+              U.btn('supClaim', 'Annehmen'),
+              U.btn('supClose', 'Schließen', { variant: 'danger' }),
+            ] : [])))}`;
     const m = el('supMsgs'); if (m) m.scrollTop = m.scrollHeight;
     el('supSend').onclick = send;
-    el('supClaim').onclick = () => act('/me/ticket-claim', { channelId: sel }, 'Ticket angenommen');
-    const cb = el('supClose');
-    cb.onclick = () => armConfirm(cb, 'Wirklich schließen?', () => act('/me/ticket-close', { channelId: sel, reason: '' }, 'Ticket geschlossen'));
+    { const b = el('supClaim'); if (b) b.onclick = () => act('/me/ticket-claim', { channelId: sel }, 'Ticket angenommen'); }
+    { const cb = el('supClose'); if (cb) cb.onclick = () => armConfirm(cb, 'Wirklich schließen?', () => act('/me/ticket-close', { channelId: sel, reason: '' }, 'Ticket geschlossen')); }
   } catch (e) { box.innerHTML = U.card(U.muted('Nicht abrufbar: ' + e.message)); }
 }
 

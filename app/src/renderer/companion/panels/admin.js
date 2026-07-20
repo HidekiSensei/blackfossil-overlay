@@ -9,10 +9,12 @@ import * as U from '../ui.js';
 let C = null;
 let tab = 'welt';
 
+// Rechte wie im Backend: Welt = admin (WorldRoutes), Limits lesen = jeder
+// Angemeldete (/dino-limits), Betrieb = admin (internal/ops h.require).
 const TABS = [
-  { id: 'welt', label: 'Welt' },
-  { id: 'limits', label: 'Class-Limits' },
-  { id: 'ops', label: 'Betrieb' },
+  { id: 'welt', label: 'Welt', cap: 'world.read' },
+  { id: 'limits', label: 'Class-Limits', cap: 'limits.read' },
+  { id: 'ops', label: 'Betrieb', cap: 'ops.read' },
 ];
 
 // Beschriftungen der Health-Checks. Das Backend liefert nur die ids.
@@ -29,9 +31,11 @@ const WEATHER = ['clear', 'clouds', 'rain', 'storm', 'fog', 'snow', 'auto'];
 export function initAdmin(ctx) { C = ctx; }
 
 export function renderAdmin(root) {
+  const tabs = TABS.filter((t) => C.can(t.cap));
+  if (!tabs.some((t) => t.id === tab)) tab = tabs.length ? tabs[0].id : null;
   root.innerHTML = `<div class="cp-pad cp-pad-narrow">
     ${U.header('Admin', 'Welt-Einstellungen des laufenden Servers.')}
-    ${U.tabs(TABS, tab)}
+    ${tabs.length ? U.tabs(tabs, tab) : ''}
     <div id="adBody"></div>
   </div>`;
   root.querySelectorAll('.cp-tab').forEach((b) => {
