@@ -33,7 +33,7 @@ let zoom = 1, panX = 0, panY = 0;
 let dirty = true;             // Dirty-Flag: neu zeichnen nur bei Poll oder Pan/Zoom
 let showAll = localStorage.getItem('bf-cp-showall') === '1';
 let labelMinZoom = Number(localStorage.getItem('bf-cp-labelzoom') || 1.6);
-let lastStat = { total: 0, drawn: 0 };
+let lastStat = { total: 0, drawn: 0, belowZoom: false };
 
 function render() {
   const cv = el('cpMapCanvas');
@@ -50,6 +50,11 @@ function render() {
     maxLabels: 60,
     centerX: (w / 2 - panX) / zoom,
     centerY: (h / 2 - panY) / zoom,
+    // Sichtbarer Ausschnitt, damit Tags am Rand nach innen geklemmt werden
+    viewX0: -panX / zoom,
+    viewY0: -panY / zoom,
+    viewX1: (w - panX) / zoom,
+    viewY1: (h - panY) / zoom,
     onLabelStats: (s) => { lastStat = s; },
   });
   ctx.setTransform(1, 0, 0, 1, 0, 0);
@@ -60,9 +65,10 @@ function updateMapStat() {
   const s = el('cpMapStat');
   if (!s) return;
   const alive = players.filter((p) => !p.isDead).length;
-  s.textContent = showAll
-    ? `${alive} online · ${lastStat.drawn}/${lastStat.total} Tags${zoom < labelMinZoom ? ' (Tags ab höherem Zoom)' : ''}`
-    : `${alive} online`;
+  if (!showAll) { s.textContent = `${alive} online`; return; }
+  s.textContent = lastStat.belowZoom
+    ? `${alive} online · Namen ab ${labelMinZoom.toFixed(1)}× Zoom`
+    : `${alive} online · ${lastStat.drawn}/${lastStat.total} Namen`;
 }
 
 function frame() {

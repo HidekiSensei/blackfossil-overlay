@@ -527,27 +527,59 @@ function drawNameTag(ctx, px, py, l1, l2, scale) {
 //  1. labelMinZoom — darunter nur Punkte (herausgezoomt sind Tags ohnehin unlesbar)
 //  2. Sortierung nach Abstand zur Viewport-Mitte — worauf man schaut, gewinnt
 //  3. Greedy-AABB: ueberlappende Tags fallen weg, gedeckelt auf maxLabels
+function ellipsize(s, maxChars) {
+  s = String(s || '');
+  return s.length > maxChars ? s.slice(0, maxChars - 1) + '…' : s;
+}
+
 function placeLabels(ctx, labels, scale, opts, w, h) {
   const zoom = opts.zoom || 1;
-  if (zoom < (opts.labelMinZoom ?? 1.6)) return;
+  // Unterhalb der Schwelle nur Punkte. total wird trotzdem gemeldet, damit die UI
+  // "0 von 0" von "Tags erst ab hoeherem Zoom" unterscheiden kann.
+  if (zoom < (opts.labelMinZoom ?? 1.6)) {
+    if (opts.onLabelStats) opts.onLabelStats({ total: labels.length, drawn: 0, belowZoom: true });
+    return;
+  }
   const max = opts.maxLabels ?? 60;
+  const maxChars = opts.maxLabelChars ?? 26;
   const cx = opts.centerX ?? w / 2, cy = opts.centerY ?? h / 2;
-  labels.sort((a, b) => ((a.px - cx) ** 2 + (a.py - cy) ** 2) - ((b.px - cx) ** 2 + (b.py - cy) ** 2));
+  // Sichtbarer Ausschnitt im transformierten Koordinatensystem. Ohne den laufen
+  // Tags am Rand aus dem Canvas und sind halb abgeschnitten unlesbar.
+  const vx0 = opts.viewX0 ?? 0, vx1 = opts.viewX1 ?? w;
+  const vy0 = opts.viewY0 ?? 0, vy1 = opts.viewY1 ?? h;
+  const pad = 4 * scale;
+
+  // Nur Spieler beschriften, deren Punkt tatsaechlich im Ausschnitt liegt. Ohne
+  // diesen Filter zieht die Klemmung unten auch Labels von Spielern ausserhalb des
+  // Bildes an den Rand — die verdraengen dort sichtbare Tags und behaupten eine
+  // Position, die gar nicht zu sehen ist.
+  const vis = labels.filter((L) => L.px >= vx0 && L.px <= vx1 && L.py >= vy0 && L.py <= vy1);
+  vis.sort((a, b) => ((a.px - cx) ** 2 + (a.py - cy) ** 2) - ((b.px - cx) ** 2 + (b.py - cy) ** 2));
   const placed = [];
   const lh = 22 * scale;
-  for (const L of labels) {
+  for (const L of vis) {
     if (placed.length >= max) break;
+    // Lange Namen kuerzen: ein einzelner 40-Zeichen-Name verdraengte sonst
+    // reihenweise Nachbar-Tags ueber die Kollisionspruefung.
+    const l1 = ellipsize(L.p.label1, maxChars);
+    const l2 = ellipsize(L.p.label2, maxChars);
     ctx.font = `bold ${11 * scale}px system-ui`;
-    const w1 = ctx.measureText(L.p.label1).width;
+    const w1 = ctx.measureText(l1).width;
     ctx.font = `${9 * scale}px system-ui`;
-    const w2 = L.p.label2 ? ctx.measureText(L.p.label2).width : 0;
-    const bw = Math.max(w1, w2), bx = L.px - bw / 2, by = L.py - 18 * scale;
-    const box = { x: bx, y: by, w: bw, h: lh };
+    const w2 = l2 ? ctx.measureText(l2).width : 0;
+    const bw = Math.max(w1, w2);
+    // Tag-Mitte so klemmen, dass die Box im Ausschnitt bleibt. Der Punkt selbst
+    // bleibt an seiner Position — nur die Beschriftung rutscht nach innen.
+    const tx = Math.min(Math.max(L.px, vx0 + bw / 2 + pad), vx1 - bw / 2 - pad);
+    const ty = Math.min(Math.max(L.py, vy0 + lh + pad), vy1 - pad);
+    const box = { x: tx - bw / 2, y: ty - 18 * scale, w: bw, h: lh };
     if (placed.some((q) => box.x < q.x + q.w && box.x + box.w > q.x && box.y < q.y + q.h && box.y + box.h > q.y)) continue;
     placed.push(box);
-    drawNameTag(ctx, L.px, L.py, L.p.label1, L.p.label2, scale);
+    drawNameTag(ctx, tx, ty, l1, l2, scale);
   }
-  if (opts.onLabelStats) opts.onLabelStats({ total: labels.length, drawn: placed.length });
+  // total = im Ausschnitt sichtbare Spieler, nicht alle online — sonst laese sich
+  // "17/79" als "62 Tags unterschlagen" statt "62 ausserhalb des Bildes".
+  if (opts.onLabelStats) opts.onLabelStats({ total: vis.length, drawn: placed.length, belowZoom: false });
 }
 
 function drawPlayer(ctx, px, py, p, scale) {
