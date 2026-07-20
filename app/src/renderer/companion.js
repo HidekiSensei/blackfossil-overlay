@@ -9,6 +9,8 @@ import { loadMapImage, drawFullMap, setZones, loadZoneLayer, setCalAffine } from
 import { initServer, renderServer, stopServer } from './companion/panels/server.js';
 import { initAdmin, renderAdmin } from './companion/panels/admin.js';
 import { initTeam, renderTeam } from './companion/panels/team.js';
+import { initSupport, renderSupport, stopSupport } from './companion/panels/support.js';
+import { initLexikon, renderLexikon } from './companion/panels/lexikon.js';
 
 let config = { tokenBase: '' };
 let sessionToken = null;
@@ -169,11 +171,15 @@ const PANELS = {
   team: renderTeam,
   admin: renderAdmin,
   server: renderServer,
+  support: renderSupport,
+  lexikon: renderLexikon,
 };
 
 // ── Navigation ─────────────────────────────────────────────────────────────
 function navTo(view) {
-  if (view !== 'server') stopServer();   // Status-Poll haengt am offenen Panel
+  // Polls haengen am offenen Panel — beim Wegnavigieren abstellen.
+  if (view !== 'server') stopServer();
+  if (view !== 'support') stopSupport();
   currentView = view;
   document.querySelectorAll('.cp-nav-btn').forEach((b) => b.classList.toggle('active', b.dataset.view === view));
   document.querySelectorAll('.cp-view').forEach((s) => { s.hidden = s.dataset.view !== view; });
@@ -222,6 +228,7 @@ async function boot() {
   el('cpSetWho').textContent = roles.name;
   el('cpSetRank').textContent = roles.rank;
   initTeam(panelCtx); initAdmin(panelCtx); initServer(panelCtx);
+  initSupport(panelCtx); initLexikon(panelCtx);
   window.bf.getVersion().then((v) => { el('cpVersion').textContent = v; });
   el('cpLogout').onclick = () => window.bf.logout();
 

@@ -235,3 +235,31 @@ input[type="range"] { accent-color: var(--accent); }
 }
 .cp-pad::-webkit-scrollbar-thumb:hover, .cp-scroll::-webkit-scrollbar-thumb:hover { background: rgba(255, 255, 255, 0.22); }
 .cp-pad::-webkit-scrollbar-track, .cp-scroll::-webkit-scrollbar-track { background: transparent; }
+
+/* ── Zweispaltige Panels (Liste links, Detail rechts) ───────────────────── */
+.cp-split { display: flex; gap: var(--cp-s4); align-items: flex-start; }
+.cp-split-side { flex: 0 0 290px; min-width: 0; }
+.cp-split-main { flex: 1; min-width: 0; }
+@media (max-width: 900px) {
+  .cp-split { flex-direction: column; }
+  .cp-split-side { flex: none; width: 100%; }
+}
+
+/* Anklickbare Listeneintraege — dieselbe Optik wie .cp-item, nur interaktiv */
+.cp-item-click { cursor: pointer; padding-left: var(--cp-s2); padding-right: var(--cp-s2); border-radius: var(--cp-r-sm); }
+.cp-item-click:hover { background: var(--cp-surface-2); }
+.cp-item-click.active { background: rgba(var(--accent-rgb), 0.16); }
+
+.cp-badge-row { display: flex; gap: var(--cp-s2); flex-wrap: wrap; }
+
+/* ── Ticket-Verlauf ────────────────────────────────────────────────────── */
+.cp-chat { display: flex; flex-direction: column; gap: var(--cp-s3); max-height: 420px; }
+.cp-msg { max-width: 82%; }
+.cp-msg-mine { align-self: flex-end; text-align: right; }
+.cp-msg-who { font-size: 10.5px; color: var(--muted); margin-bottom: 3px; }
+.cp-msg-body {
+  display: inline-block; padding: var(--cp-s2) var(--cp-s3);
+  background: var(--cp-surface-2); border: 1px solid var(--cp-line);
+  border-radius: var(--cp-r-md); text-align: left; word-break: break-word;
+}
+.cp-msg-mine .cp-msg-body { background: rgba(var(--accent-rgb), 0.16); border-color: rgba(var(--accent-rgb), 0.34); }
