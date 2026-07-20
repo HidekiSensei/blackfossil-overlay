@@ -130,11 +130,52 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
+  # Companion-App ins SELBE Release. Wieder sequenziell nach build-linux, aus demselben
+  # Race-Grund. Der Feed ist getrennt: electron-builder.companion.yml setzt
+  # "channel: companion" -> companion.yml / companion-linux.yml statt latest.yml.
+  # Ohne den eigenen Channel wuerde das Overlay Companion-Builds als eigenes Update
+  # anbieten (beide publishen in dasselbe Repo).
+  build-companion:
+    needs: [release, build-linux]
+    if: needs.release.outputs.exists == 'false'
+    runs-on: ${{ matrix.os }}
+    strategy:
+      max-parallel: 1          # beide Plattformen laden in dasselbe Draft-Release
+      matrix:
+        include:
+          - os: windows-latest
+            flag: --win
+          - os: ubuntu-latest
+            flag: --linux
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Dependencies
+        working-directory: app
+        run: npm ci
+
+      - name: Renderer bauen
+        working-directory: app
+        run: npm run build:renderer
+
+      - name: Produktiv-Werte setzen (appId, productName, Scheme, API-URL)
+        run: node app/scripts/patch-prod.js
+
+      - name: Companion bauen & auf GitHub Releases veröffentlichen
+        working-directory: app
+        run: npx electron-builder ${{ matrix.flag }} --config electron-builder.companion.yml --publish always
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
   # Release erst live schalten, wenn BEIDE Artefakte oben liegen. Vorher stand dieser Schritt am
   # Ende des Windows-Jobs — damit waere das Release "latest" gewesen, waehrend die AppImage noch
   # fehlt, und der Linux-Updater liefe gegen eine 404 auf latest-linux.yml.
   publish:
-    needs: [release, build-linux]
+    needs: [release, build-linux, build-companion]
     if: needs.release.outputs.exists == 'false'
     runs-on: ubuntu-latest
     steps:

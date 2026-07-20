@@ -33,4 +33,26 @@ patch('app/package.json', [
   ['"blackfossil-test"', '"blackfossil"'],
 ]);
 
-console.log('Produktiv-Werte gesetzt (appId, productName, artifactName, Scheme, main.js Strings, API-URL).');
+// ── Companion-App ───────────────────────────────────────────────────────────
+// Zweite App, gleiche Logik: im Repo stehen Test-Defaults, hier werden sie auf
+// Produktiv gedreht. Overlay und Companion bleiben dabei in BEIDEN Varianten
+// parallel installierbar (vier verschiedene appIds insgesamt).
+patch('app/src/companion-main.js', [
+  ['https://api-test.blackfossil.de', 'https://api.blackfossil.de'],
+  ["'BlackFossil Companion Test'", "'BlackFossil Companion'"],
+  // Nur die Konstante treffen, nicht die Kommentare, die den Scheme erwähnen.
+  ["const SCHEME = 'blackfossil-companion-test'", "const SCHEME = 'blackfossil-companion'"],
+]);
+
+patch('app/electron-builder.companion.yml', [
+  ['de.blackfossil.companion.test', 'de.blackfossil.companion'],
+  ['BlackFossil Companion Test', 'BlackFossil Companion'],
+  ['BlackFossil-Companion-Test-Setup.${ext}', 'BlackFossil-Companion-Setup.${ext}'],
+  // Reihenfolge zählt: der Scheme-Eintrag steht in einer eigenen Zeile und würde
+  // sonst schon vom appId-Replace oben mit erwischt werden — deshalb ist das
+  // Pattern hier der volle Scheme-String inkl. Listen-Präfix.
+  ['- blackfossil-companion-test', '- blackfossil-companion'],
+  ['executableName: blackfossil-companion-test', 'executableName: blackfossil-companion'],
+]);
+
+console.log('Produktiv-Werte gesetzt für Overlay UND Companion (appId, productName, artifactName, Scheme, API-URL).');

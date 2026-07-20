@@ -20,9 +20,14 @@ files:
   - src/renderer/dist/companion.js
   - src/renderer/assets/**
   - package.json
-  # Companion hat weder Push-to-Talk noch Voice — die beiden Brocken bleiben draussen.
-  - '!node_modules/uiohook-napi/**'
-  - '!node_modules/livekit-client/**'
+  # node_modules KOMPLETT raus: companion-main.js/-preload.js brauchen nur
+  # Electron-Builtins (electron, path, fs, http), und der Renderer ist von esbuild
+  # zu dist/companion.js gebuendelt. Einzelne Pakete auszuschliessen reichte nicht —
+  # livekit-client zieht @bufbuild/protobuf, @livekit/*, jose, webrtc-adapter u. a.
+  # transitiv nach, die dann als Leichen im Paket landeten.
+  # ACHTUNG: Sobald die Companion electron-updater nutzt, muss dieses eine Paket
+  # hier wieder aufgenommen werden.
+  - '!node_modules/**'
 
 protocols:
   - name: BlackFossil Companion
@@ -40,6 +45,11 @@ nsis:
   allowToChangeInstallationDirectory: false
 
 linux:
+  # executableName MUSS gesetzt werden: electron-builder leitet ihn sonst aus
+  # package.json.name ab (= "blackfossil-overlay") — Companion und Overlay haetten
+  # dann dieselbe Binary und denselben .desktop-Eintrag. Das Test-Suffix haelt
+  # zusaetzlich Companion-Test und Companion-Prod auseinander (patch-prod dreht es).
+  executableName: blackfossil-companion-test
   target:
     - target: AppImage
       arch: [x64]
