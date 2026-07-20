@@ -14,7 +14,42 @@ let users = [];
 const TABS = [
   { id: 'suche', label: 'Spieler' },
   { id: 'warnings', label: 'Verwarnungen' },
+  { id: 'paudit', label: 'Player-Audit' },
+  { id: 'taudit', label: 'Team-Audit' },
 ];
+
+// Beide Audits paginieren SERVERSEITIG (items/total/limit/offset) — nie alles
+// laden und lokal filtern, das sind schnell zehntausende Zeilen.
+const PAGE = 50;
+let paOffset = 0, taOffset = 0;
+
+function fmtWhen(ms) {
+  return ms ? new Date(Number(ms)).toLocaleString('de-DE') : '—';
+}
+
+// details ist ein Objekt mit wechselnden Schluesseln — kompakt als "k=v" zeigen,
+// verschachtelte Werte als JSON.
+function fmtDetails(d) {
+  if (!d || typeof d !== 'object') return String(d || '');
+  return Object.entries(d)
+    .map(([k, v]) => `${k}=${v && typeof v === 'object' ? JSON.stringify(v) : v}`)
+    .join(' · ');
+}
+
+function pager(prefix, offset, total, onPage) {
+  const from = total ? offset + 1 : 0;
+  const to = Math.min(offset + PAGE, total);
+  return { html: `<div class="cp-row" style="margin-top:var(--cp-s3);align-items:center">`
+      + U.btn(prefix + 'Prev', 'Zurück', { size: 'sm', disabled: offset <= 0 })
+      + `<span class="cp-muted">${from}–${to} von ${total}</span>`
+      + U.btn(prefix + 'Next', 'Weiter', { size: 'sm', disabled: offset + PAGE >= total })
+      + `</div>`,
+    bind: () => {
+      const p = el(prefix + 'Prev'), n = el(prefix + 'Next');
+      if (p) p.onclick = () => onPage(Math.max(0, offset - PAGE));
+      if (n) n.onclick = () => onPage(offset + PAGE);
+    } };
+}
 
 export function initTeam(ctx) { C = ctx; }
 
@@ -27,7 +62,10 @@ export function renderTeam(root) {
   root.querySelectorAll('.cp-tab').forEach((b) => {
     b.onclick = () => { tab = b.dataset.tab; renderTeam(root); };
   });
-  if (tab === 'suche') renderSearch(); else renderWarnings();
+  if (tab === 'suche') renderSearch();
+  else if (tab === 'warnings') renderWarnings();
+  else if (tab === 'paudit') renderPlayerAudit();
+  else renderTeamAudit();
 }
 
 async function ensureUsers() {
@@ -111,5 +149,42 @@ async function renderWarnings() {
           [wn.reason, wn.createdAt && new Date(wn.createdAt).toLocaleString('de-DE')].filter(Boolean).join(' · '),
           wn.by ? U.badge(wn.by) : '')).join('') + `</div>`)
       : U.card(U.empty('Keine Verwarnungen.'));
+  } catch (e) { box.innerHTML = U.card(U.muted('Nicht abrufbar: ' + e.message)); }
+}
+
+
+// ── Player-Audit: was Spieler mit ihren Dinos gemacht haben ────────────────
+async function renderPlayerAudit() {
+  const box = el('tmBody');
+  box.innerHTML = U.card(U.muted('Lade Player-Audit…'));
+  try {
+    const d = await C.api('GET', `/admin/player-audit?limit=${PAGE}&offset=${paOffset}`);
+    const items = d.items || [];
+    const pg = pager('pa', d.offset || 0, d.total || 0, (o) => { paOffset = o; renderPlayerAudit(); });
+    box.innerHTML = (items.length
+      ? U.card(`<div class="cp-list">` + items.map((it) => U.item(
+          it.playerName || it.discordName || '—',
+          [fmtWhen(it.createdAtMs), fmtDetails(it.details)].filter(Boolean).join(' · '),
+          it.via ? U.badge(it.via) : '')).join('') + `</div>`)
+      : U.card(U.empty('Keine Einträge.'))) + pg.html;
+    pg.bind();
+  } catch (e) { box.innerHTML = U.card(U.muted('Nicht abrufbar: ' + e.message)); }
+}
+
+// ── Team-Audit: Staff-Aktionen (dieselben Daten wie der Discord-Audit-Channel) ──
+async function renderTeamAudit() {
+  const box = el('tmBody');
+  box.innerHTML = U.card(U.muted('Lade Team-Audit…'));
+  try {
+    const d = await C.api('GET', `/admin/staff-audit?limit=${PAGE}&offset=${taOffset}`);
+    const items = d.items || [];
+    const pg = pager('ta', d.offset || 0, d.total || 0, (o) => { taOffset = o; renderTeamAudit(); });
+    box.innerHTML = (items.length
+      ? U.card(`<div class="cp-list">` + items.map((it) => U.item(
+          `${it.action || '—'} — ${it.actorName || it.actorDiscord || it.actorSteam || 'unbekannt'}`,
+          [fmtWhen(it.createdAtMs), fmtDetails(it.details)].filter(Boolean).join(' · '),
+          it.source ? U.badge(it.source) : '')).join('') + `</div>`)
+      : U.card(U.empty('Keine Einträge.'))) + pg.html;
+    pg.bind();
   } catch (e) { box.innerHTML = U.card(U.muted('Nicht abrufbar: ' + e.message)); }
 }

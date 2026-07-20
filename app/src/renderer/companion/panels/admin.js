@@ -12,7 +12,18 @@ let tab = 'welt';
 const TABS = [
   { id: 'welt', label: 'Welt' },
   { id: 'limits', label: 'Class-Limits' },
+  { id: 'ops', label: 'Betrieb' },
 ];
+
+// Beschriftungen der Health-Checks. Das Backend liefert nur die ids.
+const OPS_LABEL = {
+  db: 'Datenbank',
+  mod_api: 'Mod-API (Poller)',
+  game_process: 'Game-Server',
+  control_server: 'Game-Box (control)',
+  livekit: 'Voice (LiveKit)',
+  peer_backend: 'Peer-Backend',
+};
 const WEATHER = ['clear', 'clouds', 'rain', 'storm', 'fog', 'snow', 'auto'];
 
 export function initAdmin(ctx) { C = ctx; }
@@ -26,7 +37,9 @@ export function renderAdmin(root) {
   root.querySelectorAll('.cp-tab').forEach((b) => {
     b.onclick = () => { tab = b.dataset.tab; renderAdmin(root); };
   });
-  if (tab === 'welt') renderWelt(); else renderLimits();
+  if (tab === 'welt') renderWelt();
+  else if (tab === 'limits') renderLimits();
+  else renderOps();
 }
 
 async function renderWelt() {
@@ -85,4 +98,57 @@ async function renderLimits() {
 async function send(path, body, okMsg) {
   try { await C.api('POST', path, body); C.toast(okMsg, 'success'); }
   catch (e) { C.toast(e.message, 'error'); }
+}
+
+
+// ── Betrieb: Health-Matrix + Versionen. Read-only-Diagnose ohne SSH. ───────
+async function renderOps() {
+  const box = el('adBody');
+  box.innerHTML = U.card(U.muted('Lade Betriebszustand…'));
+  let health, versions;
+  try {
+    // Parallel, aber einzeln fehlertolerant: faellt eine Quelle aus, soll die
+    // andere trotzdem etwas zeigen — im Zweifel ist genau die kaputte
+    // interessant.
+    [health, versions] = await Promise.all([
+      C.api('GET', '/admin/ops/health').catch((e) => ({ error: e.message, status: e.status })),
+      C.api('GET', '/admin/ops/version').catch((e) => ({ error: e.message, status: e.status })),
+    ]);
+  } catch (e) { box.innerHTML = U.card(U.muted('Nicht abrufbar: ' + e.message)); return; }
+
+  // 404 = Ops-Interface auf dieser Umgebung nicht deployed (Stand jetzt: nur
+  // test/dev, nicht Prod). Das ist kein Ausfall und soll nicht wie einer aussehen.
+  if (health && health.status === 404 && versions && versions.status === 404) {
+    box.innerHTML = U.sec('Betrieb') + U.card(U.empty(
+      'Das Betrieb-Interface ist auf dieser Umgebung nicht verfügbar (/admin/ops nicht deployed).'));
+    return;
+  }
+
+  const checks = (health && health.checks) || [];
+  const healthHtml = health && health.error
+    ? U.muted('Health nicht abrufbar: ' + health.error)
+    : (checks.length
+        ? `<div class="cp-list">` + checks.map((c) => U.item(
+            OPS_LABEL[c.id] || c.id,
+            [c.latencyMs != null ? `${c.latencyMs} ms` : '', c.detail || ''].filter(Boolean).join(' · '),
+            U.badge(c.ok ? (c.warn ? 'Warnung' : 'OK') : 'Ausfall', c.ok ? (c.warn ? '' : 'ok') : 'off'))).join('')
+          + `</div>`
+        : U.empty('Keine Checks gemeldet.'));
+
+  const v = versions && !versions.error ? versions : null;
+  const short = (x) => (x ? String(x).slice(0, 7) : '—');
+  const vRows = [];
+  if (v) {
+    const be = v.backend || {};
+    if (be.sha) vRows.push(U.item('Backend', `${short(be.sha)} · ${be.branch || ''}`.trim(), be.builtAt ? U.badge(be.builtAt) : ''));
+    if (v.mod) vRows.push(U.item('Mod (.asi)', `${short(v.mod.sha)} · ${v.mod.branch || ''}`.trim(), v.mod.builtAt ? U.badge(v.mod.builtAt) : ''));
+    if (v.control && v.control.controlServer) vRows.push(U.item('control-server', `seit ${v.control.controlServer.startedAt || '?'}`));
+  }
+  const versHtml = versions && versions.error
+    ? U.muted('Versionen nicht abrufbar: ' + versions.error)
+    : (vRows.length ? `<div class="cp-list">${vRows.join('')}</div>` : U.empty('Keine Versionsinfos.'));
+
+  box.innerHTML = U.sec('Status') + U.card(healthHtml)
+    + U.sec('Versionen') + U.card(versHtml)
+    + U.hint(`Umgebung: ${(health && health.env) || '?'} · Stand ${new Date().toLocaleTimeString('de-DE')}`);
 }

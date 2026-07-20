@@ -29,7 +29,16 @@ export function makeApi({ tokenBase, token }) {
     }
     const r = await fetch(`${tokenBase()}${path}`, opt);
     let d = {}; try { d = await r.json(); } catch { /* leerer Body ist ok */ }
-    if (!r.ok) throw new Error(apiErr(d) || `HTTP ${r.status}`);
+    if (!r.ok) {
+      // apiErr liefert IMMER einen Text ("Fehler" als letzter Fallback) — ein
+      // `apiErr(d) || \`HTTP ${r.status}\`` waere also toter Code gewesen und
+      // verschluckte den Statuscode. Genau der ist aber die nuetzliche Auskunft,
+      // wenn der Body nichts hergibt: ein 404 (Endpunkt auf dieser Umgebung nicht
+      // deployed) sieht sonst aus wie ein 500.
+      const err = new Error(d && d.error ? apiErr(d) : `HTTP ${r.status}`);
+      err.status = r.status;   // Panels koennen so gezielt auf 404/403 reagieren
+      throw err;
+    }
     return d;
   };
 }
