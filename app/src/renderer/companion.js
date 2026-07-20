@@ -152,11 +152,16 @@ async function loadUserDir() {
 }
 
 async function loadCalibration() {
-  // Die Affine liegt sonst nur in der localStorage des Overlays — eine frische
-  // Companion-Installation wuerde ohne das auf Default-Werten stehen.
+  // Die global geteilte Kalibrierung kommt vom Server und gilt fuer Overlay UND
+  // Companion — hier ist nichts eigenes zu kalibrieren.
+  //
+  // ACHTUNG: Die Antwort ist { by, affine: {a..f} } — die Matrix liegt
+  // VERSCHACHTELT. Ein Check auf c.a laeuft still ins Leere und die Karte
+  // bleibt auf den Defaults stehen (Marker sichtbar verschoben). Genau das war
+  // hier der Fall; das Overlay prueft korrekt auf data.affine.a.
   try {
     const c = await api('GET', '/calibration');
-    if (c && typeof c.a === 'number') setCalAffine(c);
+    if (c && c.affine && typeof c.affine.a === 'number') setCalAffine(c.affine);
   } catch { /* Default-Kalibrierung */ }
 }
 
@@ -253,44 +258,57 @@ const PANELS = {
 function renderLegend() {
   const box = el('cpLegend');
   if (!box) return;
-  const rows = Object.keys(ZONE_LAYERS).map((k) => {
-    const meta = ZONE_META[k] || {};
-    const on = isZoneLayerVisible(k);
-    return `<label class="cp-leg-row"><input type="checkbox" data-zone="${k}"${on ? ' checked' : ''}>`
-      + `<span class="cp-leg-swatch" style="background:${meta.color || '#888'}"></span>`
-      + `<span>${meta.label || k}</span></label>`;
-  }).join('');
-  box.innerHTML = `<div class="cp-leg-title">Zonen</div>${rows}`
-    + `<div class="cp-leg-title" style="margin-top:var(--cp-s3)">Marker</div>`
-    + `<label class="cp-leg-row${showHeat ? ' cp-leg-off' : ''}"><input type="checkbox" data-marker="tp"${showTp ? ' checked' : ''}${showHeat ? ' disabled' : ''}>`
-    + `<span class="cp-leg-swatch cp-leg-tp"></span><span>Teleports</span></label>`
-    + `<label class="cp-leg-row${showHeat ? ' cp-leg-off' : ''}"><input type="checkbox" data-marker="ai"${showAi ? ' checked' : ''}${showHeat ? ' disabled' : ''}>`
-    + `<span class="cp-leg-swatch cp-leg-ai"></span><span>KI-Encounter</span></label>`
-    + `<label class="cp-leg-row${showHeat ? ' cp-leg-off' : ''}"><input type="checkbox" data-marker="players"${showAll ? ' checked' : ''}${showHeat ? ' disabled' : ''}>`
-    + `<span class="cp-leg-swatch cp-leg-player"></span><span>Spieler</span></label>`
-    + `<label class="cp-leg-row"><input type="checkbox" data-marker="heat"${showHeat ? ' checked' : ''}>`
-    + `<span class="cp-leg-swatch cp-leg-heat"></span><span>Heatmap</span></label>`;
+  // Toggle-Buttons statt Checkboxen: aria-pressed traegt den Zustand, die Optik
+  // kommt aus .cp-tgl. Ein Button reagiert auf die ganze Flaeche, nicht nur auf
+  // ein 13px-Kaestchen — auf einer Karte, die man nebenbei bedient, zaehlt das.
+  const tgl = (attr, key, swatch, label, on, disabled) =>
+    `<button type="button" class="cp-tgl" ${attr}="${key}" aria-pressed="${on ? 'true' : 'false'}"${disabled ? ' disabled' : ''}>`
+    + `<span class="cp-leg-swatch" style="${swatch}"></span><span>${label}</span></button>`;
 
-  box.querySelectorAll('[data-zone]').forEach((c) => {
-    c.onchange = () => {
-      setZoneLayer(c.dataset.zone, c.checked);
-      localStorage.setItem('bf-cp-zone-' + c.dataset.zone, c.checked ? '1' : '0');
+  const zones = Object.keys(ZONE_LAYERS).map((k) => {
+    const meta = ZONE_META[k] || {};
+    return tgl('data-zone', k, `background:${meta.color || '#888'}`, meta.label || k, isZoneLayerVisible(k), false);
+  }).join('');
+
+  box.innerHTML = `<div class="cp-leg-title">Zonen</div><div class="cp-leg-grid">${zones}</div>`
+    + `<div class="cp-leg-title" style="margin-top:var(--cp-s3)">Marker</div><div class="cp-leg-grid">`
+    + tgl('data-marker', 'tp', '', 'Teleports', showTp, showHeat)
+    + tgl('data-marker', 'ai', '', 'KI-Encounter', showAi, showHeat)
+    + tgl('data-marker', 'players', '', 'Spieler', showAll, showHeat)
+    + tgl('data-marker', 'heat', '', 'Heatmap', showHeat, false)
+    + `</div>`;
+  // Marker-Farbtupfer per Klasse (die Zonen tragen ihre Farbe inline)
+  for (const [k, cls] of [['tp', 'cp-leg-tp'], ['ai', 'cp-leg-ai'], ['players', 'cp-leg-player'], ['heat', 'cp-leg-heat']]) {
+    const sw = box.querySelector(`[data-marker="${k}"] .cp-leg-swatch`);
+    if (sw) sw.classList.add(cls);
+  }
+
+  const press = (btn, on) => btn.setAttribute('aria-pressed', on ? 'true' : 'false');
+
+  box.querySelectorAll('[data-zone]').forEach((b) => {
+    b.onclick = () => {
+      const on = b.getAttribute('aria-pressed') !== 'true';
+      press(b, on);
+      setZoneLayer(b.dataset.zone, on);
+      localStorage.setItem('bf-cp-zone-' + b.dataset.zone, on ? '1' : '0');
       dirty = true;
     };
   });
-  box.querySelectorAll('[data-marker]').forEach((c) => {
-    c.onchange = () => {
-      const k = c.dataset.marker;
-      if (k === 'tp') { showTp = c.checked; localStorage.setItem('bf-cp-tp', c.checked ? '1' : '0'); }
-      else if (k === 'ai') { showAi = c.checked; localStorage.setItem('bf-cp-ai', c.checked ? '1' : '0'); }
+  box.querySelectorAll('[data-marker]').forEach((b) => {
+    b.onclick = () => {
+      const k = b.dataset.marker;
+      const on = b.getAttribute('aria-pressed') !== 'true';
+      press(b, on);
+      if (k === 'tp') { showTp = on; localStorage.setItem('bf-cp-tp', on ? '1' : '0'); }
+      else if (k === 'ai') { showAi = on; localStorage.setItem('bf-cp-ai', on ? '1' : '0'); }
       else if (k === 'heat') {
-        showHeat = c.checked;
-        localStorage.setItem('bf-cp-heat', c.checked ? '1' : '0');
-        // Die uebrigen Marker sind im Heatmap-Modus wirkungslos — ausgrauen,
+        showHeat = on;
+        localStorage.setItem('bf-cp-heat', on ? '1' : '0');
+        // Die uebrigen Marker sind im Heatmap-Modus wirkungslos — sperren,
         // statt sie anklickbar zu lassen und nichts zu tun.
         renderLegend();
       }
-      else { showAll = c.checked; localStorage.setItem('bf-cp-showall', c.checked ? '1' : '0'); }
+      else { showAll = on; localStorage.setItem('bf-cp-showall', on ? '1' : '0'); }
       dirty = true;
     };
   });
@@ -385,9 +403,12 @@ async function boot() {
   // Fenstergroesse und Panel-Wechsel aendern die verfuegbare Flaeche.
   new ResizeObserver(() => resizeCanvas()).observe(el('cpMapWrap'));
 
+  // Kalibrierung ZUERST: sie ist ein kleiner API-Call, das Kartenbild sind
+  // 2,7 MB. Andersherum zeichnet die Karte die erste Zeit mit Default-Affine
+  // und alle Marker sitzen sichtbar falsch, bis sie nachtraeglich springen.
+  await loadCalibration();
   await loadMapImage('assets/map.jpg');
   dirty = true;
-  await loadCalibration();
   loadZones();
   loadTeleports();
   loadEncounters();

@@ -287,3 +287,26 @@ input[type="range"] { accent-color: var(--accent); }
 #cpMapCanvas:active { cursor: grabbing; }
 .cp-leg-heat { background: linear-gradient(135deg, #f59e0b, #ef4444); }
 .cp-leg-off { opacity: .4; cursor: default; }
+
+/* ── Legenden-Toggles ───────────────────────────────────────────────────── */
+/* Buttons statt Checkboxen: die ganze Flaeche schaltet, nicht nur ein
+   13px-Kaestchen. Zustand steckt in aria-pressed — damit ist er zugleich fuer
+   Screenreader korrekt und braucht keine zweite Quelle im JS. */
+.cp-leg-grid { display: flex; flex-direction: column; gap: 3px; }
+.cp-tgl {
+  display: flex; align-items: center; gap: var(--cp-s2);
+  width: 100%; padding: 5px var(--cp-s2); height: 27px; box-sizing: border-box;
+  font: inherit; font-size: 12px; text-align: left;
+  color: var(--muted); background: transparent;
+  border: 1px solid transparent; border-radius: var(--cp-r-sm);
+  cursor: pointer; transition: background .12s, color .12s, border-color .12s;
+}
+.cp-tgl:hover:not(:disabled) { background: var(--cp-surface-2); color: #e8e6ef; }
+.cp-tgl[aria-pressed="true"] {
+  background: rgba(255, 255, 255, 0.07);
+  border-color: var(--cp-line);
+  color: #e8e6ef;
+}
+.cp-tgl[aria-pressed="false"] .cp-leg-swatch { opacity: .25; }
+.cp-tgl:disabled { opacity: .35; cursor: not-allowed; }
+.cp-tgl:focus-visible { outline: 2px solid rgba(var(--accent-rgb), .7); outline-offset: 1px; }
