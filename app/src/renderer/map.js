@@ -190,7 +190,7 @@ export function drawFullMap(view, players, waypoints = [], teleports = [], hover
   if (mapReady) ctx.drawImage(mapImg, 0, 0, w, h);
   else { ctx.fillStyle = '#15102a'; ctx.fillRect(0, 0, w, h); ctx.fillStyle = '#6b5b8c'; ctx.font = '16px system-ui'; ctx.textAlign = 'center'; ctx.fillText('Kartenbild fehlt (assets/map.jpg)', w/2, h/2); }
 
-  drawZones(ctx, (nx, ny) => ({ px: nx * w, py: ny * h }), iconScale);
+  drawZones(ctx, (nx, ny) => ({ px: nx * w, py: ny * h }), iconScale, opts.editZone ? opts.editZone.id : null);
   for (const wp of waypoints) {
     const { nx, ny } = worldToNorm(wp.x, wp.y);
     drawWaypoint(ctx, nx * w, ny * h, iconScale);
@@ -417,9 +417,12 @@ export function drawMinimap(view, players, me, speakRange = 0, waypoints = [], z
 // Bildschirmbreite behalten. Default 1 haelt bestehende Aufrufer (Minimap)
 // unveraendert; im Overlay ist iconScale bei Standardzoom ebenfalls 1, dort
 // aendert sich die Darstellung also erst beim Reinzoomen — und dann zum Guten.
-function drawZones(ctx, project, scale = 1) {
+function drawZones(ctx, project, scale = 1, skipId = null) {
   for (const z of ZONES) {
     if (!z.points || !z.points.length) continue;
+    // Die gerade bearbeitete Zone zeichnet drawZoneEdit — sonst stuenden der
+    // gespeicherte und der gezogene Stand gleichzeitig auf der Karte.
+    if (skipId && z.id === skipId) continue;
     const meta = ZONE_META[z.type] || ZONE_META.pvp;
     const outline = OUTLINE_TYPES.has(z.type);
     const isGolden = !!(z.id && z.id === goldenZoneId);

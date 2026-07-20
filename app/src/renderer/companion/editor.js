@@ -228,7 +228,19 @@ async function saveEncounter(existing, point) {
   if (pt) body.spawn = { x: pt.x, y: pt.y, z: pt.z || 0 };
   if (!body.species) { C.toast('Spezies fehlt.', 'error'); return; }
   try {
+    // ACHTUNG: POST /admin/mod-ai/encounters LEGT IMMER NEU AN. Die mitgeschickte
+    // id wird ignoriert; das Backend haengt bei Namenskollision einen Zaehler an
+    // (maia_herd_wandernd, _2, _3 …). Ein Update gibt es nicht — es existiert nur
+    // GET, POST und DELETE /{id}.
+    //
+    // Bearbeiten heisst deshalb: neu anlegen, dann das alte loeschen. Reihenfolge
+    // bewusst so, damit bei einem Fehler dazwischen der Encounter nicht ersatzlos
+    // verschwindet. Ohne das Loeschen entstehen Duplikate — genau das ist
+    // passiert, bevor dieser Zweig existierte.
     await C.api('POST', '/admin/mod-ai/encounters', body);
+    if (existing && existing.id) {
+      await C.api('DELETE', `/admin/mod-ai/encounters/${encodeURIComponent(existing.id)}`);
+    }
     C.toast(existing ? 'Encounter gespeichert' : 'Encounter angelegt', 'success');
     leaveEditing();
     close('editor');

@@ -84,16 +84,21 @@ let plList = null;                // offene Spielerliste (zum Nachziehen beim Po
 // nichts davon wird gespeichert oder ans Backend geschickt, und beim Neustart ist
 // die Spur weg. Pro Spieler einzeln, auch innerhalb einer Gruppe.
 // Gestaffelte Aufloesung: je aelter, desto grober. Die Spur reicht dadurch weit
-// zurueck, ohne 160 Punkte je Spieler zu halten.
-//   Alter <=  10 Abfragen: jeder Punkt   (1er-Schritte)
-//   Alter <=  60 Abfragen: jeder 5.      (5er-Schritte)
-//   Alter <= 160 Abfragen: jeder 10.     (10er-Schritte)
-// Ergibt rund 30 Punkte je Spieler ueber ~160 s Verlauf. Bei 80 Spielern sind
-// das ~2400 Punkte, also ein paar Dutzend KB — vernachlaessigbar.
+// zurueck, ohne fuer jede Abfrage einen Punkt zu halten.
+//
+// Ergibt rund 50 Punkte je Spieler ueber gut 13 Minuten Verlauf.
+//
+// Wo liegt die Grenze? NICHT beim Speicher: 80 Spieler x 50 Punkte sind ~4000
+// Objekte, also deutlich unter 200 KB. Der begrenzende Faktor ist das Zeichnen
+// — jede Spur wird zweimal gestrichen (dunkler Saum + Linie), das sind hier
+// ~8000 Segmente je Bild. Canvas verkraftet ein Vielfaches davon, zumal nur bei
+// Aenderung neu gezeichnet wird (Dirty-Flag). Unangenehm wuerde es erst im
+// Bereich einiger Hunderttausend Segmente, also etwa ab 1000 Punkten je Spieler.
 const TRAIL_TIERS = [
-  { maxAge: 10, step: 1 },
-  { maxAge: 60, step: 5 },
-  { maxAge: 160, step: 10 },
+  { maxAge: 10, step: 1 },     // letzte 10 s: jede Abfrage
+  { maxAge: 60, step: 5 },     // bis 1 min:   jede 5.
+  { maxAge: 200, step: 10 },   // bis gut 3 min: jede 10.
+  { maxAge: 800, step: 40 },   // bis gut 13 min: jede 40.
 ];
 const TRAIL_MAX_AGE = TRAIL_TIERS[TRAIL_TIERS.length - 1].maxAge;
 const trails = new Map();         // steamId -> [{x,y,t}, …]
@@ -130,6 +135,19 @@ function pushTrail(list) {
   for (const id of trails.keys()) if (!seen.has(id)) trails.delete(id);
 }
 
+// Beim Bearbeiten darf das Original NICHT zusaetzlich gezeichnet werden — sonst
+// stehen der gespeicherte und der gezogene Stand gleichzeitig auf der Karte,
+// und die Trefferpruefung faende weiter den alten. Genau das passierte bei den
+// KI-Encountern (alte Route blieb stehen und blieb als einzige anklickbar).
+function visibleTeleports() {
+  const et = editingTeleport();
+  return et ? teleports.filter((t) => t.id !== et.id) : teleports;
+}
+function visibleEncounters() {
+  const en = editingEncounter();
+  return en ? encounters.filter((e) => e.id !== en.id) : encounters;
+}
+
 function render() {
   const cv = el('cpMapCanvas');
   if (!cv) return;
@@ -159,7 +177,7 @@ function render() {
     return;
   }
 
-  drawFullMap({ ctx, w: MAP_SIZE, h: MAP_SIZE }, players, [], showTp ? teleports : [], null, 1 / sc, {
+  drawFullMap({ ctx, w: MAP_SIZE, h: MAP_SIZE }, players, [], showTp ? visibleTeleports() : [], null, 1 / sc, {
     showAll,
     zoom,
     labelMinZoom,
@@ -178,7 +196,8 @@ function render() {
     onLabelStats: (s) => { lastStat = s; },
     onHits: (h) => { hits = h; },
   });
-  if (showAi && encounters.length) drawAiEncounters(ctx, MAP_SIZE, MAP_SIZE, 1 / sc, encounters, baseClass);
+  { const list = visibleEncounters();
+    if (showAi && list.length) drawAiEncounters(ctx, MAP_SIZE, MAP_SIZE, 1 / sc, list, baseClass); }
   drawPlacement(ctx, 1 / sc);
   ctx.setTransform(1, 0, 0, 1, 0, 0);
   updateMapStat();
@@ -238,14 +257,21 @@ let editMode = false;
 
 // Welcher Eckpunkt liegt unter dem Zeiger? Trefferflaeche etwas grosszuegiger
 // als das gezeichnete Quadrat, sonst muss man pixelgenau treffen.
+// Trefferradius bewusst identisch zu objectAt (14 px). Vorher waren es +-10:
+// man konnte per Rechtsklick etwas oeffnen, dessen Anfasser man an derselben
+// Stelle nicht mehr greifen konnte — der Punkt lag im 14er-Kreis, aber
+// ausserhalb des 10er-Quadrats.
+const HANDLE_HIT = 14;
 function handleAt(points, sx, sy) {
   const sc = totalScale();
+  let best = -1, bestD = Infinity;
   for (let i = 0; i < (points || []).length; i++) {
     const n = worldToNorm(points[i].x, points[i].y);
     const x = n.nx * MAP_SIZE * sc + panX, y = n.ny * MAP_SIZE * sc + panY;
-    if (Math.abs(x - sx) <= 10 && Math.abs(y - sy) <= 10) return i;
+    const d = Math.hypot(x - sx, y - sy);
+    if (d <= HANDLE_HIT && d < bestD) { best = i; bestD = d; }
   }
-  return -1;
+  return best;
 }
 
 // Punkt-in-Polygon gegen die BEARBEITETE Kopie, nicht gegen den gespeicherten
@@ -598,14 +624,19 @@ function objectAt(sx, sy) {
   // Ausgeblendete Ebenen sind nicht bearbeitbar. Sonst oeffnet ein Rechtsklick
   // einen Editor fuer etwas, das gar nicht zu sehen ist — man wuesste nicht,
   // was man da bearbeitet.
-  if (showTp) for (const t of teleports) {
+  // Gegen den WIRKSAMEN Stand pruefen: wird gerade gezogen, zaehlt die Kopie,
+  // nicht der gespeicherte Punkt.
+  const et = editingTeleport(), en0 = editingEncounter();
+  if (showTp) for (const t0 of teleports) {
+    const t = (et && t0.id === et.id) ? et : t0;
     const p = toScr(t.x, t.y);
-    if (Math.hypot(p.x - sx, p.y - sy) <= 14) return { kind: 'teleport', obj: t };
+    if (Math.hypot(p.x - sx, p.y - sy) <= 14) return { kind: 'teleport', obj: t0 };
   }
-  if (showAi) for (const enc of encounters) {
+  if (showAi) for (const enc0 of encounters) {
+    const enc = (en0 && enc0.id === en0.id) ? en0 : enc0;
     if (!enc.spawn || (enc.spawn.x === 0 && enc.spawn.y === 0)) continue;
     const p = toScr(enc.spawn.x, enc.spawn.y);
-    if (Math.hypot(p.x - sx, p.y - sy) <= 14) return { kind: 'encounter', obj: enc };
+    if (Math.hypot(p.x - sx, p.y - sy) <= 14) return { kind: 'encounter', obj: enc0 };
   }
   const w = screenToWorld(sx, sy);
   // zoneObjectAt statt zoneAt: letzteres liefert nur einen ANZEIGENAMEN als
@@ -940,6 +971,20 @@ async function boot() {
   if (can(perms, 'team.users')) await loadUserDir();
   await pollPositions();
   setInterval(pollPositions, 1000);
+
+  // Karten-Objekte regelmaessig nachladen, damit Aenderungen anderer Admins
+  // (Companion ODER Overlay) hier ankommen. 30 s reicht: Zonen, Teleports und
+  // Encounter aendern sich selten, und jede Abfrage ist ein voller Satz.
+  //
+  // Waehrend eines eigenen Bearbeitens wird NICHT nachgeladen — sonst zoege der
+  // Server einem die Punkte unter der Maus weg.
+  setInterval(() => {
+    if (currentView !== 'map') return;
+    if (isPlacing() || editingZone() || editingEncounter() || editingTeleport()) return;
+    loadZones();
+    if (can(perms, 'map.teleports')) loadTeleports();
+    if (can(perms, 'map.encounters')) loadEncounters();
+  }, 30000);
   setInterval(loadUserDir, 5 * 60 * 1000);
   requestAnimationFrame(frame);
 }
