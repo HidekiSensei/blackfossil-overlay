@@ -15,6 +15,18 @@
    schlaegt das. Ohne das waeren Gate und App gleichzeitig sichtbar. */
 [hidden] { display: none !important; }
 
+/* app.css stylt nacktes <button> global: flex:1, Verlauf, Hover-Transform und
+   ein Shimmer-::before. In der Companion sind Buttons Bausteine des
+   Design-Systems, diese Erbschaft muss also ausdruecklich weg. Ohne das
+   dehnte sich der Schliessen-Knopf ueber die halbe Panelbreite und
+   Listenzeilen teilten sich die Hoehe (beides real aufgetreten).
+   Bewusst NUR die Eigenschaften zuruecksetzen, die stoeren — ein kompletter
+   Reset auf `body.companion button` wuerde .cp-btn ueberstimmen, weil er die
+   hoehere Spezifitaet hat. */
+body.companion button { flex: none; }
+body.companion button:hover { transform: none; box-shadow: none; filter: none; }
+body.companion button::before { content: none !important; }
+
 :root {
   /* Eine Skala statt frei gewaehlter Pixelwerte — das ist der Grund, warum
      Abstaende ueberall gleich wirken. */
@@ -339,19 +351,22 @@ input[type="range"] { accent-color: var(--accent); }
 }
 .cp-float-title { font-size: 12px; font-weight: 650; }
 .cp-float-x {
+  flex: none; width: 24px; height: 24px; padding: 0;
+  display: flex; align-items: center; justify-content: center;
   border: 0; background: transparent; color: var(--muted);
-  cursor: pointer; font-size: 13px; line-height: 1; padding: 3px 5px; border-radius: 5px;
+  cursor: pointer; font-size: 13px; line-height: 1; border-radius: 5px;
 }
 .cp-float-x:hover { background: rgba(255,255,255,.1); color: #fff; }
 .cp-float-body { padding: var(--cp-s3); overflow: auto; display: flex; flex-direction: column; gap: var(--cp-s2); }
-.cp-float-search { height: 30px; font-size: 12px; }
+.cp-float-search { height: 32px; font-size: 13px; flex: none; }
 .cp-float-actions { display: flex; align-items: center; justify-content: space-between; gap: var(--cp-s2); }
-.cp-float-list { display: flex; flex-direction: column; gap: 2px; max-height: 340px; overflow-y: auto; }
+.cp-float-list { display: block; max-height: 360px; overflow-y: auto; }
 
 .cp-pl-row {
+  flex: none;                      /* sonst teilen sich die Zeilen die Hoehe */
   display: flex; align-items: center; gap: var(--cp-s2);
-  width: 100%; text-align: left; padding: 5px var(--cp-s2);
-  font: inherit; font-size: 12px; color: #ddd;
+  width: 100%; text-align: left; padding: 7px var(--cp-s2); min-height: 40px;
+  font: inherit; font-size: 13px; color: #ddd;
   background: transparent; border: 1px solid transparent; border-radius: var(--cp-r-sm);
   cursor: pointer;
 }
@@ -361,4 +376,18 @@ input[type="range"] { accent-color: var(--accent); }
 .cp-pl-row.on .cp-pl-dot { background: #f59e0b; }
 .cp-pl-main { min-width: 0; display: flex; flex-direction: column; }
 .cp-pl-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.cp-pl-sub { font-size: 10.5px; color: var(--muted); }
+.cp-pl-sub { font-size: 11.5px; color: var(--muted); margin-top: 1px; }
+
+/* ── Kartengrundlage: RaidAtlas (fest unten rechts) ─────────────────────── */
+#cpRaidAtlas {
+  position: absolute; right: var(--cp-s3); bottom: var(--cp-s3); z-index: 4;
+  padding: 5px 8px; border-radius: var(--cp-r-sm); cursor: pointer;
+  background: rgba(13, 9, 24, 0.72); border: 1px solid var(--cp-line);
+  backdrop-filter: blur(4px); line-height: 0;
+  transition: background .13s, border-color .13s;
+}
+#cpRaidAtlas:hover { background: rgba(13, 9, 24, 0.92); border-color: rgba(255,255,255,.2); }
+#cpRaidAtlas img { height: 20px; width: auto; display: block; opacity: .85; }
+#cpRaidAtlas:hover img { opacity: 1; }
+
+.cp-leg-trail { background: linear-gradient(90deg, transparent, #e8e6ef); border-radius: 2px; }

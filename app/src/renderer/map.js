@@ -190,11 +190,15 @@ export function drawFullMap(view, players, waypoints = [], teleports = [], hover
   if (mapReady) ctx.drawImage(mapImg, 0, 0, w, h);
   else { ctx.fillStyle = '#15102a'; ctx.fillRect(0, 0, w, h); ctx.fillStyle = '#6b5b8c'; ctx.font = '16px system-ui'; ctx.textAlign = 'center'; ctx.fillText('Kartenbild fehlt (assets/map.jpg)', w/2, h/2); }
 
-  drawZones(ctx, (nx, ny) => ({ px: nx * w, py: ny * h }));
+  drawZones(ctx, (nx, ny) => ({ px: nx * w, py: ny * h }), iconScale);
   for (const wp of waypoints) {
     const { nx, ny } = worldToNorm(wp.x, wp.y);
     drawWaypoint(ctx, nx * w, ny * h, iconScale);
   }
+  // Spuren gehoeren zwischen Karte und Marker: darueber gezeichnet verdecken
+  // sie die Punkte, die sie erklaeren sollen.
+  if (opts.trails) drawTrails(ctx, w, h, iconScale, opts.trails, opts.highlight);
+
   // Teleport-Punkte (nummeriert; hervorgehoben beim Hover)
   for (const t of teleports) {
     const { nx, ny } = worldToNorm(t.x, t.y);
@@ -402,7 +406,11 @@ export function drawMinimap(view, players, me, speakRange = 0, waypoints = [], z
 }
 
 // ── Helfer ───────────────────────────────────────────────────────────────────
-function drawZones(ctx, project) {
+// scale = 1/Gesamtskalierung, damit Linien und Text beim Zoomen ihre
+// Bildschirmbreite behalten. Default 1 haelt bestehende Aufrufer (Minimap)
+// unveraendert; im Overlay ist iconScale bei Standardzoom ebenfalls 1, dort
+// aendert sich die Darstellung also erst beim Reinzoomen — und dann zum Guten.
+function drawZones(ctx, project, scale = 1) {
   for (const z of ZONES) {
     if (!z.points || !z.points.length) continue;
     const meta = ZONE_META[z.type] || ZONE_META.pvp;
@@ -433,23 +441,23 @@ function drawZones(ctx, project) {
       ctx.save();
       ctx.fillStyle = 'rgba(251,191,36,0.14)'; ctx.fill();
       ctx.shadowColor = '#fbbf24'; ctx.shadowBlur = 12;
-      ctx.strokeStyle = '#fbbf24'; ctx.lineWidth = 3; ctx.stroke();
+      ctx.strokeStyle = '#fbbf24'; ctx.lineWidth = 3 * scale; ctx.stroke();
       ctx.restore();
       const cx = pts.reduce((s, p) => s + p.px, 0) / pts.length;
       const cy = pts.reduce((s, p) => s + p.py, 0) / pts.length;
-      ctx.font = 'bold 16px system-ui'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+      ctx.font = `bold ${16 * scale}px system-ui`; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
       ctx.fillText('⭐', cx, cy);
     } else if (outline) {
       // Sanctuary/Patrol/Migration: NUR Umriss — keine Füllung, KEIN Name-Label.
-      ctx.strokeStyle = color; ctx.lineWidth = 2; ctx.stroke();
+      ctx.strokeStyle = color; ctx.lineWidth = 2 * scale; ctx.stroke();
     } else {
       // PvP/PvE: Füllung + Umriss + Label (wie gehabt).
       ctx.fillStyle = color + '22';
-      ctx.strokeStyle = color; ctx.lineWidth = 2;
+      ctx.strokeStyle = color; ctx.lineWidth = 2 * scale;
       ctx.fill(); ctx.stroke();
       const cx = pts.reduce((s, p) => s + p.px, 0) / pts.length;
       const cy = pts.reduce((s, p) => s + p.py, 0) / pts.length;
-      ctx.fillStyle = color; ctx.font = 'bold 13px system-ui'; ctx.textAlign = 'center';
+      ctx.fillStyle = color; ctx.font = `bold ${13 * scale}px system-ui`; ctx.textAlign = 'center';
       ctx.fillText(z.name || meta.label, cx, cy);
     }
   }
@@ -551,7 +559,8 @@ export function drawAiEncounters(ctx, w, h, sc, encounters, speciesShort = (x) =
     ctx.restore();
     const night = e.params && e.params.activeAt === 'night';
     const label = `${e.name || speciesShort(e.species)}${e.count > 1 ? ' ×' + e.count : ''}${night ? ' 🌙' : ''}`;
-    ctx.font = `bold ${Math.max(9, Math.round(11 * sc))}px sans-serif`; ctx.textAlign = 'center'; ctx.textBaseline = 'bottom';
+    // Wie bei den Ansammlungen: keine Untergrenze, sonst waechst der Text beim Zoomen.
+    ctx.font = `bold ${11 * sc}px sans-serif`; ctx.textAlign = 'center'; ctx.textBaseline = 'bottom';
     ctx.lineWidth = 3 * sc; ctx.strokeStyle = 'rgba(0,0,0,0.85)'; ctx.strokeText(label, sx, sy - 10 * sc);
     ctx.fillStyle = '#fecaca'; ctx.fillText(label, sx, sy - 10 * sc);
   }
@@ -563,13 +572,39 @@ export function drawAiEncounters(ctx, w, h, sc, encounters, speciesShort = (x) =
 // userLabel/baseClass aus der Karte heraus und sind einzeln testbar.
 function drawPlayerDot(ctx, px, py, p, scale, hot) {
   const col = hot ? '#f59e0b' : (p.roleColor || groupColorFor(p.steamId));
-  const r = (hot ? 7 : 5.5) * scale;
+  const r = (hot ? 9 : 7.5) * scale;
   if (hot) { ctx.save(); ctx.shadowColor = '#f59e0b'; ctx.shadowBlur = 9 * scale; }
   ctx.beginPath(); ctx.arc(px, py, r, 0, Math.PI * 2);
   ctx.fillStyle = col; ctx.fill();
   ctx.lineWidth = Math.max(0.6, 1.5 * scale);
   ctx.strokeStyle = hot ? '#fff' : 'rgba(0,0,0,0.85)'; ctx.stroke();
   if (hot) ctx.restore();
+}
+
+// Spur der letzten Positionen. Rein visuell und rein clientseitig — die Daten
+// dafuer haelt der Aufrufer im Speicher (siehe companion.js trails), es wird
+// nichts gespeichert oder ans Backend geschickt.
+function drawTrails(ctx, w, h, scale, trails, highlight) {
+  for (const [steamId, pts] of trails) {
+    if (!pts || pts.length < 2) continue;
+    const hot = highlight && highlight.has(steamId);
+    ctx.beginPath();
+    pts.forEach((pt, i) => {
+      const n = worldToNorm(pt.x, pt.y);
+      const x = n.nx * w, y = n.ny * h;
+      i ? ctx.lineTo(x, y) : ctx.moveTo(x, y);
+    });
+    // Duenn, aber lesbar: erst ein dunkler Saum, dann die eigentliche Linie.
+    // Ohne den Saum verschwindet eine 1-px-Linie auf dem Satellitenbild komplett
+    // (nachgemessen: praktisch kein Pixelunterschied zu "aus").
+    ctx.lineJoin = 'round'; ctx.lineCap = 'round';
+    ctx.lineWidth = (hot ? 4 : 3) * scale;
+    ctx.strokeStyle = 'rgba(0,0,0,0.55)';
+    ctx.stroke();
+    ctx.lineWidth = (hot ? 2 : 1.4) * scale;
+    ctx.strokeStyle = hot ? 'rgba(245,158,11,0.95)' : 'rgba(232,230,239,0.8)';
+    ctx.stroke();
+  }
 }
 
 // Einfaches Greedy-Clustering im Bildraum: der erste Punkt oeffnet eine Gruppe,
@@ -600,7 +635,7 @@ function clusterPoints(pts, radius) {
 // Ansammlung: groesserer Ball in eigener Farbe + Anzahl. Bewusst NICHT in der
 // Spielerfarbe, damit "hier stehen mehrere" nicht wie ein einzelner Spieler wirkt.
 function drawCluster(ctx, px, py, n, scale, hot) {
-  const r = (7 + Math.min(6, n * 0.6)) * scale;
+  const r = (9 + Math.min(8, n * 0.7)) * scale;
   // Helle Fuellung mit dunkler Zahl: bindet die Ansammlung optisch an die
   // Spielerpunkte und trennt sie von den Teleports, die ebenfalls nummerierte
   // Kreise sind — nur eben in Lila. Gleiche Optik fuer zweierlei Bedeutung war
@@ -611,7 +646,11 @@ function drawCluster(ctx, px, py, n, scale, hot) {
   ctx.lineWidth = Math.max(1, 2 * scale);
   ctx.strokeStyle = 'rgba(0,0,0,0.9)';
   ctx.stroke();
-  ctx.font = `bold ${Math.max(8, 10 * scale)}px system-ui`;
+  // KEINE Math.max-Untergrenze: scale ist 1/Gesamtskalierung, `11 * scale` ist
+  // damit konstante 11 Bildschirm-Pixel. Eine Untergrenze in Karten-Einheiten
+  // waechst dagegen mit dem Zoom mit — dann sind die Zahlen irgendwann groesser
+  // als ihre Kreise.
+  ctx.font = `bold ${11 * scale}px system-ui`;
   ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
   ctx.fillStyle = hot ? '#1a1a1a' : '#0d0918';
   ctx.fillText(String(n), px, py + 0.5 * scale);

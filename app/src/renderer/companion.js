@@ -70,8 +70,35 @@ let showAll = localStorage.getItem('bf-cp-showall') === '1';
 let labelMinZoom = Number(localStorage.getItem('bf-cp-labelzoom') || 1.6);
 let lastStat = { total: 0, drawn: 0, belowZoom: false };
 let hits = [];                    // Cluster aus dem letzten Zeichnen (Karten-Koordinaten)
-let highlight = new Set();        // hervorgehobene SteamIDs (Spielerliste)
+let highlight = new Set();        // dauerhaft hervorgehoben (Spielerliste)
+let hoverIds = new Set();         // gerade unter dem Zeiger (Spieler oder Ansammlung)
 let plList = null;                // offene Spielerliste (zum Nachziehen beim Poll)
+
+// Spuren: die letzten TRAIL_LEN Positionen je Spieler. Bewusst NUR im Speicher —
+// nichts davon wird gespeichert oder ans Backend geschickt, und beim Neustart ist
+// die Spur weg. Pro Spieler einzeln, auch innerhalb einer Gruppe.
+const TRAIL_LEN = 10;
+const trails = new Map();         // steamId -> [{x,y}, …]
+let showTrails = localStorage.getItem('bf-cp-trail') === '1';
+
+function pushTrail(list) {
+  const seen = new Set();
+  for (const p of list) {
+    if (p.isDead || !p.steamId) continue;
+    seen.add(p.steamId);
+    const t = trails.get(p.steamId) || [];
+    const last = t[t.length - 1];
+    // Nur bei echter Bewegung anhaengen, sonst fuellt Stillstand die Spur mit
+    // identischen Punkten und die Linie zeigt nichts mehr.
+    if (!last || Math.hypot(last.x - p.x, last.y - p.y) > 150) {
+      t.push({ x: p.x, y: p.y });
+      if (t.length > TRAIL_LEN) t.shift();
+      trails.set(p.steamId, t);
+    }
+  }
+  // Offline gegangene Spieler nicht ewig mitschleppen.
+  for (const id of trails.keys()) if (!seen.has(id)) trails.delete(id);
+}
 
 function render() {
   const cv = el('cpMapCanvas');
@@ -110,7 +137,10 @@ function render() {
     centerX: (view.x0 + view.x1) / 2,
     centerY: (view.y0 + view.y1) / 2,
     viewX0: view.x0, viewY0: view.y0, viewX1: view.x1, viewY1: view.y1,
-    highlight,
+    // Auswahl UND Hover teilen sich dieselbe Hervorhebung — die Spur des
+    // Spielers unter dem Zeiger leuchtet damit automatisch mit.
+    highlight: activeHighlight(),
+    trails: (showTrails && showAll) ? trails : null,
     onLabelStats: (s) => { lastStat = s; },
     onHits: (h) => { hits = h; },
   });
@@ -135,15 +165,32 @@ function resizeCanvas() {
   dirty = true;
 }
 
+function activeHighlight() {
+  if (!hoverIds.size) return highlight;
+  const set = new Set(highlight);
+  for (const id of hoverIds) set.add(id);
+  return set;
+}
+
 function updateMapStat() {
   const s = el('cpMapStat');
   if (!s) return;
   const alive = players.filter((p) => !p.isDead).length;
   if (showHeat) { s.textContent = `${alive} online · Heatmap (nur Ansammlungen ab 4)`; return; }
   if (!showAll) { s.textContent = `${alive} online`; return; }
-  s.textContent = lastStat.belowZoom
-    ? `${alive} online · Namen ab ${labelMinZoom.toFixed(1)}× Zoom`
-    : `${alive} online · ${lastStat.drawn}/${lastStat.total} Namen`;
+  if (lastStat.belowZoom) {
+    s.textContent = `${alive} online · Namen ab ${labelMinZoom.toFixed(1)}× Zoom`;
+    s.title = 'Namensschilder erscheinen erst ab dieser Zoomstufe.';
+    return;
+  }
+  const hidden = Math.max(0, lastStat.total - lastStat.drawn);
+  s.textContent = hidden
+    ? `${alive} online · ${hidden} Namen verdeckt`
+    : `${alive} online`;
+  s.title = hidden
+    ? `${lastStat.drawn} von ${lastStat.total} Namen im Bild werden angezeigt. `
+      + `${hidden} bleiben weg, weil sich die Schilder sonst überlappen — weiter reinzoomen zeigt mehr.`
+    : 'Alle Namen im Bild werden angezeigt.';
 }
 
 function frame() {
@@ -158,6 +205,7 @@ async function pollPositions() {
   try {
     const d = await api('GET', '/positions');
     players = decoratePositions(d.players || [], userDir);
+    if (showTrails) pushTrail(players); else if (trails.size) trails.clear();
     // Spieler-Ansichten haengen daran, ob der eigene Dino gerade auf dem Server
     // ist. Aendert sich das, muss die Navigation nachziehen.
     const online = players.some((p) => p.isYou) || !!(d.you && d.you.steamId);
@@ -229,12 +277,19 @@ function initMapInteraction() {
   }, { passive: false });
 
   cv.addEventListener('mousedown', (e) => { dragging = true; lastX = e.clientX; lastY = e.clientY; hideTip(); });
-  cv.addEventListener('mouseleave', hideTip);
+  cv.addEventListener('mouseleave', () => { hideTip(); if (hoverIds.size) { hoverIds = new Set(); dirty = true; } });
   cv.addEventListener('mousemove', (e) => {
     if (dragging) return;
     const r = cv.getBoundingClientRect();
     const c = hitAt(e.clientX - r.left, e.clientY - r.top);
     if (c) showTip(c, e.clientX - r.left, e.clientY - r.top); else hideTip();
+    // Nur neu zeichnen, wenn sich die Menge wirklich geaendert hat — sonst
+    // laeuft bei jeder Mausbewegung ein voller Frame.
+    const next = c ? c.items.map((it) => it.p.steamId) : [];
+    if (next.length !== hoverIds.size || next.some((id) => !hoverIds.has(id))) {
+      hoverIds = new Set(next);
+      dirty = true;
+    }
   });
   window.addEventListener('mouseup', () => { dragging = false; });
   window.addEventListener('mousemove', (e) => {
@@ -390,10 +445,11 @@ function renderLegend() {
     + tgl('data-marker', 'tp', '', 'Teleports', showTp, showHeat)
     + (can(perms, 'map.encounters') ? tgl('data-marker', 'ai', '', 'KI-Encounter', showAi, showHeat) : '')
     + (can(perms, 'map.showAll') ? tgl('data-marker', 'players', '', 'Spieler', showAll, showHeat) : '')
+    + (can(perms, 'map.showAll') ? tgl('data-marker', 'trail', '', 'Spuren', showTrails, showHeat) : '')
     + (can(perms, 'map.showAll') ? tgl('data-marker', 'heat', '', 'Heatmap', showHeat, false) : '')
     + `</div>`;
   // Marker-Farbtupfer per Klasse (die Zonen tragen ihre Farbe inline)
-  for (const [k, cls] of [['tp', 'cp-leg-tp'], ['ai', 'cp-leg-ai'], ['players', 'cp-leg-player'], ['heat', 'cp-leg-heat']]) {
+  for (const [k, cls] of [['tp', 'cp-leg-tp'], ['ai', 'cp-leg-ai'], ['players', 'cp-leg-player'], ['trail', 'cp-leg-trail'], ['heat', 'cp-leg-heat']]) {
     const sw = box.querySelector(`[data-marker="${k}"] .cp-leg-swatch`);
     if (sw) sw.classList.add(cls);
   }
@@ -416,6 +472,11 @@ function renderLegend() {
       press(b, on);
       if (k === 'tp') { showTp = on; localStorage.setItem('bf-cp-tp', on ? '1' : '0'); }
       else if (k === 'ai') { showAi = on; localStorage.setItem('bf-cp-ai', on ? '1' : '0'); }
+      else if (k === 'trail') {
+        showTrails = on;
+        localStorage.setItem('bf-cp-trail', on ? '1' : '0');
+        if (!on) trails.clear();
+      }
       else if (k === 'heat') {
         showHeat = on;
         localStorage.setItem('bf-cp-heat', on ? '1' : '0');
@@ -508,6 +569,7 @@ async function boot() {
     dirty = true;
   };
   el('cpMapReset').onclick = resetView;
+  { const ra = el('cpRaidAtlas'); if (ra) ra.onclick = () => window.bf.openExternal('https://raidatlas.app/'); }
 
   // Spielerliste (Team-only) — dieselbe Bedingung wie die Overwatch-Ansicht.
   const plBtn = el('cpPlayersBtn');

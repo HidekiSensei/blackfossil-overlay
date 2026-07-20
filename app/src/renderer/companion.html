@@ -34,7 +34,7 @@
           <span id="cpMapStat" class="cp-muted"></span>
           <div class="cp-bar-right">
             <span class="cp-muted">Tags ab Zoom</span>
-            <input type="range" id="cpLabelZoom" min="1" max="4" step="0.1" value="1.6" />
+            <input type="range" id="cpLabelZoom" min="1" max="10" step="0.1" value="1.6" />
             <span id="cpLabelZoomVal" class="cp-muted">1.6×</span>
             <button id="cpPlayersBtn" class="cp-btn cp-btn-sm" aria-pressed="false" hidden>Spieler</button>
             <button id="cpMapReset" class="cp-btn cp-btn-sm">Ansicht zurücksetzen</button>
@@ -44,6 +44,9 @@
           <canvas id="cpMapCanvas"></canvas>
           <div id="cpLegend"></div>
           <div id="cpMapTip" hidden></div>
+          <button id="cpRaidAtlas" title="Kartengrundlage von RaidAtlas — Website öffnen">
+            <img src="assets/raidatlas-logo.png" alt="RaidAtlas Interactive Maps" draggable="false">
+          </button>
         </div>
       </section>
 
