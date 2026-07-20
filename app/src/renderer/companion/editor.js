@@ -19,8 +19,20 @@ let placing = null;
 // meldet Verschiebungen ueber setZonePoints zurueck.
 let editZone = null;
 
+// Der gerade bearbeitete Encounter bzw. Teleport (ebenfalls Kopien).
+let editEnc = null;
+let editTp = null;
+
 export function editingZone() { return editZone; }
 export function setZonePoints(points) { if (editZone) editZone.points = points; }
+export function editingTeleport() { return editTp; }
+export function setTeleportPos(x, y) { if (editTp) { editTp.x = x; editTp.y = y; } }
+export function editingEncounter() { return editEnc; }
+export function setEncounterGeom(spawn, patrol) {
+  if (!editEnc) return;
+  editEnc.spawn = spawn;
+  editEnc.patrol = patrol;
+}
 
 export function initEditor(ctx) { C = ctx; }
 
@@ -47,6 +59,8 @@ export function addPlacementPoint(x, y) {
 function leaveEditing() {
   placing = null;
   editZone = null;
+  editEnc = null;
+  editTp = null;
   if (C) C.redraw();
 }
 
@@ -130,6 +144,7 @@ function openForm(kind, existing, point) {
               U.field('tpCd', 'Cooldown (Min)', { type: 'number', value: existing?.cooldownMin ?? 0, min: 0 }))
       + `<div style="height:var(--cp-s3)"></div>`
       + U.check('tpWater', 'Wasser-Teleport', !!existing?.water)
+      + (existing ? U.hint('Der Punkt lässt sich auf der Karte ziehen.') : '')
       + `<div style="height:var(--cp-s3)"></div>`
       + U.btnRow(U.btn('fmSave', existing ? 'Ersetzen' : 'Anlegen', { variant: 'primary', size: 'sm' }),
                  ...(existing ? [U.btn('fmDel', 'Löschen', { variant: 'danger', size: 'sm' })] : []))
@@ -140,9 +155,26 @@ function openForm(kind, existing, point) {
       + U.row(U.field('enSpecies', 'Spezies', { value: existing?.species || '', placeholder: 'BP_Utahraptor_C' }),
               U.field('enCount', 'Anzahl', { type: 'number', value: existing?.count ?? 1, min: 1 }))
       + `<div style="height:var(--cp-s3)"></div>`
+      + (existing ? U.hint('Spawn (rot) und Patrouillenpunkte lassen sich auf der Karte ziehen.') : '')
+      + `<div style="height:var(--cp-s3)"></div>`
       + U.btnRow(U.btn('fmSave', existing ? 'Speichern' : 'Anlegen', { variant: 'primary', size: 'sm' }),
                  ...(existing ? [U.btn('fmDel', 'Löschen', { variant: 'danger', size: 'sm' })] : []))
       + `<div style="height:var(--cp-s2)"></div>` + U.btn('fmCancel', 'Abbrechen', { size: 'sm', block: true });
+  }
+
+  // Beim Bearbeiten eines vorhandenen Encounters ist die Geometrie ziehbar —
+  // auf einer Kopie, damit Abbrechen folgenlos bleibt.
+  if (kind === 'teleport' && existing) {
+    editTp = { ...existing };
+    C.redraw();
+  }
+  if (kind === 'encounter' && existing) {
+    editEnc = {
+      ...existing,
+      spawn: existing.spawn ? { ...existing.spawn } : null,
+      patrol: (existing.patrol || []).map((p) => ({ ...p })),
+    };
+    C.redraw();
   }
 
   const title = kind === 'teleport'
@@ -164,7 +196,8 @@ async function saveTeleport(existing, point) {
     water: el('tpWater').checked,
   };
   if (!body.name) { C.toast('Name fehlt.', 'error'); return; }
-  const pt = point || existing;
+  // Gezogene Position hat Vorrang vor dem gespeicherten Stand.
+  const pt = editTp || point || existing;
   if (pt) { body.x = pt.x; body.y = pt.y; }
   try {
     // Teleports kennen kein Aendern — Ersetzen heisst neu anlegen und alt weg.
@@ -173,6 +206,7 @@ async function saveTeleport(existing, point) {
     await C.api('POST', '/teleports', body);
     if (existing) await C.api('DELETE', `/teleports/${encodeURIComponent(existing.id)}`);
     C.toast(existing ? 'Teleport ersetzt' : 'Teleport angelegt', 'success');
+    leaveEditing();
     close('editor');
     await C.reloadTeleports();
   } catch (e) { C.toast(e.message, 'error'); }
@@ -185,12 +219,18 @@ async function saveEncounter(existing, point) {
     species: (el('enSpecies').value || '').trim(),
     count: Number(el('enCount').value) || 1,
   };
-  const pt = point || (existing && existing.spawn);
+  // Gezogene Geometrie hat Vorrang vor dem gespeicherten Stand.
+  if (editEnc) {
+    if (editEnc.spawn) body.spawn = { ...editEnc.spawn };
+    if (editEnc.patrol) body.patrol = editEnc.patrol.map((p) => ({ ...p }));
+  }
+  const pt = point || (!editEnc && existing && existing.spawn);
   if (pt) body.spawn = { x: pt.x, y: pt.y, z: pt.z || 0 };
   if (!body.species) { C.toast('Spezies fehlt.', 'error'); return; }
   try {
     await C.api('POST', '/admin/mod-ai/encounters', body);
     C.toast(existing ? 'Encounter gespeichert' : 'Encounter angelegt', 'success');
+    leaveEditing();
     close('editor');
     await C.reloadEncounters();
   } catch (e) { C.toast(e.message, 'error'); }

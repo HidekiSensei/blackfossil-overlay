@@ -10,11 +10,12 @@ import { openPlayerList, closePlayerList, isPlayerListOpen } from './companion/p
 import {
   initEditor, openCreateMenu, openEdit, isPlacing, placingKind, placingPoints,
   addPlacementPoint, cancelPlacing, editingZone, setZonePoints, closeEditor,
+  editingEncounter, setEncounterGeom, editingTeleport, setTeleportPos,
 } from './companion/editor.js';
 import {
   loadMapImage, drawFullMap, drawHeatmap, drawAiEncounters, setZones, setCalAffine,
   ZONE_LAYERS, ZONE_META, setZoneLayer, isZoneLayerVisible,
-  normToWorld, worldToNorm, zoneObjectAt,
+  normToWorld, worldToNorm, zoneObjectAt, encounterHandles,
 } from './map.js';
 import { baseClass, escapeHtml } from './shared/format.js';
 import { initServer, renderServer, stopServer } from './companion/panels/server.js';
@@ -170,7 +171,9 @@ function render() {
     // Spielers unter dem Zeiger leuchtet damit automatisch mit.
     highlight: activeHighlight(),
     editZone: editingZone(),
-    editHandle: zoneDrag ? zoneDrag.index : -1,
+    editEnc: editingEncounter(),
+    editTp: editingTeleport(),
+    editHandle: geomDrag ? geomDrag.index : -1,
     trails: (showTrails && showAll) ? trails : null,
     onLabelStats: (s) => { lastStat = s; },
     onHits: (h) => { hits = h; },
@@ -223,7 +226,9 @@ function resizeCanvas() {
 }
 
 // ── Zonen-Bearbeitung: Anfasser ziehen ─────────────────────────────────────
-let zoneDrag = null;   // { index } — index -1 = ganze Zone verschieben
+// Gezogener Anfasser — teilt sich Zone und Encounter, weil das Ziehen identisch
+// ist und nur die Quelle der Punkte sich unterscheidet.
+let geomDrag = null;   // { index } — index -1 = ganze Zone verschieben
 
 // Bearbeiten-Modus. Ohne ihn reagiert der Rechtsklick nicht und "Erstellen" ist
 // nicht sichtbar — sonst oeffnet ein versehentlicher Rechtsklick beim Anschauen
@@ -233,10 +238,10 @@ let editMode = false;
 
 // Welcher Eckpunkt liegt unter dem Zeiger? Trefferflaeche etwas grosszuegiger
 // als das gezeichnete Quadrat, sonst muss man pixelgenau treffen.
-function zoneHandleAt(zone, sx, sy) {
+function handleAt(points, sx, sy) {
   const sc = totalScale();
-  for (let i = 0; i < (zone.points || []).length; i++) {
-    const n = worldToNorm(zone.points[i].x, zone.points[i].y);
+  for (let i = 0; i < (points || []).length; i++) {
+    const n = worldToNorm(points[i].x, points[i].y);
     const x = n.nx * MAP_SIZE * sc + panX, y = n.ny * MAP_SIZE * sc + panY;
     if (Math.abs(x - sx) <= 10 && Math.abs(y - sy) <= 10) return i;
   }
@@ -430,17 +435,25 @@ function initMapInteraction() {
     hideTip();
     // Zonen-Bearbeitung hat Vorrang vor allem anderen: Anfasser ziehen den
     // Eckpunkt, ein Griff INNERHALB der Flaeche verschiebt die ganze Zone.
-    const ez = editingZone();
-    if (ez && !e.ctrlKey && !e.metaKey) {
+    const ez = editingZone(), en = editingEncounter(), et = editingTeleport();
+    if ((ez || en || et) && !e.ctrlKey && !e.metaKey) {
       const r0 = cv.getBoundingClientRect();
       const hx = e.clientX - r0.left, hy = e.clientY - r0.top;
-      const idx = zoneHandleAt(ez, hx, hy);
-      if (idx >= 0) { zoneDrag = { index: idx }; e.preventDefault(); return; }
-      const w0 = screenToWorld(hx, hy);
-      if (pointInZone(ez, w0.x, w0.y)) {
-        zoneDrag = { index: -1, from: w0, orig: ez.points.map((p) => ({ ...p })) };
+      const pts = ez ? ez.points : (en ? encounterHandles(en) : [et]);
+      const idx = handleAt(pts, hx, hy);
+      if (idx >= 0) {
+        geomDrag = { index: idx, kind: ez ? 'zone' : (en ? 'encounter' : 'teleport') };
         e.preventDefault();
         return;
+      }
+      // Nur Zonen haben eine Flaeche, die sich als Ganzes greifen laesst.
+      if (ez) {
+        const w0 = screenToWorld(hx, hy);
+        if (pointInZone(ez, w0.x, w0.y)) {
+          geomDrag = { index: -1, kind: 'zone', from: w0, orig: ez.points.map((p) => ({ ...p })) };
+          e.preventDefault();
+          return;
+        }
       }
     }
     // Strg (bzw. Cmd) + Ziehen spannt ein Auswahl-Rechteck auf statt die Karte
@@ -493,25 +506,43 @@ function initMapInteraction() {
     }
   });
   window.addEventListener('mouseup', () => {
-    if (zoneDrag) { zoneDrag = null; dirty = true; return; }
+    if (geomDrag) { geomDrag = null; dirty = true; return; }
     if (marquee) { finishMarquee(); return; }
     dragging = false;
   });
   window.addEventListener('mousemove', (e) => {
-    if (zoneDrag) {
-      const ez = editingZone();
-      if (!ez) { zoneDrag = null; return; }
+    if (geomDrag) {
       const r0 = cv.getBoundingClientRect();
       const w0 = screenToWorld(e.clientX - r0.left, e.clientY - r0.top);
-      if (zoneDrag.index >= 0) {
-        const pts = ez.points.map((p, i) => (i === zoneDrag.index ? { ...p, x: w0.x, y: w0.y } : p));
-        setZonePoints(pts);
+      if (geomDrag.kind === 'teleport') {
+        setTeleportPos(w0.x, w0.y);
+        dirty = true;
+        return;
+      }
+      if (geomDrag.kind === 'encounter') {
+        const en2 = editingEncounter();
+        if (!en2) { geomDrag = null; return; }
+        // Index 0 ist der Spawn, alles danach sind Patrouillenpunkte —
+        // dieselbe Reihenfolge wie in encounterHandles().
+        if (geomDrag.index === 0) {
+          setEncounterGeom({ ...(en2.spawn || {}), x: w0.x, y: w0.y }, en2.patrol);
+        } else {
+          const pi = geomDrag.index - 1;
+          setEncounterGeom(en2.spawn, (en2.patrol || []).map((p, i) => (i === pi ? { ...p, x: w0.x, y: w0.y } : p)));
+        }
+        dirty = true;
+        return;
+      }
+      const ez = editingZone();
+      if (!ez) { geomDrag = null; return; }
+      if (geomDrag.index >= 0) {
+        setZonePoints(ez.points.map((p, i) => (i === geomDrag.index ? { ...p, x: w0.x, y: w0.y } : p)));
       } else {
         // Ganze Zone: alle Punkte um dieselbe Strecke versetzen. Bezug ist der
         // Originalstand beim Anfassen, nicht der letzte Frame — sonst
         // summieren sich Rundungsfehler ueber den Zug hinweg auf.
-        const dx = w0.x - zoneDrag.from.x, dy = w0.y - zoneDrag.from.y;
-        setZonePoints(zoneDrag.orig.map((p) => ({ ...p, x: p.x + dx, y: p.y + dy })));
+        const dx = w0.x - geomDrag.from.x, dy = w0.y - geomDrag.from.y;
+        setZonePoints(geomDrag.orig.map((p) => ({ ...p, x: p.x + dx, y: p.y + dy })));
       }
       dirty = true;
       return;

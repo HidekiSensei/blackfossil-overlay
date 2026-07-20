@@ -199,6 +199,8 @@ export function drawFullMap(view, players, waypoints = [], teleports = [], hover
   // sie die Punkte, die sie erklaeren sollen.
   if (opts.trails) drawTrails(ctx, w, h, iconScale, opts.trails, opts.highlight);
   if (opts.editZone) drawZoneEdit(ctx, w, h, iconScale, opts.editZone, opts.editHandle);
+  if (opts.editEnc) drawEncounterEdit(ctx, w, h, iconScale, opts.editEnc, opts.editHandle);
+  if (opts.editTp) drawHandles(ctx, w, h, iconScale, [opts.editTp], opts.editHandle, '#38bdf8');
 
   // Teleport-Punkte (nummeriert; hervorgehoben beim Hover)
   for (const t of teleports) {
@@ -675,6 +677,53 @@ export function drawZoneEdit(ctx, w, h, scale, zone, activeHandle) {
     ctx.lineWidth = 2 * scale; ctx.strokeStyle = '#000';
     ctx.strokeRect(p.x - s0, p.y - s0, s0 * 2, s0 * 2);
   });
+}
+
+// Der gerade bearbeitete KI-Encounter: Spawn und Patrouillenpunkte als
+// quadratische Anfasser, dazwischen die Route. Dieselbe Formensprache wie beim
+// Zonen-Editor — Quadrate heisst "ziehbar".
+export function drawEncounterEdit(ctx, w, h, scale, enc, activeHandle) {
+  const toPx = (p) => { const n = worldToNorm(p.x, p.y); return { x: n.nx * w, y: n.ny * h }; };
+  const pts = encounterHandles(enc).map(toPx);
+  if (!pts.length) return;
+
+  if (pts.length > 1) {
+    ctx.beginPath();
+    pts.forEach((p, i) => (i ? ctx.lineTo(p.x, p.y) : ctx.moveTo(p.x, p.y)));
+    ctx.setLineDash([7 * scale, 5 * scale]);
+    ctx.lineWidth = 2.5 * scale; ctx.strokeStyle = '#f87171'; ctx.stroke();
+    ctx.setLineDash([]);
+  }
+  // Spawn (Index 0) hervorgehoben — er ist der eigentliche Ort, die uebrigen
+  // sind nur Wegpunkte.
+  drawHandleSquares(ctx, pts, scale, activeHandle, (i) => (i === 0 ? '#ef4444' : '#fff'));
+}
+
+// Quadratische Anfasser an Weltkoordinaten — der gemeinsame Baustein fuer
+// Zonen, Encounter und Teleports. Quadrate heisst durchgehend "ziehbar" und
+// unterscheidet sie von den runden Spieler- und Teleport-Markern.
+export function drawHandles(ctx, w, h, scale, points, activeHandle, color) {
+  const pts = points.map((p) => { const n = worldToNorm(p.x, p.y); return { x: n.nx * w, y: n.ny * h }; });
+  drawHandleSquares(ctx, pts, scale, activeHandle, () => color || '#fff');
+}
+
+function drawHandleSquares(ctx, pts, scale, activeHandle, colorFor) {
+  const s0 = 6 * scale;
+  pts.forEach((p, i) => {
+    ctx.fillStyle = i === activeHandle ? '#f59e0b' : colorFor(i);
+    ctx.fillRect(p.x - s0, p.y - s0, s0 * 2, s0 * 2);
+    ctx.lineWidth = 2 * scale; ctx.strokeStyle = '#000';
+    ctx.strokeRect(p.x - s0, p.y - s0, s0 * 2, s0 * 2);
+  });
+}
+
+// Ziehbare Punkte eines Encounters in fester Reihenfolge: erst der Spawn, dann
+// die Patrouille. Der Index in dieser Liste ist der Anfasser-Index.
+export function encounterHandles(enc) {
+  const out = [];
+  if (enc.spawn) out.push(enc.spawn);
+  for (const p of enc.patrol || []) out.push(p);
+  return out;
 }
 
 // Einfaches Greedy-Clustering im Bildraum: der erste Punkt oeffnet eine Gruppe,
