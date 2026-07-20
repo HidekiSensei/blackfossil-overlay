@@ -1,0 +1,237 @@
+/* ═══════════════════════════════════════════════════════════════════════════
+   Companion Design-System
+
+   Das Overlay-CSS ist historisch gewachsen: viele Einzelfall-Regeln, dazu
+   hunderte inline style="" im Markup. Fuer die Companion gilt bewusst die
+   Gegenregel — jedes Element eines Typs sieht gleich aus, weil es genau EINE
+   Klasse dafuer gibt. Inline-Styles sind hier nicht erwuenscht.
+
+   Farben kommen weiter aus app.css (--accent, --panel, --border, --muted),
+   damit Theme-Wechsel auch hier greifen.
+   ═══════════════════════════════════════════════════════════════════════════ */
+
+/* Muss ganz oben stehen und !important tragen: das hidden-Attribut setzt
+   display:none nur ueber das UA-Stylesheet, jede Autoren-Regel mit display:flex
+   schlaegt das. Ohne das waeren Gate und App gleichzeitig sichtbar. */
+[hidden] { display: none !important; }
+
+:root {
+  /* Eine Skala statt frei gewaehlter Pixelwerte — das ist der Grund, warum
+     Abstaende ueberall gleich wirken. */
+  --cp-s1: 4px;  --cp-s2: 8px;  --cp-s3: 12px;
+  --cp-s4: 16px; --cp-s5: 24px; --cp-s6: 32px;
+  --cp-r-sm: 8px; --cp-r-md: 11px; --cp-r-lg: 14px;
+  --cp-line: rgba(255, 255, 255, 0.09);
+  --cp-surface: rgba(255, 255, 255, 0.035);
+  --cp-surface-2: rgba(255, 255, 255, 0.06);
+  --cp-danger: #f87171;
+  --cp-ok: #4ade80;
+}
+
+body.companion {
+  margin: 0; height: 100vh; overflow: hidden;
+  background: #0d0918; color: #e8e6ef;
+  font-family: system-ui, -apple-system, "Segoe UI", sans-serif;
+  font-size: 13px; line-height: 1.5;
+  -webkit-font-smoothing: antialiased;
+}
+
+/* ── Typo-Bausteine ────────────────────────────────────────────────────── */
+.cp-h1 { font-size: 19px; font-weight: 650; margin: 0 0 var(--cp-s1); letter-spacing: -0.01em; }
+.cp-sub { color: var(--muted); font-size: 12px; margin: 0 0 var(--cp-s5); }
+.cp-muted { color: var(--muted); font-size: 12px; }
+.cp-sec {
+  font-size: 11px; font-weight: 650; text-transform: uppercase;
+  letter-spacing: 0.07em; color: var(--muted);
+  margin: var(--cp-s5) 0 var(--cp-s3);
+}
+.cp-sec:first-child { margin-top: 0; }
+
+/* ── Karten ────────────────────────────────────────────────────────────── */
+.cp-card {
+  background: var(--cp-surface);
+  border: 1px solid var(--cp-line);
+  border-radius: var(--cp-r-md);
+  padding: var(--cp-s4);
+}
+.cp-card + .cp-card { margin-top: var(--cp-s3); }
+.cp-card-danger { border-color: rgba(248, 113, 113, 0.32); background: rgba(248, 113, 113, 0.05); }
+
+/* ── Buttons: EINE Basis, Varianten nur ueber Modifier ─────────────────── */
+.cp-btn {
+  display: inline-flex; align-items: center; justify-content: center; gap: var(--cp-s2);
+  padding: 0 var(--cp-s4); height: 34px;
+  font: inherit; font-size: 13px; font-weight: 550;
+  color: #e8e6ef; background: var(--cp-surface-2);
+  border: 1px solid var(--cp-line); border-radius: var(--cp-r-sm);
+  cursor: pointer; white-space: nowrap;
+  transition: background .13s, border-color .13s, opacity .13s;
+}
+.cp-btn:hover:not(:disabled) { background: rgba(255, 255, 255, 0.1); border-color: rgba(255, 255, 255, 0.18); }
+.cp-btn:active:not(:disabled) { background: rgba(255, 255, 255, 0.14); }
+.cp-btn:disabled { opacity: .42; cursor: not-allowed; }
+.cp-btn-primary {
+  background: var(--accent); border-color: transparent; color: #fff;
+}
+.cp-btn-primary:hover:not(:disabled) { background: var(--accent-2); border-color: transparent; }
+.cp-btn-danger { background: rgba(248, 113, 113, 0.14); border-color: rgba(248, 113, 113, 0.4); color: #fca5a5; }
+.cp-btn-danger:hover:not(:disabled) { background: rgba(248, 113, 113, 0.22); border-color: rgba(248, 113, 113, 0.55); }
+.cp-btn-sm { height: 28px; padding: 0 var(--cp-s3); font-size: 12px; }
+/* In Flex-Containern niemals mitwachsen — sonst wird derselbe Button je nach
+   Nachbarschaft unterschiedlich breit. Genau das soll das System verhindern. */
+.cp-btn { flex: none; }
+.cp-btn-block { width: 100%; }
+/* Zwei-Klick-Bestaetigung: der scharfe Zustand ist sichtbar, nicht nur im Text */
+.cp-btn[data-armed] { background: rgba(248, 113, 113, 0.3); border-color: var(--cp-danger); color: #fff; }
+
+.cp-btn-row { display: flex; gap: var(--cp-s2); flex-wrap: wrap; }
+.cp-btn-row > .cp-btn { flex: 1 1 0; min-width: 110px; }
+
+/* Chips: Gruppe gleichrangiger Optionen (z. B. Wetter). Grid statt Flex, damit
+   ALLE gleich breit sind — bei Flex-Wrap wird die letzte Zeile sonst gedehnt. */
+.cp-chips { display: grid; grid-template-columns: repeat(auto-fit, minmax(96px, 1fr)); gap: var(--cp-s2); }
+.cp-chips > .cp-btn { width: 100%; flex: none; }
+
+/* ── Formularfelder ───────────────────────────────────────────────────── */
+.cp-field { display: flex; flex-direction: column; gap: 5px; flex: 1; min-width: 0; }
+.cp-label { font-size: 11px; font-weight: 600; color: var(--muted); letter-spacing: 0.02em; }
+.cp-input, .cp-select, .cp-textarea {
+  width: 100%; box-sizing: border-box;
+  padding: 0 var(--cp-s3); height: 34px;
+  font: inherit; font-size: 13px; color: #e8e6ef;
+  background: rgba(0, 0, 0, 0.28);
+  border: 1px solid var(--cp-line); border-radius: var(--cp-r-sm);
+  outline: none; transition: border-color .13s;
+}
+.cp-textarea { height: auto; min-height: 84px; padding: var(--cp-s2) var(--cp-s3); resize: vertical; line-height: 1.5; }
+.cp-input:focus, .cp-select:focus, .cp-textarea:focus { border-color: rgba(var(--accent-rgb), 0.6); }
+.cp-input::placeholder, .cp-textarea::placeholder { color: rgba(255, 255, 255, 0.28); }
+.cp-select { cursor: pointer; appearance: none;
+  background-image: linear-gradient(45deg, transparent 50%, var(--muted) 50%), linear-gradient(135deg, var(--muted) 50%, transparent 50%);
+  background-position: calc(100% - 15px) 14px, calc(100% - 10px) 14px;
+  background-size: 5px 5px, 5px 5px; background-repeat: no-repeat; }
+.cp-row { display: flex; gap: var(--cp-s3); align-items: flex-end; flex-wrap: wrap; }
+.cp-row > .cp-field { flex: 1 1 200px; }
+.cp-row + .cp-row { margin-top: var(--cp-s3); }
+
+.cp-check { display: flex; align-items: center; gap: var(--cp-s2); cursor: pointer; user-select: none; font-size: 13px; }
+.cp-check input { width: auto; margin: 0; cursor: pointer; accent-color: var(--accent); }
+.cp-check + .cp-check { margin-top: var(--cp-s2); }
+.cp-hint { font-size: 11px; color: var(--muted); margin-top: var(--cp-s1); }
+
+input[type="range"] { accent-color: var(--accent); }
+
+/* ── Tabs ─────────────────────────────────────────────────────────────── */
+.cp-tabs {
+  display: flex; gap: var(--cp-s1); flex-wrap: wrap;
+  border-bottom: 1px solid var(--cp-line);
+  margin-bottom: var(--cp-s5); padding-bottom: var(--cp-s2);
+}
+.cp-tab {
+  padding: 6px var(--cp-s3); height: 30px;
+  font: inherit; font-size: 12.5px; font-weight: 550; color: var(--muted);
+  background: transparent; border: 1px solid transparent; border-radius: var(--cp-r-sm);
+  cursor: pointer; transition: background .13s, color .13s;
+}
+.cp-tab { flex: none; }
+.cp-tab:hover { background: var(--cp-surface); color: #ddd; }
+.cp-tab.active { background: rgba(var(--accent-rgb), 0.16); color: #fff; border-color: rgba(var(--accent-rgb), 0.4); }
+
+/* ── Listen / Tabellen ────────────────────────────────────────────────── */
+.cp-list { display: flex; flex-direction: column; }
+.cp-item {
+  display: flex; align-items: center; gap: var(--cp-s3);
+  padding: var(--cp-s3) 0; border-bottom: 1px solid var(--cp-line);
+}
+.cp-item:last-child { border-bottom: none; }
+.cp-item-main { flex: 1; min-width: 0; }
+.cp-item-title { font-weight: 550; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.cp-item-sub { color: var(--muted); font-size: 11.5px; margin-top: 1px; }
+
+.cp-badge {
+  display: inline-flex; align-items: center; gap: 5px;
+  padding: 2px var(--cp-s2); border-radius: 999px;
+  font-size: 11px; font-weight: 600;
+  background: var(--cp-surface-2); border: 1px solid var(--cp-line); color: var(--muted);
+}
+.cp-badge-ok { background: rgba(74, 222, 128, 0.13); border-color: rgba(74, 222, 128, 0.32); color: var(--cp-ok); }
+.cp-badge-off { background: rgba(248, 113, 113, 0.13); border-color: rgba(248, 113, 113, 0.32); color: var(--cp-danger); }
+
+.cp-empty { padding: var(--cp-s6) var(--cp-s4); text-align: center; color: var(--muted); font-size: 12.5px; }
+.cp-scroll { max-height: 300px; overflow-y: auto; }
+
+/* ── Toasts ───────────────────────────────────────────────────────────── */
+#cpToasts { position: fixed; right: var(--cp-s5); bottom: var(--cp-s5); display: flex; flex-direction: column; gap: var(--cp-s2); z-index: 90; }
+.cp-toast {
+  padding: var(--cp-s3) var(--cp-s4); border-radius: var(--cp-r-md);
+  background: #1c1630; border: 1px solid var(--cp-line);
+  box-shadow: 0 8px 26px rgba(0, 0, 0, 0.45);
+  font-size: 12.5px; max-width: 380px;
+  animation: cpToastIn .16s ease-out;
+}
+.cp-toast-success { border-color: rgba(74, 222, 128, 0.45); }
+.cp-toast-error { border-color: rgba(248, 113, 113, 0.5); }
+@keyframes cpToastIn { from { opacity: 0; transform: translateY(6px); } }
+
+/* ═══ Layout ══════════════════════════════════════════════════════════ */
+#cpGate {
+  height: 100vh; display: flex; flex-direction: column;
+  align-items: center; justify-content: center; gap: var(--cp-s4); text-align: center;
+}
+#cpGate h1 { margin: 0; font-size: 21px; font-weight: 650; }
+#cpGate p { color: var(--muted); margin: 0; max-width: 440px; }
+
+#cpApp { display: flex; height: 100vh; }
+
+#cpNav {
+  width: 196px; flex: none; display: flex; flex-direction: column; gap: 2px;
+  padding: var(--cp-s3) var(--cp-s2); box-sizing: border-box;
+  background: rgba(0, 0, 0, 0.3); border-right: 1px solid var(--cp-line);
+}
+.cp-brand {
+  display: flex; align-items: center; gap: var(--cp-s2);
+  font-weight: 650; font-size: 13.5px; padding: var(--cp-s2) var(--cp-s2) var(--cp-s4);
+}
+.cp-nav-btn {
+  display: flex; align-items: center; gap: var(--cp-s3);
+  width: 100%; text-align: left; padding: 0 var(--cp-s3); height: 36px;
+  font: inherit; font-size: 13px; font-weight: 500; color: #c9c5d6;
+  background: transparent; border: 1px solid transparent; border-radius: var(--cp-r-sm);
+  cursor: pointer; transition: background .13s, color .13s;
+}
+.cp-nav-btn { flex: none; }
+.cp-nav-btn:hover { background: var(--cp-surface); color: #fff; }
+.cp-nav-btn.active { background: rgba(var(--accent-rgb), 0.17); border-color: rgba(var(--accent-rgb), 0.36); color: #fff; }
+.cp-nav-ico { width: 17px; text-align: center; flex: none; }
+.cp-nav-spacer { flex: 1; }
+.cp-who { padding: var(--cp-s3) var(--cp-s2) var(--cp-s1); border-top: 1px solid var(--cp-line); }
+.cp-who-name { font-size: 12.5px; font-weight: 550; }
+
+#cpMain { flex: 1; min-width: 0; display: flex; flex-direction: column; }
+.cp-view { flex: 1; min-height: 0; display: flex; flex-direction: column; }
+.cp-pad { padding: var(--cp-s5) var(--cp-s6); overflow-y: auto; }
+.cp-pad-narrow { max-width: 780px; }
+
+/* ── Karte ────────────────────────────────────────────────────────────── */
+.cp-bar {
+  display: flex; align-items: center; gap: var(--cp-s4); flex-wrap: wrap;
+  padding: var(--cp-s2) var(--cp-s4); min-height: 46px; box-sizing: border-box;
+  border-bottom: 1px solid var(--cp-line); background: rgba(0, 0, 0, 0.22);
+}
+.cp-bar-right { margin-left: auto; display: flex; align-items: center; gap: var(--cp-s3); }
+#cpLabelZoom { width: 104px; }
+#cpMapWrap {
+  flex: 1; min-height: 0; position: relative;
+  display: flex; align-items: center; justify-content: center;
+  background: #08050f; overflow: hidden;
+}
+#cpMapCanvas { max-width: 100%; max-height: 100%; aspect-ratio: 1 / 1; cursor: grab; touch-action: none; }
+#cpMapCanvas:active { cursor: grabbing; }
+
+/* ── Scrollbars ───────────────────────────────────────────────────────── */
+.cp-pad::-webkit-scrollbar, .cp-scroll::-webkit-scrollbar { width: 9px; }
+.cp-pad::-webkit-scrollbar-thumb, .cp-scroll::-webkit-scrollbar-thumb {
+  background: rgba(255, 255, 255, 0.13); border-radius: 999px;
+}
+.cp-pad::-webkit-scrollbar-thumb:hover, .cp-scroll::-webkit-scrollbar-thumb:hover { background: rgba(255, 255, 255, 0.22); }
+.cp-pad::-webkit-scrollbar-track, .cp-scroll::-webkit-scrollbar-track { background: transparent; }

@@ -1,0 +1,56 @@
+# Zweites Build-Target aus derselben package.json.
+# extraMetadata.main schreibt den Entry-Point im gepackten Paket um — das ist der
+# Kniff, mit dem zwei Apps aus einem Projekt fallen.
+appId: de.blackfossil.companion.test
+productName: BlackFossil Companion Test
+artifactName: BlackFossil-Companion-Test-Setup.${ext}
+npmRebuild: false
+
+directories:
+  output: release-companion
+
+extraMetadata:
+  main: src/companion-main.js
+
+files:
+  - src/companion-main.js
+  - src/companion-preload.js
+  - src/renderer/companion.html
+  - src/renderer/styles/**
+  - src/renderer/dist/companion.js
+  - src/renderer/assets/**
+  - package.json
+  # Companion hat weder Push-to-Talk noch Voice — die beiden Brocken bleiben draussen.
+  - '!node_modules/uiohook-napi/**'
+  - '!node_modules/livekit-client/**'
+
+protocols:
+  - name: BlackFossil Companion
+    schemes:
+      - blackfossil-companion-test
+
+win:
+  target:
+    - target: nsis
+      arch: [x64]
+
+nsis:
+  oneClick: true
+  perMachine: false
+  allowToChangeInstallationDirectory: false
+
+linux:
+  target:
+    - target: AppImage
+      arch: [x64]
+  category: Utility
+
+publish:
+  - provider: github
+    owner: HidekiSensei
+    repo: blackfossil-overlay
+    # KRITISCH: Beide Apps publishen ins selbe Repo. electron-updater loest Updates
+    # ueber latest.yml auf — ohne eigenen Channel ueberschreiben sich Overlay und
+    # Companion gegenseitig und das Overlay wuerde Companion-Builds als eigenes
+    # Update anbieten. channel erzeugt companion.yml / companion-linux.yml.
+    channel: companion

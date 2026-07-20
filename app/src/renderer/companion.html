@@ -1,0 +1,74 @@
+<!doctype html>
+<html lang="de">
+<head>
+  <meta charset="utf-8" />
+  <title>BlackFossil Companion</title>
+  <link rel="stylesheet" href="styles/app.css" />
+  <link rel="stylesheet" href="styles/companion.css" />
+</head>
+<body class="companion">
+  <div id="cpGate">
+    <img src="assets/logo.png" alt="" width="96" height="96" />
+    <h1>BlackFossil Companion</h1>
+    <p id="cpGateMsg">Lade…</p>
+    <button id="cpGateBtn" class="cp-btn cp-btn-primary" hidden>Mit Discord anmelden</button>
+  </div>
+
+  <div id="cpApp" hidden>
+    <nav id="cpNav">
+      <div class="cp-brand"><img src="assets/logo.png" alt="" width="28" height="28" /><span>Companion</span></div>
+      <button class="cp-nav-btn" data-view="map"><span class="cp-nav-ico">🗺️</span> Karte</button>
+      <button class="cp-nav-btn" data-view="team"><span class="cp-nav-ico">🛠️</span> Team</button>
+      <button class="cp-nav-btn" data-view="admin"><span class="cp-nav-ico">🖥️</span> Admin</button>
+      <button class="cp-nav-btn" data-view="server"><span class="cp-nav-ico">📢</span> Server</button>
+      <div class="cp-nav-spacer"></div>
+      <button class="cp-nav-btn" data-view="settings"><span class="cp-nav-ico">⚙️</span> Settings</button>
+      <div class="cp-who"><div class="cp-who-name" id="cpWhoName">—</div><div id="cpWhoRank" class="cp-muted"></div></div>
+    </nav>
+
+    <main id="cpMain">
+      <section class="cp-view" data-view="map">
+        <div class="cp-bar">
+          <label class="cp-check"><input type="checkbox" id="cpShowAll" /> Alle Spieler anzeigen</label>
+          <span id="cpMapStat" class="cp-muted"></span>
+          <div class="cp-bar-right">
+            <span class="cp-muted">Tags ab Zoom</span>
+            <input type="range" id="cpLabelZoom" min="1" max="4" step="0.1" value="1.6" />
+            <span id="cpLabelZoomVal" class="cp-muted">1.6×</span>
+            <button id="cpMapReset" class="cp-btn cp-btn-sm">Ansicht zurücksetzen</button>
+          </div>
+        </div>
+        <div id="cpMapWrap"><canvas id="cpMapCanvas" width="1000" height="1000"></canvas></div>
+      </section>
+
+      <section class="cp-view" data-view="team" hidden></section>
+      <section class="cp-view" data-view="admin" hidden></section>
+      <section class="cp-view" data-view="server" hidden></section>
+
+      <section class="cp-view" data-view="settings" hidden>
+        <div class="cp-pad cp-pad-narrow">
+          <div class="cp-h1">Settings</div>
+          <p class="cp-sub">Konto und Anwendung.</p>
+          <div class="cp-sec">Konto</div>
+          <div class="cp-card">
+            <div class="cp-item"><div class="cp-item-main">
+              <div class="cp-item-title" id="cpSetWho">—</div>
+              <div class="cp-item-sub" id="cpSetRank"></div>
+            </div><button id="cpLogout" class="cp-btn cp-btn-sm">Abmelden</button></div>
+          </div>
+          <div class="cp-sec">Anwendung</div>
+          <div class="cp-card">
+            <div class="cp-item"><div class="cp-item-main">
+              <div class="cp-item-title">Version</div>
+              <div class="cp-item-sub" id="cpVersion">—</div>
+            </div></div>
+          </div>
+        </div>
+      </section>
+    </main>
+  </div>
+
+  <div id="cpToasts"></div>
+  <script src="dist/companion.js"></script>
+</body>
+</html>

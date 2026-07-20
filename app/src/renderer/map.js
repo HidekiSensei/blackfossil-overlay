@@ -179,7 +179,7 @@ function orderPolygon(points) {
 
 // ── Vollbild-Karte zeichnen ──────────────────────────────────────────────────
 // view: { ctx, w, h }   players: [{x,y,heading,isYou,name,dino,isDead}]
-export function drawFullMap(view, players, waypoints = [], teleports = [], hoveredTp = null, iconScale = 1) {
+export function drawFullMap(view, players, waypoints = [], teleports = [], hoveredTp = null, iconScale = 1, opts = {}) {
   const { ctx, w, h } = view;
   if (mapReady) ctx.drawImage(mapImg, 0, 0, w, h);
   else { ctx.fillStyle = '#15102a'; ctx.fillRect(0, 0, w, h); ctx.fillStyle = '#6b5b8c'; ctx.font = '16px system-ui'; ctx.textAlign = 'center'; ctx.fillText('Kartenbild fehlt (assets/map.jpg)', w/2, h/2); }
@@ -194,17 +194,26 @@ export function drawFullMap(view, players, waypoints = [], teleports = [], hover
     const { nx, ny } = worldToNorm(t.x, t.y);
     drawTeleport(ctx, nx * w, ny * h, t.number, t.id === hoveredTp, iconScale);
   }
-  // Eigene Position + Gruppen-Mitglieder (gleiche groupId), farbig
+  // Eigene Position + Gruppen-Mitglieder (gleiche groupId), farbig.
+  // opts.showAll (Companion/Staff-Overwatch) zeigt ALLE Spieler als Punkt + Namenstag.
+  // Die Schleife steht bewusst NICHT mehr in `if (self)`: die Companion-App hat keinen
+  // eigenen Dino, also kein isYou — sonst bliebe die Karte dort komplett leer.
   const self = players.find((p) => p.isYou);
-  if (self) {
-    for (const p of players) {
-      if (p.isYou || p.isDead) continue;
-      const inGroup = (self.groupId && p.groupId === self.groupId) || p.ovgroup;
+  const showAll = !!opts.showAll;
+  const labels = [];
+  for (const p of players) {
+    if (p.isYou || p.isDead) continue;
+    if (!showAll) {
+      const inGroup = (self && self.groupId && p.groupId === self.groupId) || p.ovgroup;
       if (!inGroup) continue;
-      const { nx, ny } = worldToNorm(p.x, p.y);
-      drawGroupMember(ctx, nx * w, ny * h, p, iconScale);
     }
+    const { nx, ny } = worldToNorm(p.x, p.y);
+    const px = nx * w, py = ny * h;
+    if (!showAll) { drawGroupMember(ctx, px, py, p, iconScale); continue; }
+    drawPlayerDot(ctx, px, py, p, iconScale);
+    if (p.label1) labels.push({ px, py, p });
   }
+  if (showAll && opts.labels !== false) placeLabels(ctx, labels, iconScale, opts, w, h);
   if (self && !self.isDead) {
     const { nx, ny } = worldToNorm(self.x, self.y);
     drawPlayer(ctx, nx * w, ny * h, self, iconScale);
@@ -488,6 +497,59 @@ function drawGroupMember(ctx, px, py, p, scale) {
     }
   }
 }
+// ── Overwatch-Darstellung (Companion): alle Spieler als Punkt + zweizeiliger Tag ──
+// Der Renderer bleibt bewusst dumm bezueglich Label-INHALT: der Aufrufer haengt
+// label1/label2 an die Spieler-Objekte (siehe shared/players.js). So bleiben
+// userLabel/baseClass aus der Karte heraus und sind einzeln testbar.
+function drawPlayerDot(ctx, px, py, p, scale) {
+  const col = p.roleColor || groupColorFor(p.steamId);
+  ctx.beginPath(); ctx.arc(px, py, 3.5 * scale, 0, Math.PI * 2);
+  ctx.fillStyle = col; ctx.fill();
+  ctx.lineWidth = Math.max(0.5, 1.2 * scale);
+  ctx.strokeStyle = 'rgba(0,0,0,0.85)'; ctx.stroke();
+}
+
+// Zweizeiliger Namenstag: Zeile 1 "RP (Steam, Discord)", Zeile 2 "Dino · Grow".
+function drawNameTag(ctx, px, py, l1, l2, scale) {
+  const y = py - 7 * scale;
+  ctx.textAlign = 'center'; ctx.textBaseline = 'bottom';
+  ctx.lineWidth = 3 * scale; ctx.strokeStyle = 'rgba(0,0,0,0.8)';
+  ctx.font = `bold ${11 * scale}px system-ui`;
+  ctx.strokeText(l1, px, y); ctx.fillStyle = '#fff'; ctx.fillText(l1, px, y);
+  if (!l2) return;
+  ctx.font = `${9 * scale}px system-ui`;
+  ctx.strokeText(l2, px, y + 10 * scale);
+  ctx.fillStyle = 'rgba(255,255,255,0.7)'; ctx.fillText(l2, px, y + 10 * scale);
+}
+
+// placeLabels entzerrt die Tags. Ohne das ueberlagern sich bei 60+ Spielern die
+// Namen zu Brei. Drei Regeln, alle ueber opts steuerbar:
+//  1. labelMinZoom — darunter nur Punkte (herausgezoomt sind Tags ohnehin unlesbar)
+//  2. Sortierung nach Abstand zur Viewport-Mitte — worauf man schaut, gewinnt
+//  3. Greedy-AABB: ueberlappende Tags fallen weg, gedeckelt auf maxLabels
+function placeLabels(ctx, labels, scale, opts, w, h) {
+  const zoom = opts.zoom || 1;
+  if (zoom < (opts.labelMinZoom ?? 1.6)) return;
+  const max = opts.maxLabels ?? 60;
+  const cx = opts.centerX ?? w / 2, cy = opts.centerY ?? h / 2;
+  labels.sort((a, b) => ((a.px - cx) ** 2 + (a.py - cy) ** 2) - ((b.px - cx) ** 2 + (b.py - cy) ** 2));
+  const placed = [];
+  const lh = 22 * scale;
+  for (const L of labels) {
+    if (placed.length >= max) break;
+    ctx.font = `bold ${11 * scale}px system-ui`;
+    const w1 = ctx.measureText(L.p.label1).width;
+    ctx.font = `${9 * scale}px system-ui`;
+    const w2 = L.p.label2 ? ctx.measureText(L.p.label2).width : 0;
+    const bw = Math.max(w1, w2), bx = L.px - bw / 2, by = L.py - 18 * scale;
+    const box = { x: bx, y: by, w: bw, h: lh };
+    if (placed.some((q) => box.x < q.x + q.w && box.x + box.w > q.x && box.y < q.y + q.h && box.y + box.h > q.y)) continue;
+    placed.push(box);
+    drawNameTag(ctx, L.px, L.py, L.p.label1, L.p.label2, scale);
+  }
+  if (opts.onLabelStats) opts.onLabelStats({ total: labels.length, drawn: placed.length });
+}
+
 function drawPlayer(ctx, px, py, p, scale) {
   const sz = 9 * SELF_SIZE * scale;
   ctx.save(); ctx.shadowColor = SELF_COLOR; ctx.shadowBlur = 7 * scale;   // Glow → klar erkennbar
