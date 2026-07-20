@@ -597,7 +597,15 @@ function topRank(items) {
 }
 
 function drawPlayerDot(ctx, px, py, p, scale, hot) {
-  const col = hot ? '#f59e0b' : (p.roleColor || groupColorFor(p.steamId));
+  // Bewusst dieselbe helle Fuellung wie bei den Ansammlungen: Einzelpunkt und
+  // Ansammlung sind damit erkennbar dasselbe, und die Rang-Information traegt
+  // allein der Rand.
+  //
+  // NICHT p.roleColor verwenden: das ist eine Discord-Farbe als GANZZAHL
+  // (z. B. 15105570), keine CSS-Farbe. `ctx.fillStyle = 15105570` ist
+  // ungueltig, Canvas behaelt dann stillschweigend die vorherige Farbe — die
+  // Punkte waren deshalb schwarz.
+  const col = hot ? '#f59e0b' : '#e8e6ef';
   const rank = rankOf(p);
   const r = (hot ? 13 : 10) * scale;
   if (hot) { ctx.save(); ctx.shadowColor = '#f59e0b'; ctx.shadowBlur = 9 * scale; }

@@ -53,7 +53,7 @@ let encounters = [];
 let showTp = localStorage.getItem('bf-cp-tp') !== '0';
 let showAi = localStorage.getItem('bf-cp-ai') !== '0';
 let showHeat = localStorage.getItem('bf-cp-heat') === '1';
-const MAX_ZOOM = 10;
+const MAX_ZOOM = 15;
 
 // Die Canvas fuellt den verfuegbaren Bereich; das Kartenbild ist quadratisch.
 // baseScale bildet die 1000x1000-Karte so ab, dass sie den Bereich VOLLSTAENDIG
@@ -189,6 +189,20 @@ function resizeCanvas() {
   dirty = true;
 }
 
+// Auswahl per Karten-Klick. Ohne Shift ersetzt sie die bisherige Auswahl —
+// dasselbe Verhalten wie beim Anklicken einer Gruppe in der Liste.
+function selectFromMap(ids, add) {
+  if (!can(perms, 'map.showAll')) return;
+  if (!add) highlight.clear();
+  for (const id of ids) highlight.add(id);
+  if (!isPlayerListOpen()) {
+    const btn = el('cpPlayersBtn');
+    if (btn) { btn.click(); return; }   // click() rendert die Liste bereits
+  }
+  if (plList) plList.refresh();
+  dirty = true;
+}
+
 function activeHighlight() {
   if (!hoverIds.size) return highlight;
   const set = new Set(highlight);
@@ -202,19 +216,11 @@ function updateMapStat() {
   const alive = players.filter((p) => !p.isDead).length;
   if (showHeat) { s.textContent = `${alive} online · Heatmap (nur Ansammlungen ab 4)`; return; }
   if (!showAll) { s.textContent = `${alive} online`; return; }
-  if (lastStat.belowZoom) {
-    s.textContent = `${alive} online · Namen ab ${labelMinZoom.toFixed(1)}× Zoom`;
-    s.title = 'Namensschilder erscheinen erst ab dieser Zoomstufe.';
-    return;
-  }
-  const hidden = Math.max(0, lastStat.total - lastStat.drawn);
-  s.textContent = hidden
-    ? `${alive} online · ${hidden} Namen verdeckt`
-    : `${alive} online`;
-  s.title = hidden
-    ? `${lastStat.drawn} von ${lastStat.total} Namen im Bild werden angezeigt. `
-      + `${hidden} bleiben weg, weil sich die Schilder sonst überlappen — weiter reinzoomen zeigt mehr.`
-    : 'Alle Namen im Bild werden angezeigt.';
+  // Bewusst nur die Spielerzahl. Der frühere Zusatz zu verdeckten Namen bzw.
+  // zur Zoomschwelle war Information über die Darstellung, nicht über den
+  // Server — der Regler daneben sagt ohnehin, ab wann Namen erscheinen.
+  s.textContent = `${alive} online`;
+  s.title = '';
 }
 
 function frame() {
@@ -300,7 +306,21 @@ function initMapInteraction() {
     dirty = true;
   }, { passive: false });
 
-  cv.addEventListener('mousedown', (e) => { dragging = true; lastX = e.clientX; lastY = e.clientY; hideTip(); });
+  let downX = 0, downY = 0;
+  cv.addEventListener('mousedown', (e) => {
+    dragging = true; lastX = e.clientX; lastY = e.clientY;
+    downX = e.clientX; downY = e.clientY;
+    hideTip();
+  });
+  // Klick statt Ziehen: nur wenn sich der Zeiger kaum bewegt hat. Sonst waehlt
+  // jedes Verschieben der Karte versehentlich Spieler aus.
+  cv.addEventListener('click', (e) => {
+    if (Math.hypot(e.clientX - downX, e.clientY - downY) > 4) return;
+    const r = cv.getBoundingClientRect();
+    const c = hitAt(e.clientX - r.left, e.clientY - r.top);
+    if (!c) return;
+    selectFromMap(c.items.map((it) => it.p.steamId), e.shiftKey);
+  });
   cv.addEventListener('mouseleave', () => { hideTip(); if (hoverIds.size) { hoverIds = new Set(); dirty = true; } });
   cv.addEventListener('mousemove', (e) => {
     if (dragging) return;
