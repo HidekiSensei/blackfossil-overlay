@@ -421,3 +421,12 @@ input[type="range"] { accent-color: var(--accent); }
 /* Rangfarben im Karten-Tooltip — dieselbe Zuordnung wie Randfarbe und Listenpunkt */
 .cp-tip-admin { color: #f87171; font-weight: 600; }
 .cp-tip-team { color: #fbbf24; font-weight: 600; }
+
+/* Auswahl-Rechteck (Strg + Ziehen). Als DOM-Element statt auf der Canvas —
+   so kostet das Aufziehen keinen Neuzeichnen-Durchlauf pro Mausbewegung. */
+#cpMarquee {
+  position: absolute; z-index: 6; pointer-events: none;
+  border: 1px solid rgba(245, 158, 11, .95);
+  background: rgba(245, 158, 11, .14);
+  border-radius: 2px;
+}

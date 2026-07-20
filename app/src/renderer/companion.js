@@ -189,6 +189,45 @@ function resizeCanvas() {
   dirty = true;
 }
 
+// ── Rechteck-Auswahl (Strg + Ziehen) ───────────────────────────────────────
+let marquee = null;   // { x0,y0,x1,y1 } in Bildschirm-Pixeln des Karten-Wrappers
+
+function drawMarquee() {
+  const box = el('cpMarquee');
+  if (!box || !marquee) return;
+  const x = Math.min(marquee.x0, marquee.x1), y = Math.min(marquee.y0, marquee.y1);
+  const w = Math.abs(marquee.x1 - marquee.x0), h = Math.abs(marquee.y1 - marquee.y0);
+  box.style.left = x + 'px'; box.style.top = y + 'px';
+  box.style.width = w + 'px'; box.style.height = h + 'px';
+  box.hidden = false;
+}
+
+function finishMarquee() {
+  const box = el('cpMarquee');
+  if (box) box.hidden = true;
+  const m = marquee;
+  marquee = null;
+  if (!m) return;
+  // Ein versehentlicher Strg-Klick ohne Ziehen soll nichts auswaehlen.
+  if (Math.abs(m.x1 - m.x0) < 4 && Math.abs(m.y1 - m.y0) < 4) return;
+
+  const sc = totalScale();
+  // Bildschirm- -> Kartenkoordinaten, damit der Vergleich zoomunabhaengig ist.
+  const mx0 = (Math.min(m.x0, m.x1) - panX) / sc, mx1 = (Math.max(m.x0, m.x1) - panX) / sc;
+  const my0 = (Math.min(m.y0, m.y1) - panY) / sc, my1 = (Math.max(m.y0, m.y1) - panY) / sc;
+
+  // Ueber die EINZELNEN Spieler pruefen, nicht ueber die Ansammlungs-Mittelpunkte:
+  // sonst faellt eine Ansammlung ganz rein oder ganz raus, obwohl sie am Rand
+  // des Rechtecks liegt.
+  const ids = [];
+  for (const c of hits) {
+    for (const it of c.items) {
+      if (it.px >= mx0 && it.px <= mx1 && it.py >= my0 && it.py <= my1) ids.push(it.p.steamId);
+    }
+  }
+  selectFromMap(ids, m.add);
+}
+
 // Auswahl per Karten-Klick. Ohne Shift ersetzt sie die bisherige Auswahl —
 // dasselbe Verhalten wie beim Anklicken einer Gruppe in der Liste.
 function selectFromMap(ids, add) {
@@ -308,13 +347,24 @@ function initMapInteraction() {
 
   let downX = 0, downY = 0;
   cv.addEventListener('mousedown', (e) => {
-    dragging = true; lastX = e.clientX; lastY = e.clientY;
     downX = e.clientX; downY = e.clientY;
     hideTip();
+    // Strg (bzw. Cmd) + Ziehen spannt ein Auswahl-Rechteck auf statt die Karte
+    // zu verschieben. Beides gleichzeitig ginge nicht — man kann nur eines
+    // sinnvoll auf die linke Taste legen.
+    if (e.ctrlKey || e.metaKey) {
+      const r = cv.getBoundingClientRect();
+      marquee = { x0: e.clientX - r.left, y0: e.clientY - r.top, x1: e.clientX - r.left, y1: e.clientY - r.top, add: e.shiftKey };
+      drawMarquee();
+      e.preventDefault();
+      return;
+    }
+    dragging = true; lastX = e.clientX; lastY = e.clientY;
   });
   // Klick statt Ziehen: nur wenn sich der Zeiger kaum bewegt hat. Sonst waehlt
   // jedes Verschieben der Karte versehentlich Spieler aus.
   cv.addEventListener('click', (e) => {
+    if (e.ctrlKey || e.metaKey) return;   // gehoert zur Rechteck-Auswahl
     if (Math.hypot(e.clientX - downX, e.clientY - downY) > 4) return;
     const r = cv.getBoundingClientRect();
     const c = hitAt(e.clientX - r.left, e.clientY - r.top);
@@ -335,8 +385,18 @@ function initMapInteraction() {
       dirty = true;
     }
   });
-  window.addEventListener('mouseup', () => { dragging = false; });
+  window.addEventListener('mouseup', () => {
+    if (marquee) { finishMarquee(); return; }
+    dragging = false;
+  });
   window.addEventListener('mousemove', (e) => {
+    if (marquee) {
+      const r = cv.getBoundingClientRect();
+      marquee.x1 = e.clientX - r.left;
+      marquee.y1 = e.clientY - r.top;
+      drawMarquee();
+      return;
+    }
     if (!dragging) return;
     panX += e.clientX - lastX;
     panY += e.clientY - lastY;
