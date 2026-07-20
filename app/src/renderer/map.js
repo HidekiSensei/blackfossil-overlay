@@ -230,7 +230,11 @@ export function drawFullMap(view, players, waypoints = [], teleports = [], hover
       const { nx, ny } = worldToNorm(p.x, p.y);
       pts.push({ p, px: nx * w, py: ny * h });
     }
-    const clusters = clusterPoints(pts, (opts.clusterRadius ?? 13) * iconScale);
+    // Schwelle an die Punktgroesse gekoppelt: zwei Punkte, die sich sichtbar
+    // ueberlappen wuerden (Abstand < Durchmesser), gehoeren zusammengefasst.
+    // Ein fester Wert passte nicht mehr, seit die Punkte auf Teleport-Groesse
+    // gewachsen sind — es ueberlappten sich dann getrennt gezeichnete Kreise.
+    const clusters = clusterPoints(pts, (opts.clusterRadius ?? DOT_R * 2) * iconScale);
     const labels = [];
     for (const c of clusters) {
       const hot = highlight && c.items.some((it) => highlight.has(it.p.steamId));
@@ -574,6 +578,11 @@ export function drawAiEncounters(ctx, w, h, sc, encounters, speciesShort = (x) =
 // Spieler. Bei Ansammlungen gewinnt derselbe Weg ueber den hoechsten Rang darin.
 export const RANK_BORDER = { admin: '#ef4444', team: '#f59e0b', none: 'rgba(0,0,0,0.85)' };
 
+// Radius eines Einzelpunkts — bewusst identisch zum Teleport-Kreis (drawTeleport),
+// damit beide Markerarten dieselbe Grundgroesse haben.
+const DOT_R = 10;
+const CLUSTER_EXP = Math.log10(3);   // 10 Spieler => dreifacher Durchmesser
+
 function rankOf(p) { return p.admin ? 'admin' : (p.team ? 'team' : 'none'); }
 
 // Hoechster Rang einer Menge Spieler.
@@ -590,7 +599,7 @@ function topRank(items) {
 function drawPlayerDot(ctx, px, py, p, scale, hot) {
   const col = hot ? '#f59e0b' : (p.roleColor || groupColorFor(p.steamId));
   const rank = rankOf(p);
-  const r = (hot ? 9 : 7.5) * scale;
+  const r = (hot ? 13 : 10) * scale;
   if (hot) { ctx.save(); ctx.shadowColor = '#f59e0b'; ctx.shadowBlur = 9 * scale; }
   ctx.beginPath(); ctx.arc(px, py, r, 0, Math.PI * 2);
   ctx.fillStyle = col; ctx.fill();
@@ -657,7 +666,13 @@ function clusterPoints(pts, radius) {
 // Ansammlung: groesserer Ball in eigener Farbe + Anzahl. Bewusst NICHT in der
 // Spielerfarbe, damit "hier stehen mehrere" nicht wie ein einzelner Spieler wirkt.
 function drawCluster(ctx, px, py, n, scale, hot, rank = 'none') {
-  const r = (9 + Math.min(8, n * 0.7)) * scale;
+  // Groesse ueber eine Potenzfunktion statt linear: mit dem Exponenten log10(3)
+  // ist der Durchmesser bei 10 Spielern exakt dreimal so gross wie ein
+  // Einzelpunkt (DOT_R). Linear waere eine 40er-Ansammlung sonst absurd gross,
+  // rein logarithmisch waeren 2 und 5 kaum zu unterscheiden.
+  // Gedeckelt, weil oberhalb ~25 der Unterschied ohnehin niemanden mehr
+  // interessiert und der Ball sonst die halbe Bucht verdeckt.
+  const r = Math.min(DOT_R * 4.5, DOT_R * Math.pow(n, CLUSTER_EXP)) * scale;
   // Helle Fuellung mit dunkler Zahl: bindet die Ansammlung optisch an die
   // Spielerpunkte und trennt sie von den Teleports, die ebenfalls nummerierte
   // Kreise sind — nur eben in Lila. Gleiche Optik fuer zweierlei Bedeutung war
@@ -672,7 +687,9 @@ function drawCluster(ctx, px, py, n, scale, hot, rank = 'none') {
   // damit konstante 11 Bildschirm-Pixel. Eine Untergrenze in Karten-Einheiten
   // waechst dagegen mit dem Zoom mit — dann sind die Zahlen irgendwann groesser
   // als ihre Kreise.
-  ctx.font = `bold ${11 * scale}px system-ui`;
+  // Schrift an den Kreis koppeln statt fest: sonst passt die Zahl bei kleinen
+  // Ansammlungen nicht mehr hinein.
+  ctx.font = `bold ${Math.min(r * 0.9, 6 + r * 0.45)}px system-ui`;
   ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
   ctx.fillStyle = hot ? '#1a1a1a' : '#0d0918';
   ctx.fillText(String(n), px, py + 0.5 * scale);

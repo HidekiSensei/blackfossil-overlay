@@ -357,14 +357,23 @@ function hitAt(sx, sy) {
   return best;
 }
 
+// Rangfolge fuer die Sortierung: Admin, dann Team, dann alle uebrigen.
+function rankOrder(p) { return p.admin ? 0 : (p.team ? 1 : 2); }
+function rankClass(p) { return p.admin ? ' cp-tip-admin' : (p.team ? ' cp-tip-team' : ''); }
+
 function showTip(c, sx, sy) {
   const tip = el('cpMapTip');
   if (!tip) return;
-  const names = c.items.map((it) => it.p.label1 || it.p.name || it.p.steamId);
-  const sub = c.items.length === 1 ? (c.items[0].p.label2 || '') : `${c.items.length} Spieler`;
+  // Erst nach Rang, innerhalb des Rangs alphabetisch — so steht der Admin einer
+  // Ansammlung immer oben und man muss nicht suchen.
+  const items = [...c.items].map((it) => it.p).sort((a, b) =>
+    rankOrder(a) - rankOrder(b)
+    || (a.label1 || a.name || '').localeCompare(b.label1 || b.name || '', 'de'));
+  const sub = items.length === 1 ? (items[0].label2 || '') : `${items.length} Spieler`;
   tip.innerHTML = `<div class="cp-tip-head">${escapeHtml(sub)}</div>`
-    + names.slice(0, 20).map((n) => `<div class="cp-tip-row">${escapeHtml(n)}</div>`).join('')
-    + (names.length > 20 ? `<div class="cp-tip-more">und ${names.length - 20} weitere…</div>` : '');
+    + items.slice(0, 20).map((p) =>
+        `<div class="cp-tip-row${rankClass(p)}">${escapeHtml(p.label1 || p.name || p.steamId)}</div>`).join('')
+    + (items.length > 20 ? `<div class="cp-tip-more">und ${items.length - 20} weitere…</div>` : '');
   tip.hidden = false;
   // Am Rand nach innen kippen, damit der Tooltip nicht aus dem Fenster laeuft
   const r = tip.getBoundingClientRect();

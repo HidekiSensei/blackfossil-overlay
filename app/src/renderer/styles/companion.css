@@ -417,3 +417,7 @@ input[type="range"] { accent-color: var(--accent); }
 /* Rangfarbe im Listenpunkt — dieselbe Zuordnung wie auf der Karte */
 .cp-pl-dot.cp-pl-team { background: #f59e0b; }
 .cp-pl-dot.cp-pl-admin { background: #ef4444; }
+
+/* Rangfarben im Karten-Tooltip — dieselbe Zuordnung wie Randfarbe und Listenpunkt */
+.cp-tip-admin { color: #f87171; font-weight: 600; }
+.cp-tip-team { color: #fbbf24; font-weight: 600; }
