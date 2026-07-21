@@ -1,5 +1,5 @@
 import { Room, RoomEvent, Track, ParticipantEvent, AudioPresets } from 'livekit-client';
-import { loadMapImage, drawFullMap, drawMinimap, drawHeatmap, normToWorld, worldToNorm, zoneAt, zonesAt, resetCal, solveAffine, getCal, setCalAffine, setZones, newZone, ZONES, ZONE_TYPES, ZONE_META, loadZoneLayer, setZoneLayer, isZoneLayerVisible, setGoldenZone, goldenZoneCenter, groupColorFor, setMarkerStyle, drawAiEncounters, setAccent } from './map.js';
+import { loadMapImage, drawFullMap, drawMinimap, drawHeatmap, normToWorld, worldToNorm, zoneAt, zonesAt, resetCal, solveAffine, getCal, setCalAffine, setZones, newZone, ZONES, ZONE_TYPES, ZONE_META, loadZoneLayer, setZoneLayer, isZoneLayerVisible, setGoldenZone, goldenZoneCenter, groupColorFor, setMarkerStyle, drawAiEncounters } from './map.js';
 import { THEMES, makeTheme, aboIndex } from './shared/theme.js';
 import { el, apiErr, makeApi, makeApiAction, armConfirm } from './shared/core.js';
 import { baseClass, fmtGrow, escapeHtml, fmtTod } from './shared/format.js';
@@ -21,10 +21,10 @@ let mySkinFree = false;   // 🎨 Skin-Creator gratis (ab Knochen ODER Beta-Test
 const bfTheme = makeTheme({
   storageKey: 'bf-theme',
   customKey: 'bf-custom',
-  onApply: (t) => {
-    setAccent(t);          // Karte/Minimap zeichnen auf Canvas, nicht per CSS
-    minimapDirty = true;   // Theme-Farben geändert → Minimap neu zeichnen
-  },
+  // Die Karte selbst folgt dem Theme nicht (map.js: Markerfarben sind
+  // Bedeutungen). Neu gezeichnet wird trotzdem — Rahmen und Flaechen drumherum
+  // haengen sehr wohl am Akzent.
+  onApply: () => { minimapDirty = true; },
 });
 // Abo-Rang als Zahl — auch ausserhalb der Themes gebraucht (Skin-Creator,
 // Geschlechtswechsel). Quelle ist derselbe Rang, den setAboTier gesetzt hat.
