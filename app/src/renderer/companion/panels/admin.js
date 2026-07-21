@@ -42,84 +42,71 @@ export function renderAdmin(root, view) {
   else renderOps();
 }
 
+let weltTab = 'umwelt';
+
+// Kadaver bewusst NICHT hier: das sitzt in der Dino-Verwaltung und war dort
+// zuerst. Zweimal dieselbe Aktion anzubieten heisst, dass man beim Suchen
+// jedes Mal ueberlegt, welche der beiden die richtige ist.
+const WELT_TABS = [
+  { id: 'umwelt', label: 'Umwelt' },
+  { id: 'overwrites', label: 'Overwrites' },
+];
+
 async function renderWelt() {
   const box = el('adBody');
-  box.innerHTML = U.card(U.muted('Lade Welt-Zustand…'));
+  box.innerHTML = U.muted('Lade Welt-Zustand…');
   let d = {};
   try { d = await C.api('GET', '/admin/world/time'); }
-  catch (e) { box.innerHTML = U.card(U.muted('Welt-Zustand nicht abrufbar: ' + e.message)); return; }
+  catch (e) { box.innerHTML = U.muted('Welt-Zustand nicht abrufbar: ' + e.message); return; }
 
+  const reiter = WELT_TABS.filter((t) => !t.cap || C.can(t.cap));
+  if (!reiter.some((t) => t.id === weltTab)) weltTab = reiter[0] && reiter[0].id;
+
+  box.innerHTML = U.tabs(reiter, weltTab) + `<div id="adWelt" class="cp-stack"></div>`;
+  box.querySelectorAll('.cp-tab').forEach((b) => {
+    b.onclick = () => { weltTab = b.dataset.tab; renderWelt(); };
+  });
+
+  if (weltTab === 'umwelt') weltUmwelt(d);
+  else weltOverwrites(d);
+}
+
+// Ohne Karten: eine Karte grenzt etwas von etwas anderem ab. Wenn ein Reiter
+// nur einen Block enthaelt, umrandet sie den einzigen Inhalt und erzeugt bloss
+// eine zweite Kante neben der des Panels.
+function weltUmwelt(d) {
+  const box = el('adWelt');
   const tod = Number(d.time ?? d.timeOfDay ?? 12);
-  const darfWipen = C.can('server.wipe');
-
-  // Alles auf einer Seite statt in Reitern: es sind drei kurze Bloecke, und
-  // beim Einstellen einer Welt will man Uhrzeit, Wetter und Wachstum
-  // nebeneinander sehen, nicht nacheinander aufrufen. Uebertitel und
-  // Trennlinien gliedern, ohne etwas zu verstecken.
   box.innerHTML = `
-    ${U.gruppe('Umwelt', 'Tageszeit und Wetter des laufenden Servers.')}
-    ${U.sec('Tageszeit')}
-    ${U.card(`
-      <div class="cp-row">
-        <div class="cp-field">
-          <label class="cp-label" for="adTod">Uhrzeit — <span id="adTodVal">${fmtTod(tod)}</span></label>
-          <input type="range" id="adTod" min="0" max="23.99" step="0.25" value="${tod}">
-        </div>
-        ${U.btn('adTodSet', 'Setzen', { variant: 'primary' })}
+    <div class="cp-row">
+      <div class="cp-field">
+        <label class="cp-label" for="adTod">Uhrzeit — <span id="adTodVal">${fmtTod(tod)}</span></label>
+        <input type="range" id="adTod" min="0" max="23.99" step="0.25" value="${tod}">
       </div>
-      <div style="height:var(--cp-s3)"></div>
-      ${U.check('adFreeze', 'Zeit einfrieren (Tag-/Nacht-Zyklus anhalten)', !!d.frozen)}
-    `)}
-
+      ${U.btn('adTodSet', 'Setzen', { variant: 'primary' })}
+    </div>
+    ${U.check('adFreeze', 'Zeit einfrieren (Tag-/Nacht-Zyklus anhalten)', !!d.frozen)}
     ${U.sec('Wetter')}
-    ${U.card(U.chips(...WEATHER.map((w) => U.btn(`adW_${w}`, w))))}
-
-    ${U.gruppe('Wachstum', 'Betrifft alle Spieler sofort.')}
-    ${U.card(U.check('adGrowStop', 'Grow-Stop — Wachstum aller Dinos einfrieren', !!d.growthStopped))}
-
-    ${U.gruppe('Kadaver', 'Herumliegende Leichen und KI-Dinos abräumen.')}
-    ${darfWipen
-      ? U.card(U.item('Alle Kadaver entfernen',
-          'Wirkt serverweit und lässt sich nicht rückgängig machen. Zum Bestätigen zweimal klicken.',
-          U.btn('adWipe', 'Kadaver entfernen', { variant: 'danger' })), 'cp-card-danger')
-        // Ehrlich bleiben statt eine Zahl erfinden: die Mod liefert in ihrer
-        // Statusantwort ein fest verdrahtetes "corpseCount": 0 — es gibt keinen
-        // Weg, die tatsaechliche Anzahl zu erfahren. Eine Uebersicht wuerde
-        // dauerhaft null anzeigen und waere schlimmer als keine.
-        + U.hint('Wie viele Kadaver gerade liegen, meldet der Server nicht — die Mod gibt '
-          + 'dort immer 0 zurück. Deshalb steht hier keine Anzahl.')
-      : U.hint('Kadaver entfernen ist Moderatoren und Admins vorbehalten.')}
-  `;
+    ${U.chips(...WEATHER.map((w) => U.btn(`adW_${w}`, w)))}`;
 
   const slider = el('adTod');
   slider.oninput = () => { el('adTodVal').textContent = fmtTod(Number(slider.value)); };
   el('adTodSet').onclick = () => send('/admin/world/time', { time: Number(slider.value) }, 'Tageszeit gesetzt');
   el('adFreeze').onchange = (e) => send('/admin/world/time', { frozen: e.target.checked }, e.target.checked ? 'Zeit eingefroren' : 'Zeit läuft wieder');
-  el('adGrowStop').onchange = (e) => send('/admin/world/growth-stop', { enabled: e.target.checked }, e.target.checked ? 'Wachstum gestoppt' : 'Wachstum läuft wieder');
   for (const w of WEATHER) el(`adW_${w}`).onclick = () => send('/admin/world/weather', { weather: w }, `Wetter: ${w}`);
-
-  const wipe = el('adWipe');
-  if (wipe) wipe.onclick = () => {
-    // Zwei Klicks: serverweit und nicht umkehrbar.
-    if (wipe.dataset.armed) {
-      delete wipe.dataset.armed;
-      wipe.disabled = true;
-      wipe.textContent = 'Räume auf…';
-      C.api('POST', '/admin/server/wipecorpses', {})
-        .then(() => C.toast('Kadaver geleert.', 'success'))
-        .catch((e) => C.toast('Fehlgeschlagen: ' + e.message, 'error'))
-        .finally(() => { wipe.disabled = false; wipe.textContent = 'Kadaver entfernen'; });
-      return;
-    }
-    wipe.dataset.armed = '1';
-    wipe.textContent = 'Sicher? Kadaver leeren';
-    setTimeout(() => {
-      if (!wipe.dataset.armed) return;
-      delete wipe.dataset.armed;
-      wipe.textContent = 'Kadaver entfernen';
-    }, 2500);
-  };
 }
+
+// "Overwrites" = serverweite Regeln, die das normale Spielverhalten aushebeln.
+// Bislang nur der Wachstums-Stopp; der Reiter ist die Stelle, an der weitere
+// dieser Schalter landen, statt sie zwischen die Umwelt-Regler zu mischen.
+function weltOverwrites(d) {
+  const box = el('adWelt');
+  box.innerHTML = U.check('adGrowStop', 'Grow-Stop — Wachstum aller Dinos einfrieren', !!d.growthStopped)
+    + U.hint('Betrifft alle Spieler sofort.');
+  el('adGrowStop').onchange = (e) => send('/admin/world/growth-stop', { enabled: e.target.checked },
+    e.target.checked ? 'Wachstum gestoppt' : 'Wachstum läuft wieder');
+}
+
 
 
 async function send(path, body, okMsg) {
