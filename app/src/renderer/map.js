@@ -1,6 +1,15 @@
 // Karten-Rendering: Welt-Koordinaten → Bild, Zonen, Spieler, Minimap.
 // Kalibrierung wird in localStorage gespeichert und ist live justierbar.
 
+// ── Markerfarben ────────────────────────────────────────────────────────────
+// Die Karte folgt dem Farbschema BEWUSST NICHT. Jede Farbe hier ist eine
+// Bedeutung, keine Dekoration: Rot = PvP, Rot = Admin, Gelb = Wegpunkt,
+// Cyan = ich selbst, Violett = Teleport. Wer die ans Theme haengt, macht
+// Marker bei hellen Schemata unlesbar und nimmt ihnen die Wiedererkennung —
+// ein Teleportpunkt soll ueberall wie ein Teleportpunkt aussehen.
+const TP_COLOR = 'rgba(139,92,246,0.92)';
+const TP_COLOR_HOT = '#c084fc';
+
 // ── Zonen (Welt-Koordinaten, vom Server) ────────────────────────────────────
 // Mehrere benannte Zonen über 5 Typen. Array wird IN PLACE mutiert (ES-Module-
 // Live-Binding: niemals neu zuweisen). Jedes Element: { id, type, name, points }.
@@ -143,7 +152,13 @@ export function loadMapImage(src) {
 // sondern aus den vom Team GEZEICHNETEN Zonen als reiner UMRISS gerendert (siehe drawZones).
 // ZONE_LAYERS hält nur noch den Ein/Aus-Status pro Typ (Default sichtbar). loadZoneLayer bleibt
 // als No-Op erhalten, damit bestehende Aufrufer nicht brechen.
+// Sichtbarkeit je Zonentyp. Frueher nur die drei Umriss-Typen — pvp/pve waren
+// gar nicht schaltbar. Alle fuenf stehen jetzt drin und sind per Default an,
+// das Overlay verhaelt sich also unveraendert; nur die Companion bietet
+// Schalter fuer alle an.
 export const ZONE_LAYERS = {
+  pvp:       { visible: true, label: '⚔️ PvP' },
+  pve:       { visible: true, label: '🕊️ PvE' },
   sanctuary: { visible: true, label: '🛡️ Sanctuary' },
   patrol:    { visible: true, label: '🐾 Patrol' },
   migration: { visible: true, label: '🧭 Migration' },
@@ -179,31 +194,74 @@ function orderPolygon(points) {
 
 // ── Vollbild-Karte zeichnen ──────────────────────────────────────────────────
 // view: { ctx, w, h }   players: [{x,y,heading,isYou,name,dino,isDead}]
-export function drawFullMap(view, players, waypoints = [], teleports = [], hoveredTp = null, iconScale = 1) {
+export function drawFullMap(view, players, waypoints = [], teleports = [], hoveredTp = null, iconScale = 1, opts = {}) {
   const { ctx, w, h } = view;
   if (mapReady) ctx.drawImage(mapImg, 0, 0, w, h);
   else { ctx.fillStyle = '#15102a'; ctx.fillRect(0, 0, w, h); ctx.fillStyle = '#6b5b8c'; ctx.font = '16px system-ui'; ctx.textAlign = 'center'; ctx.fillText('Kartenbild fehlt (assets/map.jpg)', w/2, h/2); }
 
-  drawZones(ctx, (nx, ny) => ({ px: nx * w, py: ny * h }));
+  drawZones(ctx, (nx, ny) => ({ px: nx * w, py: ny * h }), iconScale, opts.editZone ? opts.editZone.id : null);
   for (const wp of waypoints) {
     const { nx, ny } = worldToNorm(wp.x, wp.y);
     drawWaypoint(ctx, nx * w, ny * h, iconScale);
   }
+  // Spuren gehoeren zwischen Karte und Marker: darueber gezeichnet verdecken
+  // sie die Punkte, die sie erklaeren sollen.
+  if (opts.trails) drawTrails(ctx, w, h, iconScale, opts.trails, opts.highlight);
+  if (opts.editZone) drawZoneEdit(ctx, w, h, iconScale, opts.editZone, opts.editHandle);
+  if (opts.editEnc) drawEncounterEdit(ctx, w, h, iconScale, opts.editEnc, opts.editHandle);
+  if (opts.editTp) drawHandles(ctx, w, h, iconScale, [opts.editTp], opts.editHandle, '#38bdf8');
+
   // Teleport-Punkte (nummeriert; hervorgehoben beim Hover)
   for (const t of teleports) {
     const { nx, ny } = worldToNorm(t.x, t.y);
     drawTeleport(ctx, nx * w, ny * h, t.number, t.id === hoveredTp, iconScale);
   }
-  // Eigene Position + Gruppen-Mitglieder (gleiche groupId), farbig
+  // Eigene Position + Gruppen-Mitglieder (gleiche groupId), farbig.
+  // opts.showAll (Companion/Staff-Overwatch) zeigt ALLE Spieler als Punkt + Namenstag.
+  // Die Schleife steht bewusst NICHT mehr in `if (self)`: die Companion-App hat keinen
+  // eigenen Dino, also kein isYou — sonst bliebe die Karte dort komplett leer.
   const self = players.find((p) => p.isYou);
-  if (self) {
+  const showAll = !!opts.showAll;
+  const highlight = opts.highlight instanceof Set ? opts.highlight : null;
+
+  if (!showAll) {
     for (const p of players) {
       if (p.isYou || p.isDead) continue;
-      const inGroup = (self.groupId && p.groupId === self.groupId) || p.ovgroup;
+      const inGroup = (self && self.groupId && p.groupId === self.groupId) || p.ovgroup;
       if (!inGroup) continue;
       const { nx, ny } = worldToNorm(p.x, p.y);
       drawGroupMember(ctx, nx * w, ny * h, p, iconScale);
     }
+  } else {
+    // Overwatch: erst gruppieren, dann zeichnen. Bei 80 Spielern liegen viele so
+    // dicht beieinander, dass einzelne Punkte zu einem Fleck verschmelzen — eine
+    // Ansammlung mit Zahl ist ehrlicher als uebereinanderliegende Punkte.
+    const pts = [];
+    for (const p of players) {
+      if (p.isYou || p.isDead) continue;
+      const { nx, ny } = worldToNorm(p.x, p.y);
+      pts.push({ p, px: nx * w, py: ny * h });
+    }
+    // Schwelle an die Punktgroesse gekoppelt: zwei Punkte, die sich sichtbar
+    // ueberlappen wuerden (Abstand < Durchmesser), gehoeren zusammengefasst.
+    // Ein fester Wert passte nicht mehr, seit die Punkte auf Teleport-Groesse
+    // gewachsen sind — es ueberlappten sich dann getrennt gezeichnete Kreise.
+    const clusters = clusterPoints(pts, (opts.clusterRadius ?? DOT_R * 2) * iconScale);
+    const labels = [];
+    for (const c of clusters) {
+      const hot = highlight && c.items.some((it) => highlight.has(it.p.steamId));
+      if (c.items.length === 1) {
+        drawPlayerDot(ctx, c.px, c.py, c.items[0].p, iconScale, hot);
+        // Hervorgehobene bekommen ihr Label IMMER, unabhaengig vom Zoom.
+        if (hot) drawNameTag(ctx, c.px, c.py, c.items[0].p.label1 || '', c.items[0].p.label2 || '', iconScale);
+        else if (c.items[0].p.label1) labels.push({ px: c.px, py: c.py, p: c.items[0].p });
+      } else {
+        drawCluster(ctx, c.px, c.py, c.items.length, iconScale, hot, topRank(c.items));
+      }
+    }
+    if (opts.labels !== false) placeLabels(ctx, labels, iconScale, opts, w, h);
+    // Trefferflaechen fuer Hover/Klick an den Aufrufer zurueck (Karten-Koordinaten).
+    if (opts.onHits) opts.onHits(clusters);
   }
   if (self && !self.isDead) {
     const { nx, ny } = worldToNorm(self.x, self.y);
@@ -364,15 +422,22 @@ export function drawMinimap(view, players, me, speakRange = 0, waypoints = [], z
 }
 
 // ── Helfer ───────────────────────────────────────────────────────────────────
-function drawZones(ctx, project) {
+// scale = 1/Gesamtskalierung, damit Linien und Text beim Zoomen ihre
+// Bildschirmbreite behalten. Default 1 haelt bestehende Aufrufer (Minimap)
+// unveraendert; im Overlay ist iconScale bei Standardzoom ebenfalls 1, dort
+// aendert sich die Darstellung also erst beim Reinzoomen — und dann zum Guten.
+function drawZones(ctx, project, scale = 1, skipId = null) {
   for (const z of ZONES) {
     if (!z.points || !z.points.length) continue;
+    // Die gerade bearbeitete Zone zeichnet drawZoneEdit — sonst stuenden der
+    // gespeicherte und der gezogene Stand gleichzeitig auf der Karte.
+    if (skipId && z.id === skipId) continue;
     const meta = ZONE_META[z.type] || ZONE_META.pvp;
     const outline = OUTLINE_TYPES.has(z.type);
     const isGolden = !!(z.id && z.id === goldenZoneId);
-    // Umriss-Zonen (Sanctuary/Patrol/Migration) nur zeichnen, wenn ihr Layer sichtbar ist.
-    // Die goldene Zone wird IMMER hervorgehoben — auch bei ausgeblendetem Patrol-Layer.
-    if (outline && !isGolden && !isZoneLayerVisible(z.type)) continue;
+    // Layer-Sichtbarkeit gilt fuer ALLE Typen. Die goldene Zone wird IMMER
+    // hervorgehoben — auch bei ausgeblendetem Patrol-Layer.
+    if (!isGolden && !isZoneLayerVisible(z.type)) continue;
 
     const color = meta.color;
     // Punkte in Aufnahme-Reihenfolge (unterstützt komplexe/konkave Formen)
@@ -395,23 +460,23 @@ function drawZones(ctx, project) {
       ctx.save();
       ctx.fillStyle = 'rgba(251,191,36,0.14)'; ctx.fill();
       ctx.shadowColor = '#fbbf24'; ctx.shadowBlur = 12;
-      ctx.strokeStyle = '#fbbf24'; ctx.lineWidth = 3; ctx.stroke();
+      ctx.strokeStyle = '#fbbf24'; ctx.lineWidth = 3 * scale; ctx.stroke();
       ctx.restore();
       const cx = pts.reduce((s, p) => s + p.px, 0) / pts.length;
       const cy = pts.reduce((s, p) => s + p.py, 0) / pts.length;
-      ctx.font = 'bold 16px system-ui'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+      ctx.font = `bold ${16 * scale}px system-ui`; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
       ctx.fillText('⭐', cx, cy);
     } else if (outline) {
       // Sanctuary/Patrol/Migration: NUR Umriss — keine Füllung, KEIN Name-Label.
-      ctx.strokeStyle = color; ctx.lineWidth = 2; ctx.stroke();
+      ctx.strokeStyle = color; ctx.lineWidth = 2 * scale; ctx.stroke();
     } else {
       // PvP/PvE: Füllung + Umriss + Label (wie gehabt).
       ctx.fillStyle = color + '22';
-      ctx.strokeStyle = color; ctx.lineWidth = 2;
+      ctx.strokeStyle = color; ctx.lineWidth = 2 * scale;
       ctx.fill(); ctx.stroke();
       const cx = pts.reduce((s, p) => s + p.px, 0) / pts.length;
       const cy = pts.reduce((s, p) => s + p.py, 0) / pts.length;
-      ctx.fillStyle = color; ctx.font = 'bold 13px system-ui'; ctx.textAlign = 'center';
+      ctx.fillStyle = color; ctx.font = `bold ${13 * scale}px system-ui`; ctx.textAlign = 'center';
       ctx.fillText(z.name || meta.label, cx, cy);
     }
   }
@@ -450,7 +515,7 @@ function drawArrow(ctx, px, py, angle, size, color) {
   ctx.lineTo(-size * 0.72, -size * 0.66);
   ctx.closePath();
   ctx.fillStyle = color; ctx.fill();
-  ctx.lineWidth = Math.max(0.5, size * 0.17); ctx.strokeStyle = 'rgba(0,0,0,0.8)'; ctx.stroke();
+  ctx.lineWidth = size * 0.17; ctx.strokeStyle = 'rgba(0,0,0,0.8)'; ctx.stroke();
   ctx.restore();
 }
 // Heading → Karten-Winkel: den Blick-Vektor durch DIESELBE Welt→Karte-Projektion
@@ -471,7 +536,7 @@ function drawGroupMember(ctx, px, py, p, scale) {
   if (p.isFlying) { // Fly-/Admin-Modus: Punkt statt Pfeil (keine Blickrichtung)
     ctx.beginPath(); ctx.arc(px, py, 4 * scale, 0, Math.PI * 2);
     ctx.fillStyle = col; ctx.fill();
-    ctx.lineWidth = Math.max(0.5, 1.2 * scale); ctx.strokeStyle = 'rgba(0,0,0,0.8)'; ctx.stroke();
+    ctx.lineWidth = 1.2 * scale; ctx.strokeStyle = 'rgba(0,0,0,0.8)'; ctx.stroke();
   } else {
     drawArrow(ctx, px, py, arrowAngle(p), 6.5 * scale, col);
   }
@@ -488,6 +553,384 @@ function drawGroupMember(ctx, px, py, p, scale) {
     }
   }
 }
+// ── KI-Encounter-Layer (Staff) ──────────────────────────────────────────────
+// Spawnpunkte als rote Rauten, Patrouillen als gestrichelte Linien. Aus
+// overlay.js hierher gezogen, damit Overlay und Companion dasselbe zeichnen.
+// speciesShort wird injiziert, damit map.js nichts ueber Dino-Klassennamen
+// wissen muss (dafuer gibt es shared/format.js baseClass).
+export function drawAiEncounters(ctx, w, h, sc, encounters, speciesShort = (x) => x) {
+  const placed = (p) => p && (p.x !== 0 || p.y !== 0);
+  for (const e of encounters || []) {
+    if (e.enabled === false || !placed(e.spawn)) continue;
+    const s0 = worldToNorm(e.spawn.x, e.spawn.y);
+    const sx = s0.nx * w, sy = s0.ny * h;
+    const patrol = Array.isArray(e.patrol) ? e.patrol.filter(placed) : [];
+    if (patrol.length >= 2) {
+      ctx.beginPath();
+      patrol.forEach((pt, i) => { const n = worldToNorm(pt.x, pt.y); const x = n.nx * w, y = n.ny * h; i ? ctx.lineTo(x, y) : ctx.moveTo(x, y); });
+      ctx.setLineDash([6 * sc, 4 * sc]); ctx.lineWidth = 2 * sc; ctx.strokeStyle = 'rgba(248,113,113,0.9)'; ctx.stroke(); ctx.setLineDash([]);
+      for (const pt of patrol) { const n = worldToNorm(pt.x, pt.y); ctx.beginPath(); ctx.arc(n.nx * w, n.ny * h, 3 * sc, 0, 2 * Math.PI); ctx.fillStyle = '#f87171'; ctx.fill(); }
+    }
+    const d = 6 * sc;
+    ctx.save(); ctx.translate(sx, sy); ctx.rotate(Math.PI / 4);
+    ctx.fillStyle = '#ef4444'; ctx.fillRect(-d, -d, 2 * d, 2 * d);
+    ctx.lineWidth = 1.5 * sc; ctx.strokeStyle = '#fff'; ctx.strokeRect(-d, -d, 2 * d, 2 * d);
+    ctx.restore();
+    const night = e.params && e.params.activeAt === 'night';
+    const label = `${e.name || speciesShort(e.species)}${e.count > 1 ? ' ×' + e.count : ''}${night ? ' 🌙' : ''}`;
+    // Wie bei den Ansammlungen: keine Untergrenze, sonst waechst der Text beim Zoomen.
+    ctx.font = `bold ${11 * sc}px sans-serif`; ctx.textAlign = 'center'; ctx.textBaseline = 'bottom';
+    ctx.lineWidth = 3 * sc; ctx.strokeStyle = 'rgba(0,0,0,0.85)'; ctx.strokeText(label, sx, sy - 10 * sc);
+    ctx.fillStyle = '#fecaca'; ctx.fillText(label, sx, sy - 10 * sc);
+  }
+}
+
+// ── Overwatch-Darstellung (Companion): alle Spieler als Punkt + zweizeiliger Tag ──
+// Der Renderer bleibt bewusst dumm bezueglich Label-INHALT: der Aufrufer haengt
+// label1/label2 an die Spieler-Objekte (siehe shared/players.js). So bleiben
+// userLabel/baseClass aus der Karte heraus und sind einzeln testbar.
+// Rangfarbe des Rands. Reihenfolge = Rangfolge: Admin schlaegt Team schlaegt
+// Spieler. Bei Ansammlungen gewinnt derselbe Weg ueber den hoechsten Rang darin.
+export const RANK_BORDER = { admin: '#ef4444', team: '#f59e0b', none: 'rgba(0,0,0,0.85)' };
+
+// Radius eines Einzelpunkts — bewusst identisch zum Teleport-Kreis (drawTeleport),
+// damit beide Markerarten dieselbe Grundgroesse haben.
+const DOT_R = 10;
+const CLUSTER_EXP = Math.log10(3);   // 10 Spieler => dreifacher Durchmesser
+
+function rankOf(p) { return p.admin ? 'admin' : (p.team ? 'team' : 'none'); }
+
+// Hoechster Rang einer Menge Spieler.
+function topRank(items) {
+  let r = 'none';
+  for (const it of items) {
+    const x = rankOf(it.p);
+    if (x === 'admin') return 'admin';
+    if (x === 'team') r = 'team';
+  }
+  return r;
+}
+
+function drawPlayerDot(ctx, px, py, p, scale, hot) {
+  // Bewusst dieselbe helle Fuellung wie bei den Ansammlungen: Einzelpunkt und
+  // Ansammlung sind damit erkennbar dasselbe, und die Rang-Information traegt
+  // allein der Rand.
+  //
+  // NICHT p.roleColor verwenden: das ist eine Discord-Farbe als GANZZAHL
+  // (z. B. 15105570), keine CSS-Farbe. `ctx.fillStyle = 15105570` ist
+  // ungueltig, Canvas behaelt dann stillschweigend die vorherige Farbe — die
+  // Punkte waren deshalb schwarz.
+  const col = hot ? '#f59e0b' : '#e8e6ef';
+  const rank = rankOf(p);
+  const r = (hot ? 13 : 10) * scale;
+  if (hot) { ctx.save(); ctx.shadowColor = '#f59e0b'; ctx.shadowBlur = 9 * scale; }
+  ctx.beginPath(); ctx.arc(px, py, r, 0, Math.PI * 2);
+  ctx.fillStyle = col; ctx.fill();
+  // KEINE Math.max-Untergrenze: die waere in Karten-Einheiten und liesse den
+  // Rand beim Reinzoomen mitwachsen (drawTeleport hatte sie nie — deshalb sahen
+  // die Teleports richtig aus, die Spielerpunkte nicht).
+  ctx.lineWidth = (rank === 'none' ? 1.5 : 2.2) * scale;
+  ctx.strokeStyle = hot ? '#fff' : RANK_BORDER[rank];
+  ctx.stroke();
+  if (hot) ctx.restore();
+}
+
+// Spur der letzten Positionen. Rein visuell und rein clientseitig — die Daten
+// dafuer haelt der Aufrufer im Speicher (siehe companion.js trails), es wird
+// nichts gespeichert oder ans Backend geschickt.
+function drawTrails(ctx, w, h, scale, trails, highlight) {
+  for (const [steamId, pts] of trails) {
+    if (!pts || pts.length < 2) continue;
+    const hot = highlight && highlight.has(steamId);
+    ctx.beginPath();
+    pts.forEach((pt, i) => {
+      const n = worldToNorm(pt.x, pt.y);
+      const x = n.nx * w, y = n.ny * h;
+      i ? ctx.lineTo(x, y) : ctx.moveTo(x, y);
+    });
+    // Duenn, aber lesbar: erst ein dunkler Saum, dann die eigentliche Linie.
+    // Ohne den Saum verschwindet eine 1-px-Linie auf dem Satellitenbild komplett
+    // (nachgemessen: praktisch kein Pixelunterschied zu "aus").
+    ctx.lineJoin = 'round'; ctx.lineCap = 'round';
+    ctx.lineWidth = (hot ? 4 : 3) * scale;
+    ctx.strokeStyle = 'rgba(0,0,0,0.55)';
+    ctx.stroke();
+    ctx.lineWidth = (hot ? 2 : 1.4) * scale;
+    ctx.strokeStyle = hot ? 'rgba(245,158,11,0.95)' : 'rgba(232,230,239,0.8)';
+    ctx.stroke();
+  }
+}
+
+// Die gerade bearbeitete Zone: gefuellt, mit quadratischen Anfassern an den
+// Eckpunkten. Bewusst deutlich auffaelliger als die uebrigen Zonen — beim
+// Bearbeiten muss unmissverstaendlich sein, welche gemeint ist.
+// Mittelpunkte der Kanten — daraus entstehen beim Ziehen neue Eckpunkte.
+// Reihenfolge: Mittelpunkt i liegt zwischen Eckpunkt i und i+1 (letzter zum
+// ersten, das Polygon ist geschlossen).
+export function zoneMidpoints(points) {
+  const out = [];
+  const n = (points || []).length;
+  if (n < 2) return out;
+  for (let i = 0; i < n; i++) {
+    const a = points[i], b = points[(i + 1) % n];
+    out.push({ x: (a.x + b.x) / 2, y: (a.y + b.y) / 2 });
+  }
+  return out;
+}
+
+export function drawZoneEdit(ctx, w, h, scale, zone, activeHandle) {
+  const pts = (zone.points || []).map((p) => {
+    const n = worldToNorm(p.x, p.y);
+    return { x: n.nx * w, y: n.ny * h };
+  });
+  if (pts.length < 2) return;
+  const color = (ZONE_META[zone.type] || ZONE_META.pvp).color;
+
+  ctx.beginPath();
+  pts.forEach((p, i) => (i ? ctx.lineTo(p.x, p.y) : ctx.moveTo(p.x, p.y)));
+  ctx.closePath();
+  ctx.fillStyle = color + '55';
+  ctx.fill();
+  ctx.lineWidth = 2.5 * scale; ctx.strokeStyle = color; ctx.stroke();
+
+  // Anfasser als Quadrate — von den runden Spieler- und Teleport-Markern
+  // dadurch auf einen Blick zu unterscheiden.
+  // Geister-Punkte auf den Kantenmitten: kleiner und halbtransparent, damit
+  // sofort erkennbar ist, dass sie noch keine echten Eckpunkte sind. Ziehen
+  // macht einen daraus.
+  const mids = zoneMidpoints(zone.points || []).map((p) => {
+    const n = worldToNorm(p.x, p.y);
+    return { x: n.nx * w, y: n.ny * h };
+  });
+  // Deutlich sichtbar, aber erkennbar anders als die echten Eckpunkte: kleiner,
+  // gruen und mit einem "+". Der erste Wurf war 45 % weiss bei 7 px — auf dem
+  // hellen Satellitenbild schlicht nicht zu sehen.
+  const sm = 5 * scale;
+  mids.forEach((p) => {
+    ctx.fillStyle = '#4ade80';
+    ctx.fillRect(p.x - sm, p.y - sm, sm * 2, sm * 2);
+    ctx.lineWidth = 2 * scale; ctx.strokeStyle = '#0b1a0f';
+    ctx.strokeRect(p.x - sm, p.y - sm, sm * 2, sm * 2);
+    ctx.lineWidth = 1.6 * scale; ctx.strokeStyle = '#0b1a0f';
+    ctx.beginPath();
+    ctx.moveTo(p.x - sm * 0.5, p.y); ctx.lineTo(p.x + sm * 0.5, p.y);
+    ctx.moveTo(p.x, p.y - sm * 0.5); ctx.lineTo(p.x, p.y + sm * 0.5);
+    ctx.stroke();
+  });
+
+  const s0 = 6 * scale;
+  pts.forEach((p, i) => {
+    const on = i === activeHandle;
+    ctx.fillStyle = on ? '#f59e0b' : '#fff';
+    ctx.fillRect(p.x - s0, p.y - s0, s0 * 2, s0 * 2);
+    ctx.lineWidth = 2 * scale; ctx.strokeStyle = '#000';
+    ctx.strokeRect(p.x - s0, p.y - s0, s0 * 2, s0 * 2);
+  });
+}
+
+// Der gerade bearbeitete KI-Encounter: Spawn und Patrouillenpunkte als
+// quadratische Anfasser, dazwischen die Route. Dieselbe Formensprache wie beim
+// Zonen-Editor — Quadrate heisst "ziehbar".
+export function drawEncounterEdit(ctx, w, h, scale, enc, activeHandle) {
+  const toPx = (p) => { const n = worldToNorm(p.x, p.y); return { x: n.nx * w, y: n.ny * h }; };
+  const pts = encounterHandles(enc).map(toPx);
+  if (!pts.length) return;
+
+  if (pts.length > 1) {
+    ctx.beginPath();
+    pts.forEach((p, i) => (i ? ctx.lineTo(p.x, p.y) : ctx.moveTo(p.x, p.y)));
+    ctx.setLineDash([7 * scale, 5 * scale]);
+    ctx.lineWidth = 2.5 * scale; ctx.strokeStyle = '#f87171'; ctx.stroke();
+    ctx.setLineDash([]);
+  }
+  // Spawn (Index 0) hervorgehoben — er ist der eigentliche Ort, die uebrigen
+  // sind nur Wegpunkte.
+  // Geister-Punkte auf den Streckenmitten — dieselbe Bedienung wie bei Zonen.
+  const mids = encounterMidpoints(enc).map(toPx);
+  const sm = 5 * scale;
+  mids.forEach((p) => {
+    ctx.fillStyle = '#4ade80';
+    ctx.fillRect(p.x - sm, p.y - sm, sm * 2, sm * 2);
+    ctx.lineWidth = 2 * scale; ctx.strokeStyle = '#0b1a0f';
+    ctx.strokeRect(p.x - sm, p.y - sm, sm * 2, sm * 2);
+    ctx.lineWidth = 1.6 * scale;
+    ctx.beginPath();
+    ctx.moveTo(p.x - sm * 0.5, p.y); ctx.lineTo(p.x + sm * 0.5, p.y);
+    ctx.moveTo(p.x, p.y - sm * 0.5); ctx.lineTo(p.x, p.y + sm * 0.5);
+    ctx.stroke();
+  });
+
+  drawHandleSquares(ctx, pts, scale, activeHandle, (i) => (i === 0 ? '#ef4444' : '#fff'));
+}
+
+// Quadratische Anfasser an Weltkoordinaten — der gemeinsame Baustein fuer
+// Zonen, Encounter und Teleports. Quadrate heisst durchgehend "ziehbar" und
+// unterscheidet sie von den runden Spieler- und Teleport-Markern.
+export function drawHandles(ctx, w, h, scale, points, activeHandle, color) {
+  const pts = points.map((p) => { const n = worldToNorm(p.x, p.y); return { x: n.nx * w, y: n.ny * h }; });
+  drawHandleSquares(ctx, pts, scale, activeHandle, () => color || '#fff');
+}
+
+function drawHandleSquares(ctx, pts, scale, activeHandle, colorFor) {
+  const s0 = 6 * scale;
+  pts.forEach((p, i) => {
+    ctx.fillStyle = i === activeHandle ? '#f59e0b' : colorFor(i);
+    ctx.fillRect(p.x - s0, p.y - s0, s0 * 2, s0 * 2);
+    ctx.lineWidth = 2 * scale; ctx.strokeStyle = '#000';
+    ctx.strokeRect(p.x - s0, p.y - s0, s0 * 2, s0 * 2);
+  });
+}
+
+// Mittelpunkte der Encounter-Route. Anders als bei Zonen ist der Pfad OFFEN —
+// es gibt also keinen Mittelpunkt zwischen letztem und erstem Punkt.
+export function encounterMidpoints(enc) {
+  const h = encounterHandles(enc);
+  const out = [];
+  for (let i = 0; i + 1 < h.length; i++) {
+    out.push({ x: (h[i].x + h[i + 1].x) / 2, y: (h[i].y + h[i + 1].y) / 2 });
+  }
+  return out;
+}
+
+// Ziehbare Punkte eines Encounters in fester Reihenfolge: erst der Spawn, dann
+// die Patrouille. Der Index in dieser Liste ist der Anfasser-Index.
+export function encounterHandles(enc) {
+  const out = [];
+  if (enc.spawn) out.push(enc.spawn);
+  for (const p of enc.patrol || []) out.push(p);
+  return out;
+}
+
+// Einfaches Greedy-Clustering im Bildraum: der erste Punkt oeffnet eine Gruppe,
+// alles innerhalb von `radius` faellt hinein. Kein k-means noetig — es geht nur
+// darum, uebereinanderliegende Punkte zusammenzufassen, und das Ergebnis muss
+// bei 80 Punkten und 60 fps stabil sein.
+function clusterPoints(pts, radius) {
+  const r2 = radius * radius;
+  const out = [];
+  for (const it of pts) {
+    let hit = null;
+    for (const c of out) {
+      const dx = c.px - it.px, dy = c.py - it.py;
+      if (dx * dx + dy * dy <= r2) { hit = c; break; }
+    }
+    if (hit) {
+      hit.items.push(it);
+      // Mittelpunkt nachfuehren, damit die Ansammlung mittig sitzt
+      hit.px = hit.items.reduce((a, x) => a + x.px, 0) / hit.items.length;
+      hit.py = hit.items.reduce((a, x) => a + x.py, 0) / hit.items.length;
+    } else {
+      out.push({ px: it.px, py: it.py, r: radius, items: [it] });
+    }
+  }
+  return out;
+}
+
+// Ansammlung: groesserer Ball in eigener Farbe + Anzahl. Bewusst NICHT in der
+// Spielerfarbe, damit "hier stehen mehrere" nicht wie ein einzelner Spieler wirkt.
+function drawCluster(ctx, px, py, n, scale, hot, rank = 'none') {
+  // Groesse ueber eine Potenzfunktion statt linear: mit dem Exponenten log10(3)
+  // ist der Durchmesser bei 10 Spielern exakt dreimal so gross wie ein
+  // Einzelpunkt (DOT_R). Linear waere eine 40er-Ansammlung sonst absurd gross,
+  // rein logarithmisch waeren 2 und 5 kaum zu unterscheiden.
+  // Gedeckelt, weil oberhalb ~25 der Unterschied ohnehin niemanden mehr
+  // interessiert und der Ball sonst die halbe Bucht verdeckt.
+  const r = Math.min(DOT_R * 4.5, DOT_R * Math.pow(n, CLUSTER_EXP)) * scale;
+  // Helle Fuellung mit dunkler Zahl: bindet die Ansammlung optisch an die
+  // Spielerpunkte und trennt sie von den Teleports, die ebenfalls nummerierte
+  // Kreise sind — nur eben in Lila. Gleiche Optik fuer zweierlei Bedeutung war
+  // im ersten Wurf genau der Fehler.
+  ctx.beginPath(); ctx.arc(px, py, r, 0, Math.PI * 2);
+  ctx.fillStyle = hot ? '#f59e0b' : '#e8e6ef';
+  ctx.fill();
+  ctx.lineWidth = (rank === 'none' ? 2 : 2.8) * scale;
+  ctx.strokeStyle = rank === 'none' ? 'rgba(0,0,0,0.9)' : RANK_BORDER[rank];
+  ctx.stroke();
+  // KEINE Math.max-Untergrenze: scale ist 1/Gesamtskalierung, `11 * scale` ist
+  // damit konstante 11 Bildschirm-Pixel. Eine Untergrenze in Karten-Einheiten
+  // waechst dagegen mit dem Zoom mit — dann sind die Zahlen irgendwann groesser
+  // als ihre Kreise.
+  // Schrift an den Kreis koppeln statt fest: sonst passt die Zahl bei kleinen
+  // Ansammlungen nicht mehr hinein.
+  ctx.font = `bold ${Math.min(r * 0.9, 6 + r * 0.45)}px system-ui`;
+  ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+  ctx.fillStyle = hot ? '#1a1a1a' : '#0d0918';
+  ctx.fillText(String(n), px, py + 0.5 * scale);
+}
+
+// Zweizeiliger Namenstag: Zeile 1 "RP (Steam, Discord)", Zeile 2 "Dino · Grow".
+function drawNameTag(ctx, px, py, l1, l2, scale) {
+  const y = py - 7 * scale;
+  ctx.textAlign = 'center'; ctx.textBaseline = 'bottom';
+  ctx.lineWidth = 3 * scale; ctx.strokeStyle = 'rgba(0,0,0,0.8)';
+  ctx.font = `bold ${11 * scale}px system-ui`;
+  ctx.strokeText(l1, px, y); ctx.fillStyle = '#fff'; ctx.fillText(l1, px, y);
+  if (!l2) return;
+  ctx.font = `${9 * scale}px system-ui`;
+  ctx.strokeText(l2, px, y + 10 * scale);
+  ctx.fillStyle = 'rgba(255,255,255,0.7)'; ctx.fillText(l2, px, y + 10 * scale);
+}
+
+// placeLabels entzerrt die Tags. Ohne das ueberlagern sich bei 60+ Spielern die
+// Namen zu Brei. Drei Regeln, alle ueber opts steuerbar:
+//  1. labelMinZoom — darunter nur Punkte (herausgezoomt sind Tags ohnehin unlesbar)
+//  2. Sortierung nach Abstand zur Viewport-Mitte — worauf man schaut, gewinnt
+//  3. Greedy-AABB: ueberlappende Tags fallen weg, gedeckelt auf maxLabels
+function ellipsize(s, maxChars) {
+  s = String(s || '');
+  return s.length > maxChars ? s.slice(0, maxChars - 1) + '…' : s;
+}
+
+function placeLabels(ctx, labels, scale, opts, w, h) {
+  const zoom = opts.zoom || 1;
+  // Unterhalb der Schwelle nur Punkte. total wird trotzdem gemeldet, damit die UI
+  // "0 von 0" von "Tags erst ab hoeherem Zoom" unterscheiden kann.
+  if (zoom < (opts.labelMinZoom ?? 1.6)) {
+    if (opts.onLabelStats) opts.onLabelStats({ total: labels.length, drawn: 0, belowZoom: true });
+    return;
+  }
+  const max = opts.maxLabels ?? 60;
+  const maxChars = opts.maxLabelChars ?? 26;
+  const cx = opts.centerX ?? w / 2, cy = opts.centerY ?? h / 2;
+  // Sichtbarer Ausschnitt im transformierten Koordinatensystem. Ohne den laufen
+  // Tags am Rand aus dem Canvas und sind halb abgeschnitten unlesbar.
+  const vx0 = opts.viewX0 ?? 0, vx1 = opts.viewX1 ?? w;
+  const vy0 = opts.viewY0 ?? 0, vy1 = opts.viewY1 ?? h;
+  const pad = 4 * scale;
+
+  // Nur Spieler beschriften, deren Punkt tatsaechlich im Ausschnitt liegt. Ohne
+  // diesen Filter zieht die Klemmung unten auch Labels von Spielern ausserhalb des
+  // Bildes an den Rand — die verdraengen dort sichtbare Tags und behaupten eine
+  // Position, die gar nicht zu sehen ist.
+  const vis = labels.filter((L) => L.px >= vx0 && L.px <= vx1 && L.py >= vy0 && L.py <= vy1);
+  vis.sort((a, b) => ((a.px - cx) ** 2 + (a.py - cy) ** 2) - ((b.px - cx) ** 2 + (b.py - cy) ** 2));
+  const placed = [];
+  const lh = 22 * scale;
+  for (const L of vis) {
+    if (placed.length >= max) break;
+    // Lange Namen kuerzen: ein einzelner 40-Zeichen-Name verdraengte sonst
+    // reihenweise Nachbar-Tags ueber die Kollisionspruefung.
+    const l1 = ellipsize(L.p.label1, maxChars);
+    const l2 = ellipsize(L.p.label2, maxChars);
+    ctx.font = `bold ${11 * scale}px system-ui`;
+    const w1 = ctx.measureText(l1).width;
+    ctx.font = `${9 * scale}px system-ui`;
+    const w2 = l2 ? ctx.measureText(l2).width : 0;
+    const bw = Math.max(w1, w2);
+    // Tag-Mitte so klemmen, dass die Box im Ausschnitt bleibt. Der Punkt selbst
+    // bleibt an seiner Position — nur die Beschriftung rutscht nach innen.
+    const tx = Math.min(Math.max(L.px, vx0 + bw / 2 + pad), vx1 - bw / 2 - pad);
+    const ty = Math.min(Math.max(L.py, vy0 + lh + pad), vy1 - pad);
+    const box = { x: tx - bw / 2, y: ty - 18 * scale, w: bw, h: lh };
+    if (placed.some((q) => box.x < q.x + q.w && box.x + box.w > q.x && box.y < q.y + q.h && box.y + box.h > q.y)) continue;
+    placed.push(box);
+    drawNameTag(ctx, tx, ty, l1, l2, scale);
+  }
+  // total = im Ausschnitt sichtbare Spieler, nicht alle online — sonst laese sich
+  // "17/79" als "62 Tags unterschlagen" statt "62 ausserhalb des Bildes".
+  if (opts.onLabelStats) opts.onLabelStats({ total: vis.length, drawn: placed.length, belowZoom: false });
+}
+
 function drawPlayer(ctx, px, py, p, scale) {
   const sz = 9 * SELF_SIZE * scale;
   ctx.save(); ctx.shadowColor = SELF_COLOR; ctx.shadowBlur = 7 * scale;   // Glow → klar erkennbar
@@ -495,13 +938,13 @@ function drawPlayer(ctx, px, py, p, scale) {
     // Fly-/Admin-Modus: keine Blickrichtung → Punkt statt Pfeil.
     ctx.beginPath(); ctx.arc(px, py, sz * 0.5, 0, Math.PI * 2);
     ctx.fillStyle = SELF_COLOR; ctx.fill();
-    ctx.lineWidth = Math.max(0.5, sz * 0.14); ctx.strokeStyle = 'rgba(0,0,0,0.8)'; ctx.stroke();
+    ctx.lineWidth = sz * 0.14; ctx.strokeStyle = 'rgba(0,0,0,0.8)'; ctx.stroke();
     ctx.restore(); return;
   }
   // Basis-Punkt unter dem Pfeil → immer als eigene Position erkennbar, auch bei viel Zoom.
   ctx.beginPath(); ctx.arc(px, py, sz * 0.34, 0, Math.PI * 2);
   ctx.fillStyle = SELF_COLOR; ctx.fill();
-  ctx.lineWidth = Math.max(0.5, sz * 0.12); ctx.strokeStyle = 'rgba(0,0,0,0.8)'; ctx.stroke();
+  ctx.lineWidth = sz * 0.12; ctx.strokeStyle = 'rgba(0,0,0,0.8)'; ctx.stroke();
   ctx.shadowBlur = 0;
   drawArrow(ctx, px, py, arrowAngle(p), sz, SELF_COLOR);
   ctx.restore();
@@ -514,14 +957,14 @@ function drawWaypoint(ctx, px, py, scale = 1) {
   ctx.shadowColor = WP_COLOR; ctx.shadowBlur = 6 * scale;
   ctx.fillStyle = WP_COLOR;
   ctx.beginPath(); ctx.moveTo(px, py-8*s); ctx.lineTo(px+5*s, py); ctx.lineTo(px, py+8*s); ctx.lineTo(px-5*s, py); ctx.closePath();
-  ctx.fill(); ctx.strokeStyle = 'rgba(0,0,0,0.6)'; ctx.lineWidth = Math.max(0.5, 1.2 * s); ctx.stroke();
+  ctx.fill(); ctx.strokeStyle = 'rgba(0,0,0,0.6)'; ctx.lineWidth = 1.2 * s; ctx.stroke();
   ctx.restore();
 }
 
 function drawTeleport(ctx, px, py, number, highlight, scale = 1) {
   const r = (highlight ? 13 : 10) * scale;
   ctx.beginPath(); ctx.arc(px, py, r, 0, Math.PI * 2);
-  ctx.fillStyle = highlight ? '#c084fc' : 'rgba(139,92,246,0.92)';
+  ctx.fillStyle = highlight ? TP_COLOR_HOT : TP_COLOR;
   ctx.fill();
   ctx.lineWidth = (highlight ? 3 : 2) * scale; ctx.strokeStyle = '#fff'; ctx.stroke();
   ctx.fillStyle = '#fff'; ctx.font = `bold ${(highlight ? 13 : 11) * scale}px system-ui`;
@@ -538,6 +981,16 @@ export function zoneAt(wx, wy) {
   }
   return null;
 }
+// Das ZONEN-OBJEKT an einem Punkt — mit id und points, im Gegensatz zu zoneAt
+// (liefert nur einen Anzeigenamen) und zonesAt (liefert eine Projektion ohne id).
+// Wer eine Zone bearbeiten will, braucht das Original.
+export function zoneObjectAt(wx, wy) {
+  for (const z of ZONES) {
+    if (z.points && z.points.length >= 3 && pointInPolygon(wx, wy, z.points)) return z;
+  }
+  return null;
+}
+
 // ALLE Zonen an einem Punkt (Zonen sind NICHT exklusiv → Mehrfach-Zugehörigkeit).
 // Liefert [{ type, name, label }] in Zonen-Reihenfolge.
 export function zonesAt(wx, wy) {

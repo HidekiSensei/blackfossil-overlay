@@ -63,6 +63,15 @@ function setupAutoUpdate() {
   if (!app.isPackaged) return; // im Dev nicht prüfen
   autoUpdater.autoDownload = false;
   autoUpdater.autoInstallOnAppQuit = true; // Fallback: spätestens beim Beenden
+  // NUR die Testversion zieht schon vom Backend-Feed (api-test/overlay). Die Produktivversion bleibt
+  // vorerst UNVERÄNDERT auf dem GitHub-Feed (build.publish "github"), bis Prod bewusst umgestellt wird.
+  // Erkennung test vs prod: patch-prod.js patcht TOKEN_BASE api-test→api nur im Prod-Build.
+  if (TOKEN_BASE.includes('api-test')) {
+    try { autoUpdater.setFeedURL({ provider: 'generic', url: TOKEN_BASE + '/overlay', channel: 'latest' }); } catch {}
+    // Prereleases zulassen: Test-Builds tragen eine monotone Version 1.9.x-dev.<run> und sollen bei
+    // JEDEM dev-Push updaten.
+    autoUpdater.allowPrerelease = true;
+  }
   // Default-Logger von electron-updater ist `console` → schreibt beim Update-Check auf stdout und
   // war die konkrete Crash-Quelle (EPIPE, siehe oben). Update-Status geht ohnehin über die
   // autoUpdater-Events an den Renderer; hier reicht ein No-Op, damit der Updater nicht auf stdout schreibt.
@@ -173,6 +182,82 @@ function startForegroundWatch() {
 }
 function stopForegroundWatch() { try { fgChild && fgChild.kill(); } catch {} fgChild = null; }
 
+// ── Windows: Overlay aufs Spielfenster einmessen ────────────────────────────
+// Das Spiel läuft (windowed!) NICHT bildschirmfüllend; das Overlay war aber starr
+// auf getPrimaryDisplay().bounds gepinnt (openOverlay) und folgte dem Fenster nie
+// — Ergebnis: Karte, Zonen und HUD relativ zum Spiel verschoben. Auf Linux misst
+// syncOverlayToGameWindow() per xdotool ein; hier ist das Windows-Pendant.
+//
+// Eigene, langlebige PowerShell-Probe (gleiche Architektur wie der Foreground-
+// Watch), die die CLIENT-Fläche des Spielfensters in PHYSISCHEN Bildschirm-Pixeln
+// streamt: ClientToScreen(0,0) für die linke obere Ecke + GetClientRect für die
+// Größe. Bewusst die Client- statt der Fenster-Fläche — sonst läge die Titelleiste
+// mit im Rechteck und erzeugte genau den vertikalen Versatz, den wir beheben.
+let GEO_PS1 = null;
+let geoChild = null;
+let gameRect = null;      // { x, y, width, height } in PHYSISCHEN Pixeln, oder null
+let gameRectAt = 0;
+function ensureGeoProbe() {
+  if (process.platform !== 'win32' || GEO_PS1) return;
+  GEO_PS1 = path.join(app.getPath('temp'), 'bf-gamegeo.ps1');
+  const script =
+    'Add-Type @"\n' +
+    'using System;using System.Runtime.InteropServices;using System.Diagnostics;\n' +
+    'public class BFGeo{\n' +
+    ' [StructLayout(LayoutKind.Sequential)] public struct RECT{public int L,T,R,B;}\n' +
+    ' [StructLayout(LayoutKind.Sequential)] public struct POINT{public int X,Y;}\n' +
+    ' [DllImport("user32.dll")] public static extern bool GetClientRect(IntPtr h, out RECT r);\n' +
+    ' [DllImport("user32.dll")] public static extern bool ClientToScreen(IntPtr h, ref POINT p);\n' +
+    ' public static string Rect(){\n' +
+    '  foreach(var n in new string[]{"TheIsle-Win64-Shipping","TheIsle"}){\n' +
+    '   foreach(var pr in Process.GetProcessesByName(n)){\n' +
+    '    IntPtr h=pr.MainWindowHandle; if(h==IntPtr.Zero) continue;\n' +
+    '    RECT r; if(!GetClientRect(h,out r)) continue;\n' +
+    '    POINT p; p.X=0; p.Y=0; if(!ClientToScreen(h,ref p)) continue;\n' +
+    '    int w=r.R-r.L, ht=r.B-r.T; if(w>0 && ht>0) return p.X+" "+p.Y+" "+w+" "+ht;\n' +
+    '   }}\n' +
+    '  return "";\n' +
+    ' }}\n' +
+    '"@\n' +
+    'while($true){ try{ [Console]::Out.WriteLine([BFGeo]::Rect()) }catch{ [Console]::Out.WriteLine("") }; Start-Sleep -Milliseconds 500 }';
+  try { fs.writeFileSync(GEO_PS1, script); } catch { GEO_PS1 = null; }
+}
+function startGameGeometryWatch() {
+  if (process.platform !== 'win32' || geoChild) return;
+  ensureGeoProbe();
+  if (!GEO_PS1) return;
+  try {
+    geoChild = spawn(POWERSHELL, ['-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', GEO_PS1], { windowsHide: true });
+    geoChild.stdout.on('data', (d) => {
+      const line = d.toString().split(/\r?\n/).map((s) => s.trim()).filter((s) => s.length > 0).pop();
+      if (line === undefined) return;
+      const m = line.match(/^(-?\d+) (-?\d+) (\d+) (\d+)$/);
+      if (m) { gameRect = { x: +m[1], y: +m[2], width: +m[3], height: +m[4] }; gameRectAt = Date.now(); }
+    });
+    geoChild.on('exit', () => { geoChild = null; });
+    geoChild.on('error', () => { geoChild = null; });
+  } catch { geoChild = null; }
+}
+function stopGameGeometryWatch() { try { geoChild && geoChild.kill(); } catch {} geoChild = null; }
+
+// Overlay auf die zuletzt gemessene Spiel-Client-Fläche legen. GetClientRect/
+// ClientToScreen liefern PHYSISCHE Pixel; Electron setBounds erwartet DIP —
+// screenToDipRect rechnet das anhand des passenden Displays um (deckt die
+// 125%/150%-Windows-Skalierung ab). Nur bei frischer, geänderter Geometrie
+// setzen, damit ein ruhiges Fenster nicht jede Runde neu positioniert wird.
+function applyGameRectWin() {
+  if (!overlayWindow || !gameRect || Date.now() - gameRectAt > 4000) return;
+  try {
+    // window=null → Skalierung relativ zum Display, das dem SPIELFENSTER am
+    // nächsten ist (korrekt bei Multi-Monitor mit unterschiedlicher Skalierung;
+    // das Overlay sitzt beim ersten Tick evtl. noch auf dem Primärmonitor).
+    const dip = screen.screenToDipRect(null, gameRect);
+    const cur = overlayWindow.getBounds();
+    if (cur.x === dip.x && cur.y === dip.y && cur.width === dip.width && cur.height === dip.height) return;
+    overlayWindow.setBounds(dip);
+  } catch { /* Display verschwunden / Fenster zu → nächster Tick */ }
+}
+
 // Holt das Overlay-Fenster HART in den Windows-Vordergrund. app.focus({steal}) wird von
 // UE5-Fullscreen-Spielen blockiert (Foreground-Lock); deshalb nativer Win32-Weg:
 // ALT-Tap (gaukelt User-Input vor → hebt den Lock) + AttachThreadInput (hängt den Input
@@ -228,7 +313,8 @@ function isGameForeground() {
 }
 
 // ── Linux: Overlay aufs Spielfenster einmessen ──────────────────────────────
-// Unter Windows folgt das Overlay dem Spiel über den Foreground-Watch (PowerShell). Unter Linux
+// Unter Windows misst startGameGeometryWatch() das Spielfenster ein (der Foreground-Watch liefert
+// nur den Fensternamen fuer Show/Hide, nicht die Geometrie). Unter Linux
 // gibt es den nicht — dort wird das Fenster per xdotool eingemessen und das Overlay deckungsgleich
 // darübergelegt. Nur X11; unter Wayland liefert xdotool nichts Brauchbares (still übersprungen).
 let xdotoolOk = null; // null = noch nicht geprüft
@@ -275,6 +361,7 @@ let gameMissCount = 0;      // aufeinanderfolgende "nicht erkannt"-Ticks (Entpre
 let fgHideCount = 0;        // aufeinanderfolgende "nicht im Vordergrund"-Ticks (Hysterese)
 function startGameWatch() {
   startForegroundWatch();
+  startGameGeometryWatch();
   if (!overlayWindow) openOverlay();
   const tick = async () => {
     if (!overlayWindow) return;
@@ -302,6 +389,7 @@ function startGameWatch() {
     gameMissCount = 0;
     gameWasRunning = true;
     if (process.platform !== 'win32') syncOverlayToGameWindow();
+    else applyGameRectWin();   // Windows: Overlay dem (windowed) Spielfenster nachführen
     // Läuft → nur sichtbar UND mit aktiven Hotkeys, wenn The Isle im Vordergrund ist.
     // Hysterese: erst nach 2 "nicht im Vordergrund"-Ticks ausblenden (kein Flackern).
     const fg = isGameForeground();
@@ -693,5 +781,5 @@ app.whenReady().then(() => {
   else createLoginWindow();
 });
 
-app.on('will-quit', () => { unregisterHotkeys(); stopForegroundWatch(); try { uiohook && uiohook.stop(); } catch {} });
+app.on('will-quit', () => { unregisterHotkeys(); stopForegroundWatch(); stopGameGeometryWatch(); try { uiohook && uiohook.stop(); } catch {} });
 app.on('window-all-closed', () => { if (process.platform !== 'darwin') app.quit(); });

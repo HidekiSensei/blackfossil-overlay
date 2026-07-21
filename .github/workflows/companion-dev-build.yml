@@ -1,22 +1,37 @@
-# Test-Build des Overlays bei jedem Push/Merge auf dev.
+# Test-Build der Companion-App bei jedem Push/Merge auf dev.
+# Analog zu dev-build.yml (Overlay), nur mit der zweiten electron-builder-Config.
+#
 # Kein Publish, kein Auto-Update — nur ein Installer als Artifact zum Testen.
-# Der Code/package.json hat Test-Defaults (api-test.blackfossil.de, appId
-# "de.blackfossil.overlay.test", productName "BlackFossil Overlay Test") — main
-# überschreibt das im release.yml via app/scripts/patch-prod.js vor dem Build.
-# Kein manuelles Ändern beim Merge nötig.
-# Die abweichende appId/productName ist Absicht: der Test-Installer landet dadurch in
-# einem eigenen Installpfad/Registry-Eintrag und lässt sich parallel zur echten
-# Produktiv-Installation installieren (Windows NSIS + Linux AppImage/Desktop-Eintrag).
-name: Build Test-Installer (dev)
+# Der Code hat Test-Defaults (api-test.blackfossil.de, appId
+# "de.blackfossil.companion.test", productName "BlackFossil Companion Test");
+# main dreht das im companion-release.yml via app/scripts/patch-prod.js.
+#
+# Die abweichende appId/productName ist Absicht: Companion-Test, Companion-Prod,
+# Overlay-Test und Overlay-Prod sind vier getrennte Installationen mit eigenem
+# Installpfad, eigenem userData-Verzeichnis und eigener Session — alle vier lassen
+# sich parallel installieren.
+name: Build Companion Test-Installer (dev)
 
 on:
   push:
     branches: [dev]
+    paths:
+      - 'app/src/companion-main.js'
+      - 'app/src/companion-preload.js'
+      - 'app/src/renderer/companion.js'
+      - 'app/src/renderer/companion.html'
+      - 'app/src/renderer/companion/**'
+      - 'app/src/renderer/shared/**'
+      - 'app/src/renderer/styles/**'
+      - 'app/src/renderer/map.js'
+      - 'app/electron-builder.companion.yml'
+      - 'app/package.json'
+      - '.github/workflows/companion-dev-build.yml'
   workflow_dispatch:
 
 concurrency:
-  group: overlay-dev-build
-  cancel-in-progress: true   # nur der neueste dev-Stand ist interessant
+  group: companion-dev-build
+  cancel-in-progress: true
 
 jobs:
   build-test-win:
@@ -26,16 +41,14 @@ jobs:
         working-directory: app
     steps:
       - uses: actions/checkout@v4
-
       - uses: actions/setup-node@v4
         with:
           node-version: 20
 
       - run: npm ci
       - run: npm run build:renderer
+      - run: npm run test:shared
 
-      # Monotone Prerelease-Version pro dev-Push (1.9.2-dev.<run>), damit Test-Clients bei JEDEM
-      # dev-Push ein Update ziehen (electron-updater aktualisiert nur bei höherer Version).
       - name: Dev-Version setzen
         shell: bash
         run: |
@@ -45,34 +58,36 @@ jobs:
           echo "Dev-Version: $DEV"
 
       - name: Installer bauen (KEIN GitHub-Publish)
-        run: npx electron-builder --win --publish never
+        run: npx electron-builder --win --config electron-builder.companion.yml --publish never
 
-      # VOR dem Umbenennen hochladen — latest.yml referenziert den Original-Dateinamen.
-      # Enthüllt Test-Auto-Update: api-test/overlay bekommt Feed + Installer + kuratierte Notes.
+      # VOR dem Umbenennen hochladen — companion.yml referenziert den
+      # Original-Dateinamen. Feed + Installer landen im selben Backend-Verzeichnis
+      # wie das Overlay; getrennt gehalten werden sie ueber den Kanal
+      # (companion.yml statt latest.yml) und den Dateinamen.
+      # Die Release-Notes (releases.json) laedt der Overlay-Build hoch — beide
+      # Apps teilen sich Version und Notizen.
       - name: Test-Artefakte aufs Backend laden (api-test)
         shell: bash
         run: |
-          for f in release/latest.yml release/*.exe release/*.exe.blockmap; do
+          for f in release-companion/companion.yml release-companion/*.exe release-companion/*.exe.blockmap; do
             [ -e "$f" ] || continue
             echo "Upload $(basename "$f")"
             curl -fsS -H "Authorization: Bearer $BF_OVERLAY_UPLOAD_TOKEN" -F "file=@$f" "$API/overlay/upload"
           done
-          node scripts/changelog-to-json.js --out releases.json
-          curl -fsS -H "Authorization: Bearer $BF_OVERLAY_UPLOAD_TOKEN" -F "file=@releases.json" "$API/overlay/upload"
         env:
           API: https://api-test.blackfossil.de
           BF_OVERLAY_UPLOAD_TOKEN: ${{ secrets.BF_OVERLAY_UPLOAD_TOKEN_TEST }}
 
-      - name: Versionierter Dateiname (Artifact)
+      - name: Versionierter Dateiname
         shell: bash
         run: |
           V=$(node -p "require('./package.json').version")
-          mv "release/BlackFossil-Overlay-Test-Setup.exe" "release/BlackFossil-Overlay-TEST-${V}-${GITHUB_SHA::7}.exe"
+          mv "release-companion/BlackFossil-Companion-Test-Setup.exe" "release-companion/BlackFossil-Companion-TEST-${V}-${GITHUB_SHA::7}.exe"
 
       - uses: actions/upload-artifact@v4
         with:
-          name: overlay-test-installer-win
-          path: app/release/*.exe
+          name: companion-test-installer-win
+          path: app/release-companion/*.exe
           if-no-files-found: error
           retention-days: 14
 
@@ -83,7 +98,6 @@ jobs:
         working-directory: app
     steps:
       - uses: actions/checkout@v4
-
       - uses: actions/setup-node@v4
         with:
           node-version: 20
@@ -98,13 +112,12 @@ jobs:
           node -e "const f='./package.json',p=require(f);p.version='${DEV}';require('fs').writeFileSync(f,JSON.stringify(p,null,2)+'\n')"
           echo "Dev-Version: $DEV"
 
-      - name: Installer bauen (KEIN GitHub-Publish)
-        run: npx electron-builder --linux --publish never
+      - name: AppImage bauen (KEIN GitHub-Publish)
+        run: npx electron-builder --linux --config electron-builder.companion.yml --publish never
 
-      # VOR dem Umbenennen hochladen — latest-linux.yml referenziert den Original-Dateinamen.
       - name: Test-Artefakte aufs Backend laden (api-test)
         run: |
-          for f in release/latest-linux.yml release/*.AppImage; do
+          for f in release-companion/companion-linux.yml release-companion/*.AppImage; do
             [ -e "$f" ] || continue
             echo "Upload $(basename "$f")"
             curl -fsS -H "Authorization: Bearer $BF_OVERLAY_UPLOAD_TOKEN" -F "file=@$f" "$API/overlay/upload"
@@ -113,14 +126,14 @@ jobs:
           API: https://api-test.blackfossil.de
           BF_OVERLAY_UPLOAD_TOKEN: ${{ secrets.BF_OVERLAY_UPLOAD_TOKEN_TEST }}
 
-      - name: Versionierter Dateiname (Artifact)
+      - name: Versionierter Dateiname
         run: |
           V=$(node -p "require('./package.json').version")
-          mv "release/BlackFossil-Overlay-Test-Setup.AppImage" "release/BlackFossil-Overlay-TEST-${V}-${GITHUB_SHA::7}.AppImage"
+          mv "release-companion/BlackFossil-Companion-Test-Setup.AppImage" "release-companion/BlackFossil-Companion-TEST-${V}-${GITHUB_SHA::7}.AppImage"
 
       - uses: actions/upload-artifact@v4
         with:
-          name: overlay-test-installer-linux
-          path: app/release/*.AppImage
+          name: companion-test-installer-linux
+          path: app/release-companion/*.AppImage
           if-no-files-found: error
           retention-days: 14
