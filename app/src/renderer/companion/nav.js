@@ -61,6 +61,10 @@ export const NAV_GROUPS = [
     // Spielerinformation.
     items: [
       { view: 'welt', icon: '🌍', label: 'Welt', cap: 'world.read' },
+      // Events haengt an world.read (admin): der Reiter "Funktional" schaltet mit
+      // dem Grow-Stop einen Welt-Overwrite. Free Gender Swap allein waere schon
+      // ab Staff erlaubt — die Seite als Ganzes ist aber Administration.
+      { view: 'events', icon: '🎉', label: 'Events', cap: 'world.read' },
       { view: 'dinos', icon: '🦖', label: 'Dino-Verwaltung', cap: 'limits.write' },
       { view: 'taudit', icon: '📜', label: 'Team-Audit', cap: 'team.staffAudit' },
     ],
