@@ -171,6 +171,25 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
+      # Zusaetzlich ins eigene Backend: der Updater der Companion zieht von dort
+      # (/overlay, Kanal "companion"), nicht von GitHub. Der GitHub-Release
+      # bleibt als Ablage und weil electron-builder daraus companion.yml erzeugt.
+      # Die Release-Notes teilen sich beide Apps — releases.json laedt der
+      # Overlay-Build hoch.
+      - name: Companion-Artefakte aufs Backend laden (prod)
+        working-directory: app
+        shell: bash
+        run: |
+          for f in release-companion/companion.yml release-companion/companion-linux.yml \
+                   release-companion/*.exe release-companion/*.exe.blockmap release-companion/*.AppImage; do
+            [ -e "$f" ] || continue
+            echo "Upload $(basename "$f")"
+            curl -fsS -H "Authorization: Bearer $BF_OVERLAY_UPLOAD_TOKEN" -F "file=@$f" "$API/overlay/upload"
+          done
+        env:
+          API: https://api.blackfossil.de
+          BF_OVERLAY_UPLOAD_TOKEN: ${{ secrets.BF_OVERLAY_UPLOAD_TOKEN }}
+
   # Release erst live schalten, wenn BEIDE Artefakte oben liegen. Vorher stand dieser Schritt am
   # Ende des Windows-Jobs — damit waere das Release "latest" gewesen, waehrend die AppImage noch
   # fehlt, und der Linux-Updater liefe gegen eine 404 auf latest-linux.yml.

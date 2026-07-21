@@ -57,8 +57,26 @@ jobs:
           node -e "const f='./package.json',p=require(f);p.version='${DEV}';require('fs').writeFileSync(f,JSON.stringify(p,null,2)+'\n')"
           echo "Dev-Version: $DEV"
 
-      - name: Installer bauen (KEIN Publish)
+      - name: Installer bauen (KEIN GitHub-Publish)
         run: npx electron-builder --win --config electron-builder.companion.yml --publish never
+
+      # VOR dem Umbenennen hochladen — companion.yml referenziert den
+      # Original-Dateinamen. Feed + Installer landen im selben Backend-Verzeichnis
+      # wie das Overlay; getrennt gehalten werden sie ueber den Kanal
+      # (companion.yml statt latest.yml) und den Dateinamen.
+      # Die Release-Notes (releases.json) laedt der Overlay-Build hoch — beide
+      # Apps teilen sich Version und Notizen.
+      - name: Test-Artefakte aufs Backend laden (api-test)
+        shell: bash
+        run: |
+          for f in release-companion/companion.yml release-companion/*.exe release-companion/*.exe.blockmap; do
+            [ -e "$f" ] || continue
+            echo "Upload $(basename "$f")"
+            curl -fsS -H "Authorization: Bearer $BF_OVERLAY_UPLOAD_TOKEN" -F "file=@$f" "$API/overlay/upload"
+          done
+        env:
+          API: https://api-test.blackfossil.de
+          BF_OVERLAY_UPLOAD_TOKEN: ${{ secrets.BF_OVERLAY_UPLOAD_TOKEN_TEST }}
 
       - name: Versionierter Dateiname
         shell: bash
@@ -94,8 +112,19 @@ jobs:
           node -e "const f='./package.json',p=require(f);p.version='${DEV}';require('fs').writeFileSync(f,JSON.stringify(p,null,2)+'\n')"
           echo "Dev-Version: $DEV"
 
-      - name: AppImage bauen (KEIN Publish)
+      - name: AppImage bauen (KEIN GitHub-Publish)
         run: npx electron-builder --linux --config electron-builder.companion.yml --publish never
+
+      - name: Test-Artefakte aufs Backend laden (api-test)
+        run: |
+          for f in release-companion/companion-linux.yml release-companion/*.AppImage; do
+            [ -e "$f" ] || continue
+            echo "Upload $(basename "$f")"
+            curl -fsS -H "Authorization: Bearer $BF_OVERLAY_UPLOAD_TOKEN" -F "file=@$f" "$API/overlay/upload"
+          done
+        env:
+          API: https://api-test.blackfossil.de
+          BF_OVERLAY_UPLOAD_TOKEN: ${{ secrets.BF_OVERLAY_UPLOAD_TOKEN_TEST }}
 
       - name: Versionierter Dateiname
         run: |

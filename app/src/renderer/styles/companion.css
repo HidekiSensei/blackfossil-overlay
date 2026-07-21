@@ -532,3 +532,17 @@ input[type="range"] { accent-color: var(--accent); }
 }
 .cp-select option:checked,
 .cp-select option:hover { background: var(--accent); color: #fff; }
+
+/* ── Release-Notes ──────────────────────────────────────────────────────── */
+#cpNotes { max-height: 340px; }
+.cp-rel { padding: var(--cp-s3) 0; border-bottom: 1px solid var(--cp-line); }
+.cp-rel:last-child { border-bottom: none; }
+.cp-rel:first-child { padding-top: 0; }
+.cp-rel-head { display: flex; justify-content: space-between; gap: var(--cp-s3); font-weight: 600; font-size: 13px; }
+.cp-rel-date { color: var(--muted); font-weight: 400; font-size: 11.5px; white-space: nowrap; }
+.cp-rel-body { margin-top: var(--cp-s1); font-size: 12.5px; color: #c9c5d6; }
+.cp-rel-h { font-weight: 600; color: #e8e6ef; margin-top: var(--cp-s2); }
+.cp-rel-li { padding-left: var(--cp-s3); position: relative; }
+.cp-rel-li::before { content: '·'; position: absolute; left: 4px; color: var(--muted); }
+.cp-rel-ver { color: var(--accent-2); font-weight: 700; }
+.cp-rel-body strong { color: #e8e6ef; }

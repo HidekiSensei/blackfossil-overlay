@@ -10,7 +10,13 @@
 'use strict';
 
 const { app, BrowserWindow, ipcMain, shell, clipboard, nativeImage } = require('electron');
+const { autoUpdater } = require('electron-updater');
 const path = require('path');
+// Version direkt aus der package.json statt ueber app.getVersion(): im
+// Dev-Start (electron <datei>) kennt Electron kein App-Verzeichnis und meldet
+// "0.0". Beide Apps teilen sich diese Datei — die Versionen sind damit
+// zwangslaeufig gleich.
+const APP_VERSION = require('../package.json').version;
 const fs = require('fs');
 const http = require('http');
 
@@ -112,9 +118,45 @@ function createWindow() {
   win.on('closed', () => { win = null; });
 }
 
+// ── Auto-Update ────────────────────────────────────────────────────────────
+// Der Feed liegt im eigenen Backend (/overlay), NICHT bei GitHub. Der Kanal
+// heisst "companion" — dieselbe Ablage wie das Overlay, aber ein eigener Feed
+// (companion.yml statt latest.yml). Ohne getrennten Kanal wuerde eine App die
+// Builds der anderen als eigenes Update anbieten.
+function setupAutoUpdate() {
+  if (!app.isPackaged) return;   // im Dev nicht pruefen
+  autoUpdater.autoDownload = false;
+  autoUpdater.autoInstallOnAppQuit = true;
+  try {
+    autoUpdater.setFeedURL({ provider: 'generic', url: TOKEN_BASE + '/overlay', channel: 'companion' });
+  } catch { /* ohne Feed bleibt der manuelle Weg */ }
+  // Test-Builds tragen eine monotone Version 1.9.x-dev.<run> und sollen bei
+  // JEDEM dev-Push aktualisieren.
+  if (TOKEN_BASE.includes('api-test')) autoUpdater.allowPrerelease = true;
+  // Der Default-Logger schreibt auf stdout — im Overlay war genau das eine
+  // EPIPE-Absturzquelle. Status geht ohnehin ueber Events an den Renderer.
+  autoUpdater.logger = { info() {}, warn() {}, error() {}, debug() {} };
+
+  const send = (ch, v) => { try { win?.webContents.send(ch, v); } catch {} };
+  autoUpdater.on('update-available', (i) => send('update-available', i?.version));
+  autoUpdater.on('update-not-available', () => send('update-none'));
+  autoUpdater.on('download-progress', (p) => send('update-progress', Math.round(p?.percent || 0)));
+  autoUpdater.on('update-downloaded', (i) => send('update-ready', i?.version));
+  autoUpdater.on('error', (e) => send('update-error', String(e?.message || e)));
+
+  checkForUpdates();
+  setInterval(checkForUpdates, 60 * 60 * 1000);
+}
+
+function checkForUpdates() {
+  if (!app.isPackaged) return;
+  autoUpdater.checkForUpdates().catch(() => {});
+}
+
 app.whenReady().then(() => {
   startLoopbackServer();
   createWindow();
+  setupAutoUpdate();
   app.on('activate', () => { if (BrowserWindow.getAllWindows().length === 0) createWindow(); });
 });
 
@@ -123,10 +165,13 @@ app.on('window-all-closed', () => { if (process.platform !== 'darwin') app.quit(
 // ── IPC ────────────────────────────────────────────────────────────────────
 ipcMain.handle('get-session', () => loadSession());
 ipcMain.handle('get-config', () => ({ tokenBase: TOKEN_BASE }));
-ipcMain.handle('get-version', () => app.getVersion());
+ipcMain.handle('get-version', () => APP_VERSION);
 ipcMain.handle('copy-text', (_e, t) => { clipboard.writeText(String(t || '')); return true; });
 ipcMain.on('open-external', (_e, url) => { if (/^https?:\/\//.test(url)) shell.openExternal(url); });
 ipcMain.on('logout', () => { clearSession(); if (win) win.webContents.send('session-changed'); });
 // ?client=companion ist der Grund fuer die Backend-Aenderung: nur damit redirectet
 // der Callback auf unseren Port 53118 statt auf den des Overlays.
 ipcMain.on('open-login', () => shell.openExternal(`${TOKEN_BASE}/auth/login?client=companion`));
+ipcMain.on('update-check', () => checkForUpdates());
+ipcMain.on('update-download', () => { if (app.isPackaged) autoUpdater.downloadUpdate().catch(() => {}); });
+ipcMain.on('update-install', () => { if (app.isPackaged) autoUpdater.quitAndInstall(); });

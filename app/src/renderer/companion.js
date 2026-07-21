@@ -941,6 +941,74 @@ function restoreZonePrefs() {
   }
 }
 
+// ── Updates ────────────────────────────────────────────────────────────────
+// Der Feed liegt im eigenen Backend (/overlay, Kanal "companion"). Die
+// Versionsnummer stammt aus derselben package.json wie das Overlay — beide Apps
+// tragen damit zwangslaeufig dieselbe Version.
+function initUpdates() {
+  const st = el('cpUpdStatus'), btn = el('cpUpdBtn');
+  if (!st || !btn) return;
+  const set = (t) => { st.textContent = t; };
+
+  btn.onclick = () => { set('Suche nach Updates…'); window.bf.updateCheck(); };
+  window.bf.onUpdateNone(() => set('Aktuell — kein Update verfügbar.'));
+  window.bf.onUpdateAvailable((v) => {
+    set(`Version ${v} verfügbar.`);
+    btn.textContent = 'Herunterladen';
+    btn.onclick = () => { set('Lädt…'); window.bf.updateDownload(); };
+  });
+  window.bf.onUpdateProgress((p) => set(`Lädt… ${p}%`));
+  window.bf.onUpdateReady((v) => {
+    set(`Version ${v} bereit.`);
+    btn.textContent = 'Neu starten & installieren';
+    btn.onclick = () => window.bf.updateInstall();
+  });
+  window.bf.onUpdateError((m) => set('Update fehlgeschlagen: ' + m));
+}
+
+// Release-Notes kommen aus derselben Datei wie beim Overlay — die Apps laufen
+// zusammen und teilen sich eine Version, also auch die Notizen.
+async function loadReleaseNotes() {
+  const box = el('cpNotes');
+  if (!box) return;
+  try {
+    const r = await fetch(`${config.tokenBase}/overlay/releases.json`);
+    if (!r.ok) throw new Error(`HTTP ${r.status}`);
+    const list = await r.json();
+    const rel = (Array.isArray(list) ? list : list.releases || []).slice(0, 8);
+    const installed = (el('cpVersion')?.textContent || '').trim();
+    box.innerHTML = rel.length
+      ? rel.map((v) => {
+          // Version UND Titel zeigen — der Titel allein sagt nicht, welcher
+          // Stand gemeint ist, und genau danach sucht man hier.
+          const ist = v.version && v.version === installed;
+          return `<div class="cp-rel">`
+            + `<div class="cp-rel-head"><span><span class="cp-rel-ver">${escapeHtml(v.version || '')}</span>`
+            + `${v.title ? ' ' + escapeHtml(v.title) : ''}</span>`
+            + `<span class="cp-rel-date">${ist ? 'installiert' : escapeHtml(v.date || '')}</span></div>`
+            + `<div class="cp-rel-body">${notesToHtml(v.notes || '')}</div></div>`;
+        }).join('')
+      : '<div class="cp-muted">Keine Einträge.</div>';
+  } catch (e) {
+    box.innerHTML = `<div class="cp-muted">Release-Notes nicht abrufbar (${escapeHtml(e.message)}).</div>`;
+  }
+}
+
+// Minimaler Markdown-Ersatz: Listenpunkte und Absaetze. Bewusst KEIN
+// HTML-Durchreichen — die Notizen kommen zwar aus dem eigenen Backend, aber
+// escapen kostet nichts und schliesst die Lücke ganz.
+function notesToHtml(md) {
+  // Erst escapen, DANN das bisschen Markup erzeugen — nie andersherum.
+  const inline = (t) => escapeHtml(t).replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>');
+  return String(md).replace(/\r/g, '').split('\n').map((line) => {
+    const t = line.trim();
+    if (!t) return '';
+    if (/^#{1,6}\s+/.test(t)) return `<div class="cp-rel-h">${inline(t.replace(/^#{1,6}\s+/, ''))}</div>`;
+    if (/^[-*]\s+/.test(t)) return `<div class="cp-rel-li">${inline(t.replace(/^[-*]\s+/, ''))}</div>`;
+    return `<div>${inline(t)}</div>`;
+  }).join('');
+}
+
 // ── Navigation ─────────────────────────────────────────────────────────────
 function navTo(view) {
   // Polls haengen am offenen Panel — beim Wegnavigieren abstellen.
@@ -1004,6 +1072,8 @@ async function boot() {
   initSupport(panelCtx); initLexikon(panelCtx);
   initEditor(editorCtx);
   window.bf.getVersion().then((v) => { el('cpVersion').textContent = v; });
+  initUpdates();
+  loadReleaseNotes();
   el('cpLogout').onclick = () => window.bf.logout();
 
   document.querySelectorAll('.cp-nav-btn').forEach((b) => { b.onclick = () => navTo(b.dataset.view); });
