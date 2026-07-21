@@ -19,8 +19,8 @@ export function renderSupport(root) {
   root.innerHTML = `<div class="cp-pad">
     ${U.header('Support', 'Tickets ansehen, beantworten und bearbeiten.')}
     <div class="cp-split">
-      <div id="supList" class="cp-split-side">${U.card(U.muted('Lade Tickets…'))}</div>
-      <div id="supDetail" class="cp-split-main">${U.card(U.empty('Links ein Ticket wählen.'))}</div>
+      <div id="supList" class="cp-split-side"><div class="cp-colhead">Tickets</div>${U.muted('Lade Tickets…')}</div>
+      <div id="supDetail" class="cp-split-main"><div class="cp-colhead">Verlauf</div>${U.empty('Links ein Ticket wählen.')}</div>
     </div>
   </div>`;
   loadTickets();
@@ -34,8 +34,9 @@ async function loadTickets() {
   try {
     const d = await C.api('GET', '/me/tickets');
     tickets = d.tickets || [];
-    box.innerHTML = tickets.length
-      ? U.card(`<div class="cp-list cp-scroll">` + tickets.map((t) => {
+    box.innerHTML = `<div class="cp-colhead">Tickets${tickets.length ? ` <span class="cp-muted">· ${tickets.length}</span>` : ''}</div>`
+      + (tickets.length
+      ? `<div class="cp-list cp-scroll">` + tickets.map((t) => {
           // lastFromOther = letzte Nachricht kam vom Spieler, nicht vom Team.
           // Bewusst NICHT als "neu/ungelesen" beschriftet: das Overlay vergleicht
           // dafuer zusaetzlich gegen einen lokalen Gelesen-Stand, den es hier nicht
@@ -45,43 +46,44 @@ async function loadTickets() {
           return `<div class="cp-item cp-item-click${t.channelId === sel ? ' active' : ''}" data-ch="${U.esc(t.channelId)}">`
             + `<div class="cp-item-main"><div class="cp-item-title">#${U.esc(String(t.ticketId || '—'))} · ${U.esc(t.category || '')}</div>`
             + `<div class="cp-item-sub">${t.handler ? 'bearbeitet von ' + U.esc(t.handler) : 'nicht angenommen'}</div></div>${unread}</div>`;
-        }).join('') + `</div>`)
-      : U.card(U.empty('Keine Tickets.'));
+        }).join('') + `</div>`
+      : U.empty('Keine Tickets.'));
     box.querySelectorAll('[data-ch]').forEach((n) => {
       n.onclick = () => { sel = n.dataset.ch; loadTickets(); loadMessages(); };
     });
-  } catch (e) { box.innerHTML = U.card(U.muted('Nicht abrufbar: ' + e.message)); }
+  } catch (e) { box.innerHTML = `<div class="cp-colhead">Tickets</div>` + U.muted('Nicht abrufbar: ' + e.message); }
 }
 
 async function loadMessages(quiet) {
   const box = el('supDetail'); if (!box || !sel) return;
   const t = tickets.find((x) => x.channelId === sel);
-  if (!quiet) box.innerHTML = U.card(U.muted('Lade Verlauf…'));
+  if (!quiet) box.innerHTML = `<div class="cp-colhead">Verlauf</div>` + U.muted('Lade Verlauf…');
   try {
     const d = await C.api('GET', `/me/ticket-messages?channelId=${encodeURIComponent(sel)}`);
     const msgs = d.messages || [];
     box.innerHTML = `
-      ${U.sec(`Ticket #${t ? t.ticketId : ''} · ${t ? (t.category || '') : ''}`)}
-      ${U.card(`<div id="supMsgs" class="cp-chat cp-scroll">` + (msgs.length
+      <div class="cp-colhead">Ticket #${U.esc(String(t ? t.ticketId : ''))} <span class="cp-muted">· ${U.esc(t ? (t.category || '') : '')}</span></div>
+      <div id="supMsgs" class="cp-chat cp-scroll">` + (msgs.length
         ? msgs.map((m) => `<div class="cp-msg${m.fromMe ? ' cp-msg-mine' : ''}">`
             + `<div class="cp-msg-who">${U.esc(m.fromMe ? 'Du' : (m.author || '—'))}`
             + `${m.at ? ' · ' + new Date(m.at).toLocaleString('de-DE') : ''}</div>`
             + `<div class="cp-msg-body">${U.esc(m.content || '') || (m.hasAttachment ? '[Anhang]' : '[leer]')}</div></div>`).join('')
-        : U.empty('Noch keine Nachrichten.')) + `</div>`)}
-      ${U.card(U.textarea('supReply', 'Antwort', 'Nachricht an den Spieler…')
-        + `<div style="height:var(--cp-s3)"></div>`
+        : U.empty('Noch keine Nachrichten.')) + `</div>
+      <div class="cp-sup-reply">`
+        + U.textarea('supReply', 'Antwort', 'Nachricht an den Spieler…')
         + U.btnRow(
             U.btn('supSend', 'Senden', { variant: 'primary' }),
             // claim/close sind Staff-Aktionen; Spieler sehen nur ihren Verlauf.
             ...(C.can('support.handle') ? [
               U.btn('supClaim', 'Annehmen'),
               U.btn('supClose', 'Schließen', { variant: 'danger' }),
-            ] : [])))}`;
+            ] : []))
+      + `</div>`;
     const m = el('supMsgs'); if (m) m.scrollTop = m.scrollHeight;
     el('supSend').onclick = send;
     { const b = el('supClaim'); if (b) b.onclick = () => act('/me/ticket-claim', { channelId: sel }, 'Ticket angenommen'); }
     { const cb = el('supClose'); if (cb) cb.onclick = () => armConfirm(cb, 'Wirklich schließen?', () => act('/me/ticket-close', { channelId: sel, reason: '' }, 'Ticket geschlossen')); }
-  } catch (e) { box.innerHTML = U.card(U.muted('Nicht abrufbar: ' + e.message)); }
+  } catch (e) { box.innerHTML = `<div class="cp-colhead">Verlauf</div>` + U.muted('Nicht abrufbar: ' + e.message); }
 }
 
 async function send() {

@@ -283,6 +283,17 @@ input[type="range"] { accent-color: var(--accent); }
 
 .cp-badge-row { display: flex; gap: var(--cp-s2); flex-wrap: wrap; }
 
+/* Spaltenueberschrift mit Trennlinie — spiegelt cp-tabs/cp-lex-topbar (gleiche
+   border-bottom + Abstaende), damit Support und Lexikon dasselbe Look-and-feel
+   haben: Ueberschrift, HR, dann Inhalt frei stehend (keine Card). */
+.cp-colhead {
+  font-weight: 600; font-size: 14px; color: #e8e6ef;
+  border-bottom: 1px solid var(--cp-line);
+  margin-bottom: var(--cp-s5); padding-bottom: var(--cp-s2);
+}
+/* Antwortformular unter dem Chat — dezenter Abstand statt eigener Card. */
+.cp-sup-reply { margin-top: var(--cp-s4); display: flex; flex-direction: column; gap: var(--cp-s3); }
+
 /* ── Ticket-Verlauf ────────────────────────────────────────────────────── */
 .cp-chat { display: flex; flex-direction: column; gap: var(--cp-s3); max-height: 420px; }
 .cp-msg { max-width: 82%; }
