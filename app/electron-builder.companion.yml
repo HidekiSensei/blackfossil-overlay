@@ -25,9 +25,24 @@ files:
   # zu dist/companion.js gebuendelt. Einzelne Pakete auszuschliessen reichte nicht —
   # livekit-client zieht @bufbuild/protobuf, @livekit/*, jose, webrtc-adapter u. a.
   # transitiv nach, die dann als Leichen im Paket landeten.
-  # ACHTUNG: Sobald die Companion electron-updater nutzt, muss dieses eine Paket
-  # hier wieder aufgenommen werden.
+  # ACHTUNG: electron-updater MUSS mit ins Paket — ohne das laeuft kein
+  # Auto-Update. Alles andere bleibt draussen; der Renderer ist gebuendelt.
   - '!node_modules/**'
+  - 'node_modules/electron-updater/**'
+  - 'node_modules/builder-util-runtime/**'
+  - 'node_modules/js-yaml/**'
+  - 'node_modules/lazy-val/**'
+  - 'node_modules/lodash.escaperegexp/**'
+  - 'node_modules/lodash.isequal/**'
+  - 'node_modules/semver/**'
+  - 'node_modules/argparse/**'
+  - 'node_modules/fs-extra/**'
+  - 'node_modules/graceful-fs/**'
+  - 'node_modules/jsonfile/**'
+  - 'node_modules/universalify/**'
+  - 'node_modules/sax/**'
+  - 'node_modules/debug/**'
+  - 'node_modules/ms/**'
 
 protocols:
   - name: BlackFossil Companion
@@ -64,3 +79,8 @@ publish:
     # Companion gegenseitig und das Overlay wuerde Companion-Builds als eigenes
     # Update anbieten. channel erzeugt companion.yml / companion-linux.yml.
     channel: companion
+# Hinweis: Der tatsaechlich genutzte Feed ist NICHT GitHub, sondern das eigene
+# Backend (/overlay, Kanal "companion"). setFeedURL in companion-main.js
+# ueberschreibt diesen Eintrag zur Laufzeit. Der publish-Block bleibt, weil
+# electron-builder daraus companion.yml erzeugt — genau die Datei, die die CI
+# dann ins Backend laedt.

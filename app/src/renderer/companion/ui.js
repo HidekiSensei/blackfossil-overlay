@@ -49,6 +49,65 @@ export function check(id, label, checked = false) {
   return `<label class="cp-check"><input type="checkbox" id="${id}"${checked ? ' checked' : ''}> ${esc(label)}</label>`;
 }
 
+// Zwei-Punkt-Schieber fuer einen Stundenbereich. Zwei uebereinanderliegende
+// range-Elemente — HTML kennt keinen Regler mit zwei Griffen. step=1 sorgt fuers
+// Einrasten auf volle Stunden.
+export function hourRange(idFrom, idTo, label, from, to) {
+  return `<div class="cp-field"><label class="cp-label">${esc(label)}</label>`
+    + `<div class="cp-hours" data-hours="${idFrom}|${idTo}">`
+    + `<div class="cp-hours-track"><div class="cp-hours-fill" data-fill="a"></div>`
+    + `<div class="cp-hours-fill" data-fill="b"></div></div>`
+    + `<input type="range" id="${idFrom}" min="0" max="23" step="1" value="${from}">`
+    + `<input type="range" id="${idTo}" min="0" max="23" step="1" value="${to}">`
+    + `</div><div class="cp-hours-val"><span data-hours-label="${idFrom}"></span></div></div>`;
+}
+
+// Fuellung und Beschriftung nachziehen.
+//
+// Gefuellt wird die AKTIVE Zeit, nicht die Ruhezeit — der blaue Balken soll
+// zeigen, wann etwas passiert. Welche Seite der beiden Griffe das ist,
+// entscheidet `activeRange`: es bekommt die beiden Stunden und liefert das
+// tatsaechlich aktive Fenster zurueck. Damit kann ein Schalter daneben zwischen
+// "aktiv zwischen den Griffen" und "aktiv ausserhalb (ueber Nacht)" umschalten,
+// ohne dass sich die Griffe bewegen.
+//
+// Laeuft das Fenster ueber Mitternacht, wird die Fuellung in ZWEI Stuecke
+// geteilt statt rueckwaerts gezeichnet.
+export function bindHourRange(root, idFrom, idTo, { activeRange, text, watch = [] }) {
+  const box = root.querySelector(`[data-hours="${idFrom}|${idTo}"]`);
+  if (!box) return () => {};
+  const a = box.querySelector('[data-fill="a"]');
+  const b = box.querySelector('[data-fill="b"]');
+  const f = root.querySelector('#' + idFrom);
+  const t = root.querySelector('#' + idTo);
+  const lbl = root.querySelector(`[data-hours-label="${idFrom}"]`);
+  const pct = (h) => (h / 24) * 100;
+
+  const upd = () => {
+    const { from, to } = activeRange(Number(f.value), Number(t.value));
+    if (from === to) {                     // ganzer Tag aktiv
+      a.style.left = '0%'; a.style.width = '100%'; b.style.width = '0%';
+    } else if (from < to) {
+      a.style.left = pct(from) + '%'; a.style.width = (pct(to) - pct(from)) + '%';
+      b.style.width = '0%';
+    } else {
+      a.style.left = pct(from) + '%'; a.style.width = (100 - pct(from)) + '%';
+      b.style.left = '0%'; b.style.width = pct(to) + '%';
+    }
+    if (lbl) lbl.textContent = text(from, to);
+  };
+
+  f.oninput = upd;
+  t.oninput = upd;
+  // Elemente, die das aktive Fenster mitbestimmen (z. B. der Tagaktiv-Schalter).
+  for (const id of watch) {
+    const el2 = root.querySelector('#' + id);
+    if (el2) el2.addEventListener('change', upd);
+  }
+  upd();
+  return upd;
+}
+
 export function row(...cells) { return `<div class="cp-row">${cells.join('')}</div>`; }
 export function btnRow(...buttons) { return `<div class="cp-btn-row">${buttons.join('')}</div>`; }
 // chips = Gruppe gleichrangiger Optionen, alle exakt gleich breit (Grid).
@@ -68,6 +127,14 @@ export function item(title, sub, right = '') {
 export function tabs(items, active) {
   return `<div class="cp-tabs">` + items.map((t) =>
     `<button class="cp-tab${t.id === active ? ' active' : ''}" data-tab="${t.id}">${esc(t.label)}</button>`).join('') + `</div>`;
+}
+
+// Aufklappbarer Abschnitt. <details> statt eigener Logik: das Auf- und Zuklappen
+// kann der Browser selbst, inklusive Tastaturbedienung.
+export function expander(title, inner, open = false) {
+  return `<details class="cp-exp"${open ? ' open' : ''}>`
+    + `<summary class="cp-exp-head">${esc(title)}</summary>`
+    + `<div class="cp-exp-body">${inner}</div></details>`;
 }
 
 export function header(title, sub) {

@@ -190,7 +190,7 @@ export function drawFullMap(view, players, waypoints = [], teleports = [], hover
   if (mapReady) ctx.drawImage(mapImg, 0, 0, w, h);
   else { ctx.fillStyle = '#15102a'; ctx.fillRect(0, 0, w, h); ctx.fillStyle = '#6b5b8c'; ctx.font = '16px system-ui'; ctx.textAlign = 'center'; ctx.fillText('Kartenbild fehlt (assets/map.jpg)', w/2, h/2); }
 
-  drawZones(ctx, (nx, ny) => ({ px: nx * w, py: ny * h }), iconScale);
+  drawZones(ctx, (nx, ny) => ({ px: nx * w, py: ny * h }), iconScale, opts.editZone ? opts.editZone.id : null);
   for (const wp of waypoints) {
     const { nx, ny } = worldToNorm(wp.x, wp.y);
     drawWaypoint(ctx, nx * w, ny * h, iconScale);
@@ -417,9 +417,12 @@ export function drawMinimap(view, players, me, speakRange = 0, waypoints = [], z
 // Bildschirmbreite behalten. Default 1 haelt bestehende Aufrufer (Minimap)
 // unveraendert; im Overlay ist iconScale bei Standardzoom ebenfalls 1, dort
 // aendert sich die Darstellung also erst beim Reinzoomen — und dann zum Guten.
-function drawZones(ctx, project, scale = 1) {
+function drawZones(ctx, project, scale = 1, skipId = null) {
   for (const z of ZONES) {
     if (!z.points || !z.points.length) continue;
+    // Die gerade bearbeitete Zone zeichnet drawZoneEdit — sonst stuenden der
+    // gespeicherte und der gezogene Stand gleichzeitig auf der Karte.
+    if (skipId && z.id === skipId) continue;
     const meta = ZONE_META[z.type] || ZONE_META.pvp;
     const outline = OUTLINE_TYPES.has(z.type);
     const isGolden = !!(z.id && z.id === goldenZoneId);
@@ -652,6 +655,20 @@ function drawTrails(ctx, w, h, scale, trails, highlight) {
 // Die gerade bearbeitete Zone: gefuellt, mit quadratischen Anfassern an den
 // Eckpunkten. Bewusst deutlich auffaelliger als die uebrigen Zonen — beim
 // Bearbeiten muss unmissverstaendlich sein, welche gemeint ist.
+// Mittelpunkte der Kanten — daraus entstehen beim Ziehen neue Eckpunkte.
+// Reihenfolge: Mittelpunkt i liegt zwischen Eckpunkt i und i+1 (letzter zum
+// ersten, das Polygon ist geschlossen).
+export function zoneMidpoints(points) {
+  const out = [];
+  const n = (points || []).length;
+  if (n < 2) return out;
+  for (let i = 0; i < n; i++) {
+    const a = points[i], b = points[(i + 1) % n];
+    out.push({ x: (a.x + b.x) / 2, y: (a.y + b.y) / 2 });
+  }
+  return out;
+}
+
 export function drawZoneEdit(ctx, w, h, scale, zone, activeHandle) {
   const pts = (zone.points || []).map((p) => {
     const n = worldToNorm(p.x, p.y);
@@ -669,6 +686,29 @@ export function drawZoneEdit(ctx, w, h, scale, zone, activeHandle) {
 
   // Anfasser als Quadrate — von den runden Spieler- und Teleport-Markern
   // dadurch auf einen Blick zu unterscheiden.
+  // Geister-Punkte auf den Kantenmitten: kleiner und halbtransparent, damit
+  // sofort erkennbar ist, dass sie noch keine echten Eckpunkte sind. Ziehen
+  // macht einen daraus.
+  const mids = zoneMidpoints(zone.points || []).map((p) => {
+    const n = worldToNorm(p.x, p.y);
+    return { x: n.nx * w, y: n.ny * h };
+  });
+  // Deutlich sichtbar, aber erkennbar anders als die echten Eckpunkte: kleiner,
+  // gruen und mit einem "+". Der erste Wurf war 45 % weiss bei 7 px — auf dem
+  // hellen Satellitenbild schlicht nicht zu sehen.
+  const sm = 5 * scale;
+  mids.forEach((p) => {
+    ctx.fillStyle = '#4ade80';
+    ctx.fillRect(p.x - sm, p.y - sm, sm * 2, sm * 2);
+    ctx.lineWidth = 2 * scale; ctx.strokeStyle = '#0b1a0f';
+    ctx.strokeRect(p.x - sm, p.y - sm, sm * 2, sm * 2);
+    ctx.lineWidth = 1.6 * scale; ctx.strokeStyle = '#0b1a0f';
+    ctx.beginPath();
+    ctx.moveTo(p.x - sm * 0.5, p.y); ctx.lineTo(p.x + sm * 0.5, p.y);
+    ctx.moveTo(p.x, p.y - sm * 0.5); ctx.lineTo(p.x, p.y + sm * 0.5);
+    ctx.stroke();
+  });
+
   const s0 = 6 * scale;
   pts.forEach((p, i) => {
     const on = i === activeHandle;
@@ -696,6 +736,21 @@ export function drawEncounterEdit(ctx, w, h, scale, enc, activeHandle) {
   }
   // Spawn (Index 0) hervorgehoben — er ist der eigentliche Ort, die uebrigen
   // sind nur Wegpunkte.
+  // Geister-Punkte auf den Streckenmitten — dieselbe Bedienung wie bei Zonen.
+  const mids = encounterMidpoints(enc).map(toPx);
+  const sm = 5 * scale;
+  mids.forEach((p) => {
+    ctx.fillStyle = '#4ade80';
+    ctx.fillRect(p.x - sm, p.y - sm, sm * 2, sm * 2);
+    ctx.lineWidth = 2 * scale; ctx.strokeStyle = '#0b1a0f';
+    ctx.strokeRect(p.x - sm, p.y - sm, sm * 2, sm * 2);
+    ctx.lineWidth = 1.6 * scale;
+    ctx.beginPath();
+    ctx.moveTo(p.x - sm * 0.5, p.y); ctx.lineTo(p.x + sm * 0.5, p.y);
+    ctx.moveTo(p.x, p.y - sm * 0.5); ctx.lineTo(p.x, p.y + sm * 0.5);
+    ctx.stroke();
+  });
+
   drawHandleSquares(ctx, pts, scale, activeHandle, (i) => (i === 0 ? '#ef4444' : '#fff'));
 }
 
@@ -715,6 +770,17 @@ function drawHandleSquares(ctx, pts, scale, activeHandle, colorFor) {
     ctx.lineWidth = 2 * scale; ctx.strokeStyle = '#000';
     ctx.strokeRect(p.x - s0, p.y - s0, s0 * 2, s0 * 2);
   });
+}
+
+// Mittelpunkte der Encounter-Route. Anders als bei Zonen ist der Pfad OFFEN —
+// es gibt also keinen Mittelpunkt zwischen letztem und erstem Punkt.
+export function encounterMidpoints(enc) {
+  const h = encounterHandles(enc);
+  const out = [];
+  for (let i = 0; i + 1 < h.length; i++) {
+    out.push({ x: (h[i].x + h[i + 1].x) / 2, y: (h[i].y + h[i + 1].y) / 2 });
+  }
+  return out;
 }
 
 // Ziehbare Punkte eines Encounters in fester Reihenfolge: erst der Spawn, dann

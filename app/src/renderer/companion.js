@@ -11,11 +11,14 @@ import {
   initEditor, openCreateMenu, openEdit, isPlacing, placingKind, placingPoints,
   addPlacementPoint, cancelPlacing, editingZone, setZonePoints, closeEditor,
   editingEncounter, setEncounterGeom, editingTeleport, setTeleportPos,
+  insertZonePoint, removeZonePoint,
+  insertPatrolPoint, removePatrolPoint, appendPatrolPoint,
+  isDrawingPatrol, stopDrawingPatrol,
 } from './companion/editor.js';
 import {
   loadMapImage, drawFullMap, drawHeatmap, drawAiEncounters, setZones, setCalAffine,
   ZONE_LAYERS, ZONE_META, setZoneLayer, isZoneLayerVisible,
-  normToWorld, worldToNorm, zoneObjectAt, encounterHandles,
+  normToWorld, worldToNorm, zoneObjectAt, encounterHandles, zoneMidpoints, encounterMidpoints,
 } from './map.js';
 import { baseClass, escapeHtml } from './shared/format.js';
 import { initServer, renderServer, stopServer } from './companion/panels/server.js';
@@ -84,16 +87,21 @@ let plList = null;                // offene Spielerliste (zum Nachziehen beim Po
 // nichts davon wird gespeichert oder ans Backend geschickt, und beim Neustart ist
 // die Spur weg. Pro Spieler einzeln, auch innerhalb einer Gruppe.
 // Gestaffelte Aufloesung: je aelter, desto grober. Die Spur reicht dadurch weit
-// zurueck, ohne 160 Punkte je Spieler zu halten.
-//   Alter <=  10 Abfragen: jeder Punkt   (1er-Schritte)
-//   Alter <=  60 Abfragen: jeder 5.      (5er-Schritte)
-//   Alter <= 160 Abfragen: jeder 10.     (10er-Schritte)
-// Ergibt rund 30 Punkte je Spieler ueber ~160 s Verlauf. Bei 80 Spielern sind
-// das ~2400 Punkte, also ein paar Dutzend KB — vernachlaessigbar.
+// zurueck, ohne fuer jede Abfrage einen Punkt zu halten.
+//
+// Ergibt rund 50 Punkte je Spieler ueber gut 13 Minuten Verlauf.
+//
+// Wo liegt die Grenze? NICHT beim Speicher: 80 Spieler x 50 Punkte sind ~4000
+// Objekte, also deutlich unter 200 KB. Der begrenzende Faktor ist das Zeichnen
+// — jede Spur wird zweimal gestrichen (dunkler Saum + Linie), das sind hier
+// ~8000 Segmente je Bild. Canvas verkraftet ein Vielfaches davon, zumal nur bei
+// Aenderung neu gezeichnet wird (Dirty-Flag). Unangenehm wuerde es erst im
+// Bereich einiger Hunderttausend Segmente, also etwa ab 1000 Punkten je Spieler.
 const TRAIL_TIERS = [
-  { maxAge: 10, step: 1 },
-  { maxAge: 60, step: 5 },
-  { maxAge: 160, step: 10 },
+  { maxAge: 10, step: 1 },     // letzte 10 s: jede Abfrage
+  { maxAge: 60, step: 5 },     // bis 1 min:   jede 5.
+  { maxAge: 200, step: 10 },   // bis gut 3 min: jede 10.
+  { maxAge: 800, step: 40 },   // bis gut 13 min: jede 40.
 ];
 const TRAIL_MAX_AGE = TRAIL_TIERS[TRAIL_TIERS.length - 1].maxAge;
 const trails = new Map();         // steamId -> [{x,y,t}, …]
@@ -130,6 +138,19 @@ function pushTrail(list) {
   for (const id of trails.keys()) if (!seen.has(id)) trails.delete(id);
 }
 
+// Beim Bearbeiten darf das Original NICHT zusaetzlich gezeichnet werden — sonst
+// stehen der gespeicherte und der gezogene Stand gleichzeitig auf der Karte,
+// und die Trefferpruefung faende weiter den alten. Genau das passierte bei den
+// KI-Encountern (alte Route blieb stehen und blieb als einzige anklickbar).
+function visibleTeleports() {
+  const et = editingTeleport();
+  return et ? teleports.filter((t) => t.id !== et.id) : teleports;
+}
+function visibleEncounters() {
+  const en = editingEncounter();
+  return en ? encounters.filter((e) => e.id !== en.id) : encounters;
+}
+
 function render() {
   const cv = el('cpMapCanvas');
   if (!cv) return;
@@ -159,7 +180,7 @@ function render() {
     return;
   }
 
-  drawFullMap({ ctx, w: MAP_SIZE, h: MAP_SIZE }, players, [], showTp ? teleports : [], null, 1 / sc, {
+  drawFullMap({ ctx, w: MAP_SIZE, h: MAP_SIZE }, players, [], showTp ? visibleTeleports() : [], null, 1 / sc, {
     showAll,
     zoom,
     labelMinZoom,
@@ -178,7 +199,8 @@ function render() {
     onLabelStats: (s) => { lastStat = s; },
     onHits: (h) => { hits = h; },
   });
-  if (showAi && encounters.length) drawAiEncounters(ctx, MAP_SIZE, MAP_SIZE, 1 / sc, encounters, baseClass);
+  { const list = visibleEncounters();
+    if (showAi && list.length) drawAiEncounters(ctx, MAP_SIZE, MAP_SIZE, 1 / sc, list, baseClass); }
   drawPlacement(ctx, 1 / sc);
   ctx.setTransform(1, 0, 0, 1, 0, 0);
   updateMapStat();
@@ -194,6 +216,20 @@ function drawPlacement(ctx, scale) {
     const n = worldToNorm(p.x, p.y);
     return { x: n.nx * MAP_SIZE, y: n.ny * MAP_SIZE };
   });
+  // Gummiband zum Zeiger — zeigt die Kante, die der naechste Klick erzeugt.
+  const cur = placeCursor && placingKind() === 'zone' ? (() => {
+    const n = worldToNorm(placeCursor.x, placeCursor.y);
+    return { x: n.nx * MAP_SIZE, y: n.ny * MAP_SIZE };
+  })() : null;
+  if (cur && p2.length) {
+    ctx.beginPath();
+    ctx.moveTo(p2[p2.length - 1].x, p2[p2.length - 1].y);
+    ctx.lineTo(cur.x, cur.y);
+    if (p2.length >= 2) ctx.lineTo(p2[0].x, p2[0].y);
+    ctx.setLineDash([4 * scale, 4 * scale]);
+    ctx.lineWidth = 1.5 * scale; ctx.strokeStyle = 'rgba(245,158,11,0.55)'; ctx.stroke();
+    ctx.setLineDash([]);
+  }
   if (p2.length > 1) {
     ctx.beginPath();
     p2.forEach((p, i) => (i ? ctx.lineTo(p.x, p.y) : ctx.moveTo(p.x, p.y)));
@@ -238,14 +274,21 @@ let editMode = false;
 
 // Welcher Eckpunkt liegt unter dem Zeiger? Trefferflaeche etwas grosszuegiger
 // als das gezeichnete Quadrat, sonst muss man pixelgenau treffen.
+// Trefferradius bewusst identisch zu objectAt (14 px). Vorher waren es +-10:
+// man konnte per Rechtsklick etwas oeffnen, dessen Anfasser man an derselben
+// Stelle nicht mehr greifen konnte — der Punkt lag im 14er-Kreis, aber
+// ausserhalb des 10er-Quadrats.
+const HANDLE_HIT = 14;
 function handleAt(points, sx, sy) {
   const sc = totalScale();
+  let best = -1, bestD = Infinity;
   for (let i = 0; i < (points || []).length; i++) {
     const n = worldToNorm(points[i].x, points[i].y);
     const x = n.nx * MAP_SIZE * sc + panX, y = n.ny * MAP_SIZE * sc + panY;
-    if (Math.abs(x - sx) <= 10 && Math.abs(y - sy) <= 10) return i;
+    const d = Math.hypot(x - sx, y - sy);
+    if (d <= HANDLE_HIT && d < bestD) { best = i; bestD = d; }
   }
-  return -1;
+  return best;
 }
 
 // Punkt-in-Polygon gegen die BEARBEITETE Kopie, nicht gegen den gespeicherten
@@ -263,6 +306,7 @@ function pointInZone(zone, wx, wy) {
 
 // ── Rechteck-Auswahl (Strg + Ziehen) ───────────────────────────────────────
 let marquee = null;   // { x0,y0,x1,y1 } in Bildschirm-Pixeln des Karten-Wrappers
+let placeCursor = null;   // Weltkoordinate unter dem Zeiger waehrend des Zeichnens
 
 function drawMarquee() {
   const box = el('cpMarquee');
@@ -312,6 +356,19 @@ function selectFromMap(ids, add) {
   }
   if (plList) plList.refresh();
   dirty = true;
+}
+
+// Karten-Objekte nachladen, damit Aenderungen anderer Admins (Companion ODER
+// Overlay) hier ankommen.
+//
+// Waehrend eines eigenen Bearbeitens wird NICHT nachgeladen — sonst zoege der
+// Server einem die Punkte unter der Maus weg.
+function refreshMapObjects() {
+  if (currentView !== 'map') return;
+  if (isPlacing() || editingZone() || editingEncounter() || editingTeleport()) return;
+  loadZones();
+  if (can(perms, 'map.teleports')) loadTeleports();
+  if (can(perms, 'map.encounters')) loadEncounters();
 }
 
 function setEditMode(on) {
@@ -446,6 +503,26 @@ function initMapInteraction() {
         e.preventDefault();
         return;
       }
+      // Geister-Punkt auf einer Kantenmitte: wird beim Anfassen zu einem echten
+      // Eckpunkt, den man in derselben Bewegung weiterzieht. Einfuegen und
+      // Positionieren in EINEM Zug — das ist der Grund fuer diese Loesung statt
+      // eines "Punkt hinzufuegen"-Menuepunkts.
+      if (ez) {
+        const mid = handleAt(zoneMidpoints(ez.points), hx, hy);
+        if (mid >= 0) {
+          const w1 = screenToWorld(hx, hy);
+          const ni = insertZonePoint(mid, w1.x, w1.y);
+          if (ni >= 0) { geomDrag = { index: ni, kind: 'zone' }; dirty = true; e.preventDefault(); return; }
+        }
+      }
+      if (en) {
+        const mid = handleAt(encounterMidpoints(en), hx, hy);
+        if (mid >= 0) {
+          const w1 = screenToWorld(hx, hy);
+          const ni = insertPatrolPoint(mid, w1.x, w1.y);
+          if (ni >= 0) { geomDrag = { index: ni, kind: 'encounter' }; dirty = true; e.preventDefault(); return; }
+        }
+      }
       // Nur Zonen haben eine Flaeche, die sich als Ganzes greifen laesst.
       if (ez) {
         const w0 = screenToWorld(hx, hy);
@@ -477,7 +554,26 @@ function initMapInteraction() {
     const sx = e.clientX - r.left, sy = e.clientY - r.top;
     // Im Platzierungs-Modus liefert der Klick Koordinaten, statt Spieler
     // auszuwaehlen — sonst waere beides nicht auseinanderzuhalten.
-    if (isPlacing()) { const w = screenToWorld(sx, sy); addPlacementPoint(w.x, w.y); return; }
+    // Route eines bestehenden Encounters zeichnen: jeder Klick haengt an.
+    if (isDrawingPatrol()) {
+      const w2 = screenToWorld(sx, sy);
+      appendPatrolPoint(w2.x, w2.y);
+      dirty = true;
+      return;
+    }
+    if (isPlacing()) {
+      const w = screenToWorld(sx, sy);
+      const pts = placingPoints();
+      // Klick auf den Startpunkt schliesst das Polygon, statt einen Punkt
+      // uebereinander zu setzen.
+      if (placingKind() === 'zone' && pts.length >= 3 && handleAt([pts[0]], sx, sy) === 0) {
+        const b = el('zSave');
+        if (b && !b.disabled) b.click();
+        return;
+      }
+      addPlacementPoint(w.x, w.y);
+      return;
+    }
     const c = hitAt(sx, sy);
     if (!c) return;
     selectFromMap(c.items.map((it) => it.p.steamId), e.shiftKey);
@@ -488,13 +584,39 @@ function initMapInteraction() {
     e.preventDefault();
     if (!editMode || !can(perms, 'world.write')) return;
     const r = cv.getBoundingClientRect();
-    const hit = objectAt(e.clientX - r.left, e.clientY - r.top);
+    const sx = e.clientX - r.left, sy = e.clientY - r.top;
+    // Rechtsklick auf einen Eckpunkt der bearbeiteten Zone entfernt ihn.
+    const ez = editingZone(), en = editingEncounter();
+    if (ez) {
+      const vi = handleAt(ez.points, sx, sy);
+      if (vi >= 0) {
+        if (removeZonePoint(vi)) { dirty = true; }
+        else toast('Eine Zone braucht mindestens 3 Eckpunkte.', 'error');
+        return;
+      }
+    }
+    if (en) {
+      const vi = handleAt(encounterHandles(en), sx, sy);
+      if (vi >= 0) {
+        if (removePatrolPoint(vi)) dirty = true;
+        else toast('Der Spawn bleibt — er ist der Startpunkt.', 'error');
+        return;
+      }
+    }
+    const hit = objectAt(sx, sy);
     if (hit) openEdit(hit.kind, hit.obj);
   });
   cv.addEventListener('mouseleave', () => { hideTip(); if (hoverIds.size) { hoverIds = new Set(); dirty = true; } });
   cv.addEventListener('mousemove', (e) => {
     if (dragging) return;
     const r = cv.getBoundingClientRect();
+    // Gummiband: beim Zeichnen die Linie vom letzten Punkt zum Zeiger zeigen,
+    // damit man sieht, wohin der naechste Klick setzt.
+    if (isPlacing()) {
+      placeCursor = screenToWorld(e.clientX - r.left, e.clientY - r.top);
+      dirty = true;
+      return;
+    }
     const c = hitAt(e.clientX - r.left, e.clientY - r.top);
     if (c) showTip(c, e.clientX - r.left, e.clientY - r.top); else hideTip();
     // Nur neu zeichnen, wenn sich die Menge wirklich geaendert hat — sonst
@@ -598,14 +720,19 @@ function objectAt(sx, sy) {
   // Ausgeblendete Ebenen sind nicht bearbeitbar. Sonst oeffnet ein Rechtsklick
   // einen Editor fuer etwas, das gar nicht zu sehen ist — man wuesste nicht,
   // was man da bearbeitet.
-  if (showTp) for (const t of teleports) {
+  // Gegen den WIRKSAMEN Stand pruefen: wird gerade gezogen, zaehlt die Kopie,
+  // nicht der gespeicherte Punkt.
+  const et = editingTeleport(), en0 = editingEncounter();
+  if (showTp) for (const t0 of teleports) {
+    const t = (et && t0.id === et.id) ? et : t0;
     const p = toScr(t.x, t.y);
-    if (Math.hypot(p.x - sx, p.y - sy) <= 14) return { kind: 'teleport', obj: t };
+    if (Math.hypot(p.x - sx, p.y - sy) <= 14) return { kind: 'teleport', obj: t0 };
   }
-  if (showAi) for (const enc of encounters) {
+  if (showAi) for (const enc0 of encounters) {
+    const enc = (en0 && enc0.id === en0.id) ? en0 : enc0;
     if (!enc.spawn || (enc.spawn.x === 0 && enc.spawn.y === 0)) continue;
     const p = toScr(enc.spawn.x, enc.spawn.y);
-    if (Math.hypot(p.x - sx, p.y - sy) <= 14) return { kind: 'encounter', obj: enc };
+    if (Math.hypot(p.x - sx, p.y - sy) <= 14) return { kind: 'encounter', obj: enc0 };
   }
   const w = screenToWorld(sx, sy);
   // zoneObjectAt statt zoneAt: letzteres liefert nur einen ANZEIGENAMEN als
@@ -814,6 +941,74 @@ function restoreZonePrefs() {
   }
 }
 
+// ── Updates ────────────────────────────────────────────────────────────────
+// Der Feed liegt im eigenen Backend (/overlay, Kanal "companion"). Die
+// Versionsnummer stammt aus derselben package.json wie das Overlay — beide Apps
+// tragen damit zwangslaeufig dieselbe Version.
+function initUpdates() {
+  const st = el('cpUpdStatus'), btn = el('cpUpdBtn');
+  if (!st || !btn) return;
+  const set = (t) => { st.textContent = t; };
+
+  btn.onclick = () => { set('Suche nach Updates…'); window.bf.updateCheck(); };
+  window.bf.onUpdateNone(() => set('Aktuell — kein Update verfügbar.'));
+  window.bf.onUpdateAvailable((v) => {
+    set(`Version ${v} verfügbar.`);
+    btn.textContent = 'Herunterladen';
+    btn.onclick = () => { set('Lädt…'); window.bf.updateDownload(); };
+  });
+  window.bf.onUpdateProgress((p) => set(`Lädt… ${p}%`));
+  window.bf.onUpdateReady((v) => {
+    set(`Version ${v} bereit.`);
+    btn.textContent = 'Neu starten & installieren';
+    btn.onclick = () => window.bf.updateInstall();
+  });
+  window.bf.onUpdateError((m) => set('Update fehlgeschlagen: ' + m));
+}
+
+// Release-Notes kommen aus derselben Datei wie beim Overlay — die Apps laufen
+// zusammen und teilen sich eine Version, also auch die Notizen.
+async function loadReleaseNotes() {
+  const box = el('cpNotes');
+  if (!box) return;
+  try {
+    const r = await fetch(`${config.tokenBase}/overlay/releases.json`);
+    if (!r.ok) throw new Error(`HTTP ${r.status}`);
+    const list = await r.json();
+    const rel = (Array.isArray(list) ? list : list.releases || []).slice(0, 8);
+    const installed = (el('cpVersion')?.textContent || '').trim();
+    box.innerHTML = rel.length
+      ? rel.map((v) => {
+          // Version UND Titel zeigen — der Titel allein sagt nicht, welcher
+          // Stand gemeint ist, und genau danach sucht man hier.
+          const ist = v.version && v.version === installed;
+          return `<div class="cp-rel">`
+            + `<div class="cp-rel-head"><span><span class="cp-rel-ver">${escapeHtml(v.version || '')}</span>`
+            + `${v.title ? ' ' + escapeHtml(v.title) : ''}</span>`
+            + `<span class="cp-rel-date">${ist ? 'installiert' : escapeHtml(v.date || '')}</span></div>`
+            + `<div class="cp-rel-body">${notesToHtml(v.notes || '')}</div></div>`;
+        }).join('')
+      : '<div class="cp-muted">Keine Einträge.</div>';
+  } catch (e) {
+    box.innerHTML = `<div class="cp-muted">Release-Notes nicht abrufbar (${escapeHtml(e.message)}).</div>`;
+  }
+}
+
+// Minimaler Markdown-Ersatz: Listenpunkte und Absaetze. Bewusst KEIN
+// HTML-Durchreichen — die Notizen kommen zwar aus dem eigenen Backend, aber
+// escapen kostet nichts und schliesst die Lücke ganz.
+function notesToHtml(md) {
+  // Erst escapen, DANN das bisschen Markup erzeugen — nie andersherum.
+  const inline = (t) => escapeHtml(t).replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>');
+  return String(md).replace(/\r/g, '').split('\n').map((line) => {
+    const t = line.trim();
+    if (!t) return '';
+    if (/^#{1,6}\s+/.test(t)) return `<div class="cp-rel-h">${inline(t.replace(/^#{1,6}\s+/, ''))}</div>`;
+    if (/^[-*]\s+/.test(t)) return `<div class="cp-rel-li">${inline(t.replace(/^[-*]\s+/, ''))}</div>`;
+    return `<div>${inline(t)}</div>`;
+  }).join('');
+}
+
 // ── Navigation ─────────────────────────────────────────────────────────────
 function navTo(view) {
   // Polls haengen am offenen Panel — beim Wegnavigieren abstellen.
@@ -822,7 +1017,14 @@ function navTo(view) {
   currentView = view;
   document.querySelectorAll('.cp-nav-btn').forEach((b) => b.classList.toggle('active', b.dataset.view === view));
   document.querySelectorAll('.cp-view').forEach((s) => { s.hidden = s.dataset.view !== view; });
-  if (view === 'map') dirty = true;
+  // Beim Betreten der Karte sofort nachladen, statt bis zum naechsten
+  // Intervall zu warten. Und den Bearbeiten-Modus IMMER aus: er ist ein
+  // bewusster Griff, kein Zustand, in den man versehentlich zurueckkehrt.
+  if (view === 'map') {
+    setEditMode(false);
+    dirty = true;
+    refreshMapObjects();
+  }
   const render = PANELS[view];
   if (render) {
     try { render(document.querySelector(`.cp-view[data-view="${view}"]`)); }
@@ -870,6 +1072,8 @@ async function boot() {
   initSupport(panelCtx); initLexikon(panelCtx);
   initEditor(editorCtx);
   window.bf.getVersion().then((v) => { el('cpVersion').textContent = v; });
+  initUpdates();
+  loadReleaseNotes();
   el('cpLogout').onclick = () => window.bf.logout();
 
   document.querySelectorAll('.cp-nav-btn').forEach((b) => { b.onclick = () => navTo(b.dataset.view); });
@@ -920,7 +1124,11 @@ async function boot() {
   if (!can(perms, 'map.showAll')) { showAll = false; showHeat = false; }
   restoreZonePrefs();
   renderLegend();
-  window.addEventListener('keydown', (e) => { if (e.key === 'Escape' && isPlacing()) cancelPlacing(); });
+  window.addEventListener('keydown', (e) => {
+    if (e.key !== 'Escape') return;
+    if (isDrawingPatrol()) { stopDrawingPatrol(); dirty = true; return; }
+    if (isPlacing()) cancelPlacing();
+  });
   navTo(localStorage.getItem('bf-cp-view') || 'map');
   initMapInteraction();
   resizeCanvas();
@@ -940,6 +1148,8 @@ async function boot() {
   if (can(perms, 'team.users')) await loadUserDir();
   await pollPositions();
   setInterval(pollPositions, 1000);
+
+  setInterval(refreshMapObjects, 15000);
   setInterval(loadUserDir, 5 * 60 * 1000);
   requestAnimationFrame(frame);
 }

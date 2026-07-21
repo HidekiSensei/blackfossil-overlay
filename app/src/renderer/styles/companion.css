@@ -464,3 +464,85 @@ input[type="range"] { accent-color: var(--accent); }
 }
 .cp-switch[aria-checked="true"] .cp-switch-thumb { transform: translateX(15px); }
 .cp-switch:focus-visible { outline: 2px solid rgba(var(--accent-rgb), .7); outline-offset: 2px; border-radius: 6px; }
+
+/* ── Aufklappbarer Abschnitt ────────────────────────────────────────────── */
+.cp-exp { border: 1px solid var(--cp-line); border-radius: var(--cp-r-sm); margin-top: var(--cp-s3); }
+.cp-exp-head {
+  padding: var(--cp-s2) var(--cp-s3); cursor: pointer; user-select: none;
+  font-size: 12px; font-weight: 650; color: var(--muted); list-style: none;
+}
+.cp-exp-head::-webkit-details-marker { display: none; }
+.cp-exp-head::before { content: '▸ '; }
+.cp-exp[open] .cp-exp-head::before { content: '▾ '; }
+.cp-exp-head:hover { color: #e8e6ef; }
+.cp-exp[open] .cp-exp-head { border-bottom: 1px solid var(--cp-line); color: #e8e6ef; }
+.cp-exp-body { padding: var(--cp-s3); }
+
+/* ── Checkboxen als Schiebeschalter ─────────────────────────────────────── */
+/* Bewusst rein ueber CSS: das <input type="checkbox"> bleibt im DOM, damit
+   jedes vorhandene .checked und onchange weiterarbeitet und Tastatur- sowie
+   Screenreader-Bedienung unveraendert funktionieren. Nur das Aussehen wechselt. */
+.cp-check { gap: var(--cp-s3); }
+.cp-check input[type="checkbox"] {
+  appearance: none; -webkit-appearance: none;
+  position: relative; flex: none;
+  width: 34px; height: 19px; margin: 0;
+  background: rgba(255, 255, 255, 0.14);
+  border: 1px solid var(--cp-line); border-radius: 999px;
+  cursor: pointer; transition: background .16s, border-color .16s;
+}
+.cp-check input[type="checkbox"]::after {
+  content: ''; position: absolute; top: 2px; left: 2px;
+  width: 13px; height: 13px; background: #fff; border-radius: 50%;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, .5); transition: transform .16s;
+}
+.cp-check input[type="checkbox"]:checked { background: var(--accent); border-color: transparent; }
+.cp-check input[type="checkbox"]:checked::after { transform: translateX(15px); }
+.cp-check input[type="checkbox"]:disabled { opacity: .4; cursor: not-allowed; }
+.cp-check input[type="checkbox"]:focus-visible { outline: 2px solid rgba(var(--accent-rgb), .7); outline-offset: 2px; }
+
+/* ── Zwei-Punkt-Schieber fuer Stundenbereiche ───────────────────────────── */
+.cp-hours { position: relative; height: 34px; margin-top: var(--cp-s1); }
+.cp-hours-track {
+  position: absolute; top: 15px; left: 0; right: 0; height: 4px;
+  background: rgba(255, 255, 255, 0.14); border-radius: 999px;
+}
+.cp-hours-fill { position: absolute; top: 0; height: 100%; background: var(--accent); border-radius: 999px; }
+.cp-hours input[type="range"] {
+  position: absolute; top: 0; left: 0; width: 100%; height: 34px; margin: 0;
+  appearance: none; -webkit-appearance: none; background: none; pointer-events: none;
+}
+.cp-hours input[type="range"]::-webkit-slider-thumb {
+  appearance: none; -webkit-appearance: none; pointer-events: auto;
+  width: 16px; height: 16px; border-radius: 50%;
+  background: #fff; border: 2px solid var(--accent); cursor: grab;
+  box-shadow: 0 1px 4px rgba(0, 0, 0, .5);
+}
+.cp-hours input[type="range"]:active::-webkit-slider-thumb { cursor: grabbing; }
+.cp-hours-val { display: flex; justify-content: space-between; font-size: 11px; color: var(--muted); margin-top: -2px; }
+
+/* Aufgeklappte Liste eines <select>: Chromium rendert die <option>-Elemente mit
+   Systemfarben — unter Linux hell auf hell und dadurch kaum lesbar. Sie muessen
+   deshalb ausdruecklich gesetzt werden. */
+.cp-select option,
+.cp-select optgroup {
+  background: #1c1630;
+  color: #e8e6ef;
+  padding: 6px 10px;
+}
+.cp-select option:checked,
+.cp-select option:hover { background: var(--accent); color: #fff; }
+
+/* ── Release-Notes ──────────────────────────────────────────────────────── */
+#cpNotes { max-height: 340px; }
+.cp-rel { padding: var(--cp-s3) 0; border-bottom: 1px solid var(--cp-line); }
+.cp-rel:last-child { border-bottom: none; }
+.cp-rel:first-child { padding-top: 0; }
+.cp-rel-head { display: flex; justify-content: space-between; gap: var(--cp-s3); font-weight: 600; font-size: 13px; }
+.cp-rel-date { color: var(--muted); font-weight: 400; font-size: 11.5px; white-space: nowrap; }
+.cp-rel-body { margin-top: var(--cp-s1); font-size: 12.5px; color: #c9c5d6; }
+.cp-rel-h { font-weight: 600; color: #e8e6ef; margin-top: var(--cp-s2); }
+.cp-rel-li { padding-left: var(--cp-s3); position: relative; }
+.cp-rel-li::before { content: '·'; position: absolute; left: 4px; color: var(--muted); }
+.cp-rel-ver { color: var(--accent-2); font-weight: 700; }
+.cp-rel-body strong { color: #e8e6ef; }

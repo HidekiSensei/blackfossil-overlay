@@ -73,13 +73,19 @@
               <div class="cp-item-sub" id="cpSetRank"></div>
             </div><button id="cpLogout" class="cp-btn cp-btn-sm">Abmelden</button></div>
           </div>
-          <div class="cp-sec">Anwendung</div>
+          <div class="cp-sec">Software</div>
           <div class="cp-card">
-            <div class="cp-item"><div class="cp-item-main">
-              <div class="cp-item-title">Version</div>
-              <div class="cp-item-sub" id="cpVersion">—</div>
-            </div></div>
+            <div class="cp-item">
+              <div class="cp-item-main">
+                <div class="cp-item-title">Version <span id="cpVersion">—</span></div>
+                <div class="cp-item-sub" id="cpUpdStatus">Bereit</div>
+              </div>
+              <button id="cpUpdBtn" class="cp-btn cp-btn-sm">Nach Updates suchen</button>
+            </div>
           </div>
+
+          <div class="cp-sec">Was ist neu</div>
+          <div class="cp-card"><div id="cpNotes" class="cp-scroll">Lade…</div></div>
         </div>
       </section>
     </main>
