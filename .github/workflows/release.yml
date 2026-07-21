@@ -60,6 +60,13 @@ jobs:
             echo "Release-Version: $V (Tag v$V)"
           fi
 
+      - name: Quell-Konfiguration prüfen
+        # MUSS vor patch-prod laufen: danach steht die Produktions-URL dort
+        # zu Recht. Faengt ab, dass eine committete Test-Umleitung in einen
+        # Release geraet.
+        if: steps.v.outputs.exists == 'false'
+        run: node app/scripts/check-source-config.js
+
       - name: Produktiv-Werte setzen (appId, productName, API-URL)
         if: steps.v.outputs.exists == 'false'
         run: node app/scripts/patch-prod.js
@@ -121,6 +128,10 @@ jobs:
         working-directory: app
         run: npm run build:renderer
 
+      - name: Quell-Konfiguration prüfen
+        # MUSS vor patch-prod laufen — danach steht die Produktions-URL zu Recht.
+        run: node app/scripts/check-source-config.js
+
       - name: Produktiv-Werte setzen (appId, productName, API-URL)
         run: node app/scripts/patch-prod.js
 
@@ -161,6 +172,10 @@ jobs:
       - name: Renderer bauen
         working-directory: app
         run: npm run build:renderer
+
+      - name: Quell-Konfiguration prüfen
+        # MUSS vor patch-prod laufen — danach steht die Produktions-URL zu Recht.
+        run: node app/scripts/check-source-config.js
 
       - name: Produktiv-Werte setzen (appId, productName, Scheme, API-URL)
         run: node app/scripts/patch-prod.js
