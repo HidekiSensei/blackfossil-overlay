@@ -19,8 +19,12 @@ import {
   loadMapImage, drawFullMap, drawHeatmap, drawAiEncounters, setZones, setCalAffine,
   ZONE_LAYERS, ZONE_META, setZoneLayer, isZoneLayerVisible,
   normToWorld, worldToNorm, zoneObjectAt, encounterHandles, zoneMidpoints, encounterMidpoints,
+  setAccent,
 } from './map.js';
 import { baseClass, escapeHtml } from './shared/format.js';
+import { makeTheme } from './shared/theme.js';
+import { initSettings, renderSettings } from './companion/panels/settings.js';
+import { NAV_GROUPS, NAV_SETTINGS, itemFor, collapsedGroups, saveCollapsed } from './companion/nav.js';
 import { initServer, renderServer, stopServer } from './companion/panels/server.js';
 import { initAdmin, renderAdmin } from './companion/panels/admin.js';
 import { initTeam, renderTeam } from './companion/panels/team.js';
@@ -73,6 +77,19 @@ let cw = MAP_SIZE, ch = MAP_SIZE;   // Canvas-Groesse in CSS-Pixeln
 function baseScale() { return Math.max(cw / MAP_SIZE, ch / MAP_SIZE); }
 function totalScale() { return baseScale() * zoom; }
 let dirty = true;             // Dirty-Flag: neu zeichnen nur bei Poll oder Pan/Zoom
+
+// Farbschema. Eigene Speicher-Schluessel, weil Overlay und Companion getrennte
+// userData-Verzeichnisse haben — ein gemeinsamer Name waere nur scheinbar
+// gemeinsam und wuerde sich nie abgleichen.
+//
+// Steht bewusst NACH `dirty`: onApply schreibt hinein, und der erste Aufruf
+// erfolgt sofort, damit beim Start kein Violett-Blitz zu sehen ist.
+const theme = makeTheme({
+  storageKey: 'bf-cp-theme',
+  customKey: 'bf-cp-custom',
+  onApply: (t) => { setAccent(t); dirty = true; },   // Canvas kennt keine CSS-Variablen
+});
+theme.apply(theme.current());
 // Aus der localStorage wiederhergestellt, aber nach dem Login gegen die Rechte
 // geprueft — sonst behielte ein herabgestufter Staff seine Overwatch-Ansicht.
 let showAll = localStorage.getItem('bf-cp-showall') === '1';
@@ -832,36 +849,102 @@ const panelCtx = {
   players: () => players,
   isActive: (v) => currentView === v,
 };
+// Menuepunkt -> Renderer. Team und Admin bedienen mehrere Punkte, deshalb
+// bekommen sie den Punkt als zweiten Parameter (frueher waren das ihre Reiter).
 const PANELS = {
-  team: renderTeam,
-  admin: renderAdmin,
+  spieler: (r) => renderTeam(r, 'spieler'),
+  warnings: (r) => renderTeam(r, 'warnings'),
+  paudit: (r) => renderTeam(r, 'paudit'),
+  taudit: (r) => renderTeam(r, 'taudit'),
+  welt: (r) => renderAdmin(r, 'welt'),
+  limits: (r) => renderAdmin(r, 'limits'),
+  ops: (r) => renderAdmin(r, 'ops'),
   server: renderServer,
   support: renderSupport,
   lexikon: renderLexikon,
+  settings: renderSettings,
 };
 
-// Sichtbarkeit der Navigationspunkte. `cap` ist die schwaechste Faehigkeit, die
-// im Panel ueberhaupt etwas zeigt — die Feinheiten (einzelne Tabs, Buttons)
-// entscheiden die Panels selbst ueber dieselbe can()-Pruefung.
-// `needsOnline` markiert Ansichten, die ohne eigenen Dino auf dem Server leer
-// waeren; Staff-Werkzeuge haengen bewusst NICHT daran.
-const NAV = {
-  map:      { cap: null,            needsOnline: false },
-  team:     { cap: 'team.users',    needsOnline: false },
-  admin:    { cap: 'world.read',    needsOnline: false },
-  server:   { cap: 'server.status', needsOnline: false },
-  support:  { cap: 'support.read',  needsOnline: false },
-  lexikon:  { cap: null,            needsOnline: false },
-  settings: { cap: null,            needsOnline: false },
+// Settings braucht mehr als panelCtx: Theme, Version und die Update-Bruecke.
+const settingsCtx = {
+  perms: () => perms,
+  toast,
+  theme,
+  tokenBase: () => config.tokenBase,
+  version: () => window.bf.getVersion(),
+  onLogout: () => window.bf.logout(),
+  updates: {
+    check: () => window.bf.updateCheck(),
+    download: () => window.bf.updateDownload(),
+    install: () => window.bf.updateInstall(),
+    onNone: (f) => window.bf.onUpdateNone(f),
+    onAvailable: (f) => window.bf.onUpdateAvailable(f),
+    onProgress: (f) => window.bf.onUpdateProgress(f),
+    onReady: (f) => window.bf.onUpdateReady(f),
+    onError: (f) => window.bf.onUpdateError(f),
+  },
 };
 
+
+// Darf der aktuelle Nutzer diesen Punkt sehen? `needsOnline` markiert
+// Ansichten, die ohne eigenen Dino auf dem Server leer waeren — Staff-Werkzeuge
+// haengen bewusst NICHT daran.
+function navAllowed(item) {
+  return (!item.cap || can(perms, item.cap)) && (!item.needsOnline || perms.online);
+}
+
+// Seitenleiste aus companion/nav.js aufbauen.
+//
+// Es wird nur erzeugt, was erlaubt ist — eine Gruppe ohne einen einzigen
+// sichtbaren Punkt erscheint gar nicht erst. Sonst staende bei einem Supporter
+// eine leere Ueberschrift "Administration" da und behauptete etwas, das es
+// fuer ihn nicht gibt.
+function renderNav() {
+  const box = el('cpNavList');
+  if (!box) return;
+  const zu = collapsedGroups();
+
+  box.innerHTML = NAV_GROUPS.map((g) => {
+    const items = g.items.filter(navAllowed);
+    if (!items.length) return '';
+    const offen = !zu.has(g.id);
+    return `<div class="cp-navgrp" data-grp="${g.id}">`
+      + `<button type="button" class="cp-navgrp-head" data-grp-toggle="${g.id}" aria-expanded="${offen}">`
+      + `<span class="cp-navgrp-caret">${offen ? '▾' : '▸'}</span><span>${escapeHtml(g.label)}</span></button>`
+      + `<div class="cp-navgrp-body"${offen ? '' : ' hidden'}>`
+      + items.map((i) => navBtn(i)).join('')
+      + `</div></div>`;
+  }).join('');
+
+  const sBox = el('cpNavSettings');
+  if (sBox) sBox.innerHTML = navBtn(NAV_SETTINGS);
+
+  document.querySelectorAll('.cp-nav-btn').forEach((b) => {
+    b.onclick = () => navTo(b.dataset.view);
+    b.classList.toggle('active', b.dataset.view === currentView);
+  });
+  box.querySelectorAll('[data-grp-toggle]').forEach((b) => {
+    b.onclick = () => {
+      const id = b.dataset.grpToggle;
+      const set = collapsedGroups();
+      if (set.has(id)) set.delete(id); else set.add(id);
+      saveCollapsed(set);
+      renderNav();
+    };
+  });
+}
+
+function navBtn(i) {
+  return `<button class="cp-nav-btn" data-view="${i.view}">`
+    + `<span class="cp-nav-ico">${i.icon}</span> ${escapeHtml(i.label)}</button>`;
+}
+
+// Nach einer Rechte-Aenderung (z. B. eigener Dino kam online) neu aufbauen.
 function applyNavPermissions() {
-  for (const [view, def] of Object.entries(NAV)) {
-    const btn = document.querySelector(`.cp-nav-btn[data-view="${view}"]`);
-    if (!btn) continue;
-    const allowed = (!def.cap || can(perms, def.cap)) && (!def.needsOnline || perms.online);
-    btn.hidden = !allowed;
-  }
+  renderNav();
+  // Steht man auf einer Ansicht, die man nicht mehr sehen darf, zurueck zur Karte.
+  const cur = itemFor(currentView);
+  if (cur && !navAllowed(cur)) navTo('map');
 }
 
 // ── Legende & Layer ────────────────────────────────────────────────────────
@@ -941,74 +1024,6 @@ function restoreZonePrefs() {
   }
 }
 
-// ── Updates ────────────────────────────────────────────────────────────────
-// Der Feed liegt im eigenen Backend (/overlay, Kanal "companion"). Die
-// Versionsnummer stammt aus derselben package.json wie das Overlay — beide Apps
-// tragen damit zwangslaeufig dieselbe Version.
-function initUpdates() {
-  const st = el('cpUpdStatus'), btn = el('cpUpdBtn');
-  if (!st || !btn) return;
-  const set = (t) => { st.textContent = t; };
-
-  btn.onclick = () => { set('Suche nach Updates…'); window.bf.updateCheck(); };
-  window.bf.onUpdateNone(() => set('Aktuell — kein Update verfügbar.'));
-  window.bf.onUpdateAvailable((v) => {
-    set(`Version ${v} verfügbar.`);
-    btn.textContent = 'Herunterladen';
-    btn.onclick = () => { set('Lädt…'); window.bf.updateDownload(); };
-  });
-  window.bf.onUpdateProgress((p) => set(`Lädt… ${p}%`));
-  window.bf.onUpdateReady((v) => {
-    set(`Version ${v} bereit.`);
-    btn.textContent = 'Neu starten & installieren';
-    btn.onclick = () => window.bf.updateInstall();
-  });
-  window.bf.onUpdateError((m) => set('Update fehlgeschlagen: ' + m));
-}
-
-// Release-Notes kommen aus derselben Datei wie beim Overlay — die Apps laufen
-// zusammen und teilen sich eine Version, also auch die Notizen.
-async function loadReleaseNotes() {
-  const box = el('cpNotes');
-  if (!box) return;
-  try {
-    const r = await fetch(`${config.tokenBase}/overlay/releases.json`);
-    if (!r.ok) throw new Error(`HTTP ${r.status}`);
-    const list = await r.json();
-    const rel = (Array.isArray(list) ? list : list.releases || []).slice(0, 8);
-    const installed = (el('cpVersion')?.textContent || '').trim();
-    box.innerHTML = rel.length
-      ? rel.map((v) => {
-          // Version UND Titel zeigen — der Titel allein sagt nicht, welcher
-          // Stand gemeint ist, und genau danach sucht man hier.
-          const ist = v.version && v.version === installed;
-          return `<div class="cp-rel">`
-            + `<div class="cp-rel-head"><span><span class="cp-rel-ver">${escapeHtml(v.version || '')}</span>`
-            + `${v.title ? ' ' + escapeHtml(v.title) : ''}</span>`
-            + `<span class="cp-rel-date">${ist ? 'installiert' : escapeHtml(v.date || '')}</span></div>`
-            + `<div class="cp-rel-body">${notesToHtml(v.notes || '')}</div></div>`;
-        }).join('')
-      : '<div class="cp-muted">Keine Einträge.</div>';
-  } catch (e) {
-    box.innerHTML = `<div class="cp-muted">Release-Notes nicht abrufbar (${escapeHtml(e.message)}).</div>`;
-  }
-}
-
-// Minimaler Markdown-Ersatz: Listenpunkte und Absaetze. Bewusst KEIN
-// HTML-Durchreichen — die Notizen kommen zwar aus dem eigenen Backend, aber
-// escapen kostet nichts und schliesst die Lücke ganz.
-function notesToHtml(md) {
-  // Erst escapen, DANN das bisschen Markup erzeugen — nie andersherum.
-  const inline = (t) => escapeHtml(t).replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>');
-  return String(md).replace(/\r/g, '').split('\n').map((line) => {
-    const t = line.trim();
-    if (!t) return '';
-    if (/^#{1,6}\s+/.test(t)) return `<div class="cp-rel-h">${inline(t.replace(/^#{1,6}\s+/, ''))}</div>`;
-    if (/^[-*]\s+/.test(t)) return `<div class="cp-rel-li">${inline(t.replace(/^[-*]\s+/, ''))}</div>`;
-    return `<div>${inline(t)}</div>`;
-  }).join('');
-}
-
 // ── Navigation ─────────────────────────────────────────────────────────────
 function navTo(view) {
   // Polls haengen am offenen Panel — beim Wegnavigieren abstellen.
@@ -1016,7 +1031,11 @@ function navTo(view) {
   if (view !== 'support') stopSupport();
   currentView = view;
   document.querySelectorAll('.cp-nav-btn').forEach((b) => b.classList.toggle('active', b.dataset.view === view));
-  document.querySelectorAll('.cp-view').forEach((s) => { s.hidden = s.dataset.view !== view; });
+  // Die Karte hat eigenes statisches Markup, alles andere teilt sich einen
+  // Container und wird bei jedem Aufruf frisch gerendert.
+  const isMap = view === 'map';
+  document.querySelector('.cp-view[data-view="map"]').hidden = !isMap;
+  el('cpPanelView').hidden = isMap;
   // Beim Betreten der Karte sofort nachladen, statt bis zum naechsten
   // Intervall zu warten. Und den Bearbeiten-Modus IMMER aus: er ist ein
   // bewusster Griff, kein Zustand, in den man versehentlich zurueckkehrt.
@@ -1027,7 +1046,7 @@ function navTo(view) {
   }
   const render = PANELS[view];
   if (render) {
-    try { render(document.querySelector(`.cp-view[data-view="${view}"]`)); }
+    try { render(el('cpPanelView')); }
     catch (err) { toast('Panel-Fehler: ' + err.message, 'error'); }
   }
   localStorage.setItem('bf-cp-view', view);
@@ -1066,19 +1085,17 @@ async function boot() {
   el('cpApp').hidden = false;
   el('cpWhoName').textContent = perms.name;
   el('cpWhoRank').textContent = perms.rank;
-  el('cpSetWho').textContent = perms.name;
-  el('cpSetRank').textContent = perms.rank;
+  // Abo-Rang nachreichen: beim ersten apply() war er noch unbekannt, gesperrte
+  // Themes waeren sonst dauerhaft auf Violett zurueckgefallen. Staff bekommt
+  // ueber effectiveTier() alles frei (siehe shared/theme.js).
+  theme.setFromToken(t);
   initTeam(panelCtx); initAdmin(panelCtx); initServer(panelCtx);
   initSupport(panelCtx); initLexikon(panelCtx);
+  initSettings(settingsCtx);
   initEditor(editorCtx);
-  window.bf.getVersion().then((v) => { el('cpVersion').textContent = v; });
-  initUpdates();
-  loadReleaseNotes();
-  el('cpLogout').onclick = () => window.bf.logout();
 
-  document.querySelectorAll('.cp-nav-btn').forEach((b) => { b.onclick = () => navTo(b.dataset.view); });
-  // Nicht erlaubte Punkte ausblenden statt deaktivieren — tote Buttons verrotten.
-  applyNavPermissions();
+  // Nicht erlaubte Punkte gar nicht erst erzeugen — tote Buttons verrotten.
+  renderNav();
 
   const lz = el('cpLabelZoom');
   lz.value = String(labelMinZoom);
