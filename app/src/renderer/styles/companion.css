@@ -898,3 +898,4 @@ input[type="range"] { accent-color: var(--accent); }
   border-left: 3px solid #f59e0b; background: rgba(245, 158, 11, 0.08);
   border-radius: var(--cp-r-sm); padding: var(--cp-s2) var(--cp-s3); font-size: 12.5px;
 }
+
