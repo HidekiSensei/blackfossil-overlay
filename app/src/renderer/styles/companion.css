@@ -855,6 +855,12 @@ input[type="range"] { accent-color: var(--accent); }
    VOR dem Klick vollstaendig lesbar sein. */
 .cp-pl-targets { display: flex; flex-wrap: wrap; gap: var(--cp-s1); max-height: 180px; overflow-y: auto; }
 
+/* Garage-Slot mit ausklappbarem Editor. Der Rahmen haelt Zeile und Formular
+   sichtbar zusammen — sonst wirkt das Formular wie ein eigener Abschnitt und
+   man verliert, zu welchem Slot es gehoert. */
+.cp-gar-slot { border-radius: var(--cp-r-sm); }
+.cp-gar-slot:has(.cp-gar-form) { background: var(--cp-surface); }
+.cp-gar-form { padding: 0 var(--cp-s3) var(--cp-s3); display: flex; flex-direction: column; gap: var(--cp-s3); }
 /* Roter Punkt am Settings-Eintrag, wenn ein Update anliegt.
    Rechtsbuendig statt neben dem Text: so springt die Beschriftung nicht,
    wenn der Punkt kommt oder geht. */

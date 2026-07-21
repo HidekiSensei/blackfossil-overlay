@@ -145,7 +145,7 @@ function zeichneListe() {
   const liste = treffer();
   const zeigen = liste.slice(0, Math.max(SEITE, sichtbar));
 
-  el('plCount').textContent = `${liste.length} von ${alle.length} · ${on.size} im Spiel`
+  el('plCount').textContent = `${liste.length} von ${alle.length}`
     + (gewaehlt.size ? ` · ${gewaehlt.size} gewählt` : '');
 
   const y = box.scrollTop;
@@ -207,8 +207,9 @@ async function seiteRollen() {
 // ── Seite: Alle ────────────────────────────────────────────────────────────
 function seiteAlle() {
   const on = [...onlineMap().values()];
-  el('plSide').innerHTML = U.item('Alle im Spiel', `${on.length} Spieler`, '')
-    + `<div class="cp-pl-list">` + on
+  // Keine Ueberschrift und keine Zahl: der gewaehlte Reiter sagt bereits
+  // "Alle im Spiel", und die Anzahl steht rechts ueber dem Detail.
+  el('plSide').innerHTML = `<div class="cp-pl-list">` + on
       .sort((a, b) => nameVon(a.steamId).localeCompare(nameVon(b.steamId), 'de'))
       .map((p) => `<div class="cp-pl-row"><span class="cp-pl-status on"></span>`
         + `<span class="cp-pl-main"><span class="cp-pl-name">${U.esc(nameVon(p.steamId))}</span>`
@@ -262,8 +263,12 @@ function zeichneDetail() {
   const reiter = REITER();
   if (!reiter.some((t) => t.id === tab)) tab = 'info';
 
-  box.innerHTML = `<div class="cp-pl-title"><span>${U.esc(ziel)}</span></div>`
-    + U.tabs(reiter, tab) + `<div id="plTab" class="cp-stack"></div>`;
+  // Reiter zuerst, dann die Trennlinie, dann der Titel — so liegt die Linie
+  // rechts auf derselben Hoehe wie die der Modus-Reiter links. Stand der Titel
+  // darueber, waren die beiden Linien versetzt.
+  box.innerHTML = U.tabs(reiter, tab)
+    + `<div class="cp-pl-title"><span>${U.esc(ziel)}</span></div>`
+    + `<div id="plTab" class="cp-stack"></div>`;
   box.querySelectorAll('.cp-tab').forEach((b) => {
     b.onclick = () => { tab = b.dataset.tab; zeichneDetail(); };
   });
@@ -406,6 +411,16 @@ function actTab(box) {
   if (modus === 'rollen') {
     box.innerHTML = U.hint('Blitzschlag trifft immer einen einzelnen Dino — /admin/lightning braucht '
       + 'eine SteamID. Für eine Rolle gibt es keinen Weg, die Mitglieder zu ermitteln.');
+    return;
+  }
+  // "Alle im Spiel" ist als Slay-Ziel bewusst gesperrt. Technisch ginge es
+  // (die Positionsliste liefert die SteamIDs), aber ein Griff, der mit zwei
+  // Klicks JEDEN auf dem Server toetet, gehoert nicht in eine Oberflaeche —
+  // ein Fehlklick waere nicht reparierbar. Wer mehrere treffen will, waehlt
+  // sie einzeln aus und sieht dabei, wen.
+  if (modus === 'alle') {
+    box.innerHTML = U.hint('Blitzschlag gibt es nur für einzeln ausgewählte Spieler. '
+      + 'Wechsle zu „Spieler“ und wähle sie mit Strg aus — so ist sichtbar, wen es trifft.');
     return;
   }
   const z = ziele();
