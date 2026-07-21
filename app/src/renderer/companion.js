@@ -33,6 +33,8 @@ import { initPlayers, renderPlayers } from './companion/panels/players.js';
 import { initTokens, renderTokens } from './companion/panels/tokens.js';
 import { NAV_GROUPS, NAV_SETTINGS, itemFor, collapsedGroups, saveCollapsed } from './companion/nav.js';
 import { initAnnounce, renderAnnounce } from './companion/panels/announce.js';
+import { initControl, renderControl, stopControl } from './companion/panels/control.js';
+import { initEvrima, renderEvrima } from './companion/panels/evrima.js';
 import { initAdmin, renderAdmin } from './companion/panels/admin.js';
 import { initTeam, renderTeam } from './companion/panels/team.js';
 import { initSupport, renderSupport, stopSupport } from './companion/panels/support.js';
@@ -883,6 +885,8 @@ const PANELS = {
   ops: (r) => renderAdmin(r, 'ops'),
   dinos: renderDinos,
   announce: renderAnnounce,
+  control: renderControl,
+  evrima: renderEvrima,
   support: renderSupport,
   lexikon: renderLexikon,
   handbuch: renderHandbuch,
@@ -1085,6 +1089,7 @@ function restoreZonePrefs() {
 function navTo(view) {
   // Polls haengen am offenen Panel — beim Wegnavigieren abstellen.
   if (view !== 'support') stopSupport();
+  if (view !== 'control') stopControl();
   currentView = view;
   document.querySelectorAll('.cp-nav-btn').forEach((b) => b.classList.toggle('active', b.dataset.view === view));
   // Die Karte hat eigenes statisches Markup, alles andere teilt sich einen
@@ -1149,6 +1154,7 @@ async function boot() {
   // ueber effectiveTier() alles frei (siehe shared/theme.js).
   theme.setFromToken(t);
   initTeam(panelCtx); initAdmin(panelCtx); initAnnounce(panelCtx);
+  initControl(panelCtx); initEvrima(panelCtx);
   initSupport(panelCtx); initLexikon(panelCtx); initHandbuch(panelCtx); initAccounts(panelCtx);
   initSettings(settingsCtx);
   // EINMAL registrieren, nicht erst beim Oeffnen des Software-Reiters: der
