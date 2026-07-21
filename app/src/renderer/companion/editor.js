@@ -283,7 +283,7 @@ function openForm(kind, existing, point) {
           + `<div style="height:var(--cp-s3)"></div>`
           + U.check('enDayActive', '☀️ Tagaktiv (ruht nachts)', e0.schedule ? e0.schedule.dayActive !== false : true)
           + `<div style="height:var(--cp-s2)"></div>`
-          + U.hourRange('enSleep', 'enWake', 'Ruhezeit',
+          + U.hourRange('enSleep', 'enWake', 'Aktivzeit',
                         e0.schedule?.sleepFromHour ?? 21, e0.schedule?.wakeHour ?? 6)
           + U.hint('Leere Felder bleiben auf den Vorgaben der Mod. Radien in Metern — '
                  + 'gespeichert wird in Welt-Einheiten, wie im Overlay.'))
@@ -315,8 +315,17 @@ function openForm(kind, existing, point) {
   floatingPanel('editor', { title, body, width: kind === 'encounter' ? 320 : 280, x: 24, y: 24, onClose: leaveEditing });
   { const d = el('enDraw'); if (d) d.onclick = () => { drawingPatrol = true; C.toast('Klick auf die Karte hängt Punkte an. Escape beendet.', ''); }; }
   if (kind === 'encounter') {
-    U.bindHourRange(body, 'enSleep', 'enWake',
-      (a, b) => `schläft ${String(a).padStart(2, '0')}:00 – ${String(b).padStart(2, '0')}:00`);
+    const hh = (h) => `${String(h).padStart(2, '0')}:00`;
+    U.bindHourRange(body, 'enSleep', 'enWake', {
+      // Die Griffe markieren die Grenze zwischen Schlaf- und Wachzeit.
+      // Tagaktiv: wach von "wach ab" bis "schlaf ab" — also AUSSERHALB des
+      // Schlaffensters. Nachtaktiv: genau umgekehrt.
+      activeRange: (sleepFrom, wake) => (el('enDayActive').checked
+        ? { from: wake, to: sleepFrom }
+        : { from: sleepFrom, to: wake }),
+      text: (from, to) => `aktiv ${hh(from)} – ${hh(to)}`,
+      watch: ['enDayActive'],
+    });
   }
 
   el('fmCancel').onclick = () => { leaveEditing(); close('editor'); };

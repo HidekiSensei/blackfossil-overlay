@@ -52,10 +52,6 @@ export function check(id, label, checked = false) {
 // Zwei-Punkt-Schieber fuer einen Stundenbereich. Zwei uebereinanderliegende
 // range-Elemente — HTML kennt keinen Regler mit zwei Griffen. step=1 sorgt fuers
 // Einrasten auf volle Stunden.
-//
-// Der Bereich darf ueber Mitternacht laufen (z. B. 21 bis 6). Deshalb wird die
-// Fuellung in solchen Faellen in ZWEI Stuecke geteilt, statt sie kaputt
-// rueckwaerts zu zeichnen.
 export function hourRange(idFrom, idTo, label, from, to) {
   return `<div class="cp-field"><label class="cp-label">${esc(label)}</label>`
     + `<div class="cp-hours" data-hours="${idFrom}|${idTo}">`
@@ -66,31 +62,50 @@ export function hourRange(idFrom, idTo, label, from, to) {
     + `</div><div class="cp-hours-val"><span data-hours-label="${idFrom}"></span></div></div>`;
 }
 
-// Fuellung und Beschriftung nachziehen. Muss nach dem Einfuegen ins DOM einmal
-// aufgerufen werden und haengt sich selbst an die Regler.
-export function bindHourRange(root, idFrom, idTo, text) {
+// Fuellung und Beschriftung nachziehen.
+//
+// Gefuellt wird die AKTIVE Zeit, nicht die Ruhezeit — der blaue Balken soll
+// zeigen, wann etwas passiert. Welche Seite der beiden Griffe das ist,
+// entscheidet `activeRange`: es bekommt die beiden Stunden und liefert das
+// tatsaechlich aktive Fenster zurueck. Damit kann ein Schalter daneben zwischen
+// "aktiv zwischen den Griffen" und "aktiv ausserhalb (ueber Nacht)" umschalten,
+// ohne dass sich die Griffe bewegen.
+//
+// Laeuft das Fenster ueber Mitternacht, wird die Fuellung in ZWEI Stuecke
+// geteilt statt rueckwaerts gezeichnet.
+export function bindHourRange(root, idFrom, idTo, { activeRange, text, watch = [] }) {
   const box = root.querySelector(`[data-hours="${idFrom}|${idTo}"]`);
-  if (!box) return;
+  if (!box) return () => {};
   const a = box.querySelector('[data-fill="a"]');
   const b = box.querySelector('[data-fill="b"]');
   const f = root.querySelector('#' + idFrom);
   const t = root.querySelector('#' + idTo);
   const lbl = root.querySelector(`[data-hours-label="${idFrom}"]`);
-  const pct = (h) => (h / 23) * 100;
+  const pct = (h) => (h / 24) * 100;
+
   const upd = () => {
-    const hf = Number(f.value), ht = Number(t.value);
-    if (hf <= ht) {
-      a.style.left = pct(hf) + '%'; a.style.width = (pct(ht) - pct(hf)) + '%';
+    const { from, to } = activeRange(Number(f.value), Number(t.value));
+    if (from === to) {                     // ganzer Tag aktiv
+      a.style.left = '0%'; a.style.width = '100%'; b.style.width = '0%';
+    } else if (from < to) {
+      a.style.left = pct(from) + '%'; a.style.width = (pct(to) - pct(from)) + '%';
       b.style.width = '0%';
     } else {
-      // ueber Mitternacht: zwei Stuecke
-      a.style.left = pct(hf) + '%'; a.style.width = (100 - pct(hf)) + '%';
-      b.style.left = '0%'; b.style.width = pct(ht) + '%';
+      a.style.left = pct(from) + '%'; a.style.width = (100 - pct(from)) + '%';
+      b.style.left = '0%'; b.style.width = pct(to) + '%';
     }
-    if (lbl) lbl.textContent = text(hf, ht);
+    if (lbl) lbl.textContent = text(from, to);
   };
-  f.oninput = upd; t.oninput = upd;
+
+  f.oninput = upd;
+  t.oninput = upd;
+  // Elemente, die das aktive Fenster mitbestimmen (z. B. der Tagaktiv-Schalter).
+  for (const id of watch) {
+    const el2 = root.querySelector('#' + id);
+    if (el2) el2.addEventListener('change', upd);
+  }
   upd();
+  return upd;
 }
 
 export function row(...cells) { return `<div class="cp-row">${cells.join('')}</div>`; }
