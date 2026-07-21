@@ -241,12 +241,12 @@ input[type="range"] { accent-color: var(--accent); }
 #cpMapCanvas:active { cursor: grabbing; }
 
 /* ── Scrollbars ───────────────────────────────────────────────────────── */
-.cp-pad::-webkit-scrollbar, .cp-scroll::-webkit-scrollbar { width: 9px; }
-.cp-pad::-webkit-scrollbar-thumb, .cp-scroll::-webkit-scrollbar-thumb {
+.cp-pad::-webkit-scrollbar, .cp-scroll::-webkit-scrollbar, .cp-lex-list::-webkit-scrollbar { width: 9px; }
+.cp-pad::-webkit-scrollbar-thumb, .cp-scroll::-webkit-scrollbar-thumb, .cp-lex-list::-webkit-scrollbar-thumb {
   background: rgba(255, 255, 255, 0.13); border-radius: 999px;
 }
-.cp-pad::-webkit-scrollbar-thumb:hover, .cp-scroll::-webkit-scrollbar-thumb:hover { background: rgba(255, 255, 255, 0.22); }
-.cp-pad::-webkit-scrollbar-track, .cp-scroll::-webkit-scrollbar-track { background: transparent; }
+.cp-pad::-webkit-scrollbar-thumb:hover, .cp-scroll::-webkit-scrollbar-thumb:hover, .cp-lex-list::-webkit-scrollbar-thumb:hover { background: rgba(255, 255, 255, 0.22); }
+.cp-pad::-webkit-scrollbar-track, .cp-scroll::-webkit-scrollbar-track, .cp-lex-list::-webkit-scrollbar-track { background: transparent; }
 
 /* ── Zweispaltige Panels (Liste links, Detail rechts) ───────────────────── */
 .cp-split { display: flex; gap: var(--cp-s4); align-items: flex-start; }
@@ -546,3 +546,58 @@ input[type="range"] { accent-color: var(--accent); }
 .cp-rel-li::before { content: '·'; position: absolute; left: 4px; color: var(--muted); }
 .cp-rel-ver { color: var(--accent-2); font-weight: 700; }
 .cp-rel-body strong { color: #e8e6ef; }
+
+/* ── Lexikon ───────────────────────────────────────────────────────────────
+   Optik bewusst nah am Overlay-Lexikon (Bild-Banner, Diaet-Punkt, gruene
+   Staerken / rote Schwaechen, Tipp-/Wissenswert-Box) — dieselben Farben wie
+   overlay.js DIET_DOT, damit beide Oberflaechen dieselbe Sprache sprechen. */
+.cp-diet-carni { color: #ef4444; }
+.cp-diet-herbi { color: #22c55e; }
+.cp-diet-both  { color: #f59e0b; }
+
+/* Vorschaubild in der Liste — Groesse wie im Overlay (30px). */
+.cp-lex-thumb {
+  width: 30px; height: 30px; flex: none;
+  border-radius: 6px; object-fit: cover;
+  background: rgba(0, 0, 0, 0.25);
+  margin-right: var(--cp-s2);
+}
+
+/* Grosses Artenbild im Detail. object-fit:contain — die Renders haben stark
+   unterschiedliche Seitenverhaeltnisse (Deino lang, Ptera hoch), Zuschneiden
+   wuerde Koepfe/Schwaenze kappen. */
+.cp-lex-img {
+  display: block; width: 100%; max-height: 200px;
+  object-fit: contain; border-radius: var(--cp-r-md);
+  background: rgba(0, 0, 0, 0.25);
+  margin-bottom: var(--cp-s3);
+}
+
+.cp-lex-head { font-size: 17px; font-weight: 650; margin-bottom: var(--cp-s1); }
+.cp-lex-meta { font-size: 13px; color: #ddd; margin-bottom: var(--cp-s3); }
+
+.cp-lex-cols { display: flex; gap: var(--cp-s4); flex-wrap: wrap; margin-top: var(--cp-s3); }
+.cp-lex-col { flex: 1; min-width: 180px; }
+.cp-lex-col-head { font-weight: 600; margin-bottom: var(--cp-s1); }
+.cp-lex-good .cp-lex-col-head { color: #22c55e; }
+.cp-lex-bad  .cp-lex-col-head { color: #ef4444; }
+.cp-lex-col ul { margin: 0 0 0 16px; padding: 0; font-size: 13px; line-height: 1.6; }
+.cp-lex-good li { color: #cbd5b0; }
+.cp-lex-bad  li { color: #e4b8b8; }
+
+.cp-lex-tip {
+  margin-top: var(--cp-s3); padding: var(--cp-s2) var(--cp-s3);
+  background: rgba(var(--accent-rgb), 0.12);
+  border: 1px solid var(--cp-line); border-radius: var(--cp-r-sm);
+  font-size: 13px;
+}
+.cp-lex-fact {
+  margin-top: var(--cp-s2); padding: var(--cp-s2) var(--cp-s3);
+  background: var(--cp-surface); border: 1px solid var(--cp-line);
+  border-radius: var(--cp-r-sm); font-size: 13px; line-height: 1.55;
+}
+
+.cp-lex-list { max-height: calc(100vh - 260px); min-height: 300px; overflow-y: auto; }
+
+.cp-lex-nav { display: flex; gap: var(--cp-s2); margin-top: var(--cp-s4); }
+.cp-lex-nav .cp-btn { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
