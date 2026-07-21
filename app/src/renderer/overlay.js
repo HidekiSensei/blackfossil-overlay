@@ -4150,6 +4150,7 @@ function toggleFeature(id) {
   else if (id === 'lootbox') renderLootbox();
   else if (id === 'support') { renderSupport(); startSupportPoll(); }
   else if (id === 'notifications') renderNotifications();
+  else if (id === 'leaderboard') renderLeaderboard();
   el(id).style.display = 'block';
   updateInteractive();
 }
@@ -4159,13 +4160,102 @@ function closeAllFeatures(skipInteractive) {
     revertSkinPreview();
     showToast('🎨 Vorschau verworfen — Skin zurückgesetzt', '');
   }
-  ['dinoInfo', 'skinEditor', 'garage', 'market', 'group', 'profile', 'lexikon', 'quests', 'lootbox', 'support', 'notifications'].forEach((id) => { el(id).style.display = 'none'; });
+  ['dinoInfo', 'skinEditor', 'garage', 'market', 'group', 'profile', 'lexikon', 'quests', 'leaderboard', 'lootbox', 'support', 'notifications'].forEach((id) => { el(id).style.display = 'none'; });
   const tc = el('ticketChat'); if (tc) tc.style.display = 'none';   // Ticket-Chat mit schließen
   stopQuestPoll();
   stopSupportPoll();
   if (featureOpen === 'dinoInfo') stopDinoInfo();
   featureOpen = null;
   if (!skipInteractive) updateInteractive();
+}
+
+// ── 🐾 Wandern: persönliche Wander-Statistik + Custom-Name + Leaderboard ──────
+// Frisch-bereiste Distanz je Kategorie (Backend: /leaderboard/migration, /me/migration,
+// /me/dino/name). Top-3 hervorgehoben; Kategorie- + Woche/Gesamt-Umschalter.
+const LB_CATS = [
+  { key: 'walk', icon: '🏃', label: 'Laufen' },
+  { key: 'flight', icon: '🦅', label: 'Fliegen' },
+  { key: 'swim', icon: '🌊', label: 'Schwimmen' },
+];
+let lbState = { cat: 'walk', scope: 'weekly' };
+
+function lbFmtDist(m) {
+  m = m || 0;
+  return m >= 1000 ? `${(m / 1000).toFixed(2)} km` : `${Math.round(m)} m`;
+}
+
+function renderLeaderboard() {
+  const panel = el('leaderboard');
+  panel.classList.remove('pf-wide');
+  const catBtns = LB_CATS.map((c) => `<button class="lb-tab${c.key === lbState.cat ? '' : ' secondary'}" data-lbcat="${c.key}">${c.icon} ${c.label}</button>`).join('');
+  panel.innerHTML = `<h2>🐾 Wandern <span style="font-weight:400;font-size:12px;color:var(--muted)">— frisch bereiste Distanz</span></h2>
+    <div id="lbMine" style="margin-bottom:14px"><div class="lb-muted">Lädt…</div></div>
+    <div class="lb-controls">
+      <div class="lb-tabs" id="lbCatTabs">${catBtns}</div>
+      <div style="flex:1"></div>
+      <div class="lb-tabs">
+        <button class="lb-tab${lbState.scope === 'weekly' ? '' : ' secondary'}" data-lbscope="weekly">📅 Woche</button>
+        <button class="lb-tab${lbState.scope === 'total' ? '' : ' secondary'}" data-lbscope="total">🏆 Gesamt</button>
+      </div>
+    </div>
+    <div id="lbBoard"><div class="lb-muted">Lädt…</div></div>
+    <button class="closeFeature secondary" style="margin-top:12px">Schließen</button>`;
+  const cb = panel.querySelector('.closeFeature'); if (cb) cb.onclick = () => closeAllFeatures();
+  panel.querySelectorAll('[data-lbcat]').forEach((b) => { b.onclick = () => { lbState.cat = b.dataset.lbcat; renderLeaderboard(); }; });
+  panel.querySelectorAll('[data-lbscope]').forEach((b) => { b.onclick = () => { lbState.scope = b.dataset.lbscope; renderLeaderboard(); }; });
+  lbLoadMine();
+  lbLoadBoard();
+}
+
+async function lbLoadMine() {
+  const box = el('lbMine'); if (!box) return;
+  let d;
+  try { d = await svApi('GET', '/me/migration'); }
+  catch (e) { box.innerHTML = `<div class="lb-muted">Meine Wanderung nicht ladbar (${escapeHtml(e.message)}).</div>`; return; }
+  const live = (d.live || []).reduce((m, c) => { m[c.category] = c; return m; }, {});
+  const recs = (d.records || []).reduce((m, r) => { m[r.category] = r; return m; }, {});
+  const cur = live[lbState.cat] || {};
+  const rec = recs[lbState.cat];
+  const meta = LB_CATS.find((c) => c.key === lbState.cat) || LB_CATS[0];
+  box.innerHTML = `
+    <div class="lb-mine">
+      <div class="lb-mine-name">
+        <div class="lb-muted" style="margin-bottom:4px">🦖 Name deines aktiven Dinos</div>
+        <div style="display:flex;gap:6px">
+          <input id="lbName" class="lb-input" maxlength="24" placeholder="unbenannt" value="${escapeHtml(d.dinoName || '')}">
+          <button id="lbNameSave" style="flex:none;width:auto;padding:7px 13px">💾</button>
+        </div>
+      </div>
+      <div class="lb-mine-stats">
+        <div class="lb-stat"><div class="lb-stat-l">${meta.icon} Diese Woche</div><div class="lb-stat-v">${lbFmtDist(cur.weeklyM)}</div></div>
+        <div class="lb-stat"><div class="lb-stat-l">Σ Gesamt (Dino)</div><div class="lb-stat-v">${lbFmtDist(cur.totalM)}</div></div>
+        <div class="lb-stat"><div class="lb-stat-l">🏆 Rekord</div><div class="lb-stat-v">${rec ? lbFmtDist(rec.distanceM) : '—'}</div></div>
+      </div>
+    </div>`;
+  const save = el('lbNameSave'), inp = el('lbName');
+  if (save && inp) save.onclick = async () => {
+    try { await svApi('POST', '/me/dino/name', { name: inp.value.trim() }); showToast('🦖 Dino-Name gespeichert', 'success'); lbLoadBoard(); }
+    catch (e) { showToast(e.message, 'error'); }
+  };
+}
+
+async function lbLoadBoard() {
+  const box = el('lbBoard'); if (!box) return;
+  let d;
+  try { d = await svApi('GET', `/leaderboard/migration?scope=${lbState.scope}&category=${lbState.cat}`); }
+  catch (e) { box.innerHTML = `<div class="lb-muted">Leaderboard nicht ladbar (${escapeHtml(e.message)}).</div>`; return; }
+  const rows = d.rows || [];
+  if (!rows.length) { box.innerHTML = '<div class="lb-muted">Noch keine Einträge — geh wandern! 🐾</div>'; return; }
+  const medal = (r) => r === 1 ? '🥇' : r === 2 ? '🥈' : r === 3 ? '🥉' : `<span class="lb-rank">${r}</span>`;
+  box.innerHTML = `<div class="lb-list">${rows.map((r) => {
+    const nm = r.discordName || r.dinoName || r.steamId;
+    const dn = r.dinoName ? `<span class="lb-dino">🦖 ${escapeHtml(r.dinoName)}</span>` : '';
+    return `<div class="lb-row${r.rank <= 3 ? ' lb-top' : ''}">
+      <div class="lb-medal">${medal(r.rank)}</div>
+      <div class="lb-who"><div class="lb-name">${escapeHtml(nm)}</div>${dn}</div>
+      <div class="lb-dist">${lbFmtDist(r.distanceM)}</div>
+    </div>`;
+  }).join('')}</div>`;
 }
 
 // ── Gruppen-Ansicht (Mitglieder mit gleicher groupId, Partner + Distanz) ─────
@@ -7266,6 +7356,7 @@ const DOCK_ICONS = {
   server:   dockSvg('<rect x="2" y="3" width="20" height="6" rx="1"/><rect x="2" y="12" width="20" height="6" rx="1"/><path d="M6 6h.01M6 15h.01"/>'),
   srvctl:   dockSvg('<rect x="2" y="3" width="20" height="14" rx="2"/><path d="M8 21h8M12 17v4"/>'),
   quests:   dockSvg('<path d="M4 22V4a1 1 0 0 1 1-1h12l-2 4 2 4H6"/><line x1="4" y1="22" x2="4" y2="15"/>'),
+  leaderboard: dockSvg('<circle cx="6" cy="19" r="3"/><path d="M9 19h8.5a3.5 3.5 0 0 0 0-7h-11a3.5 3.5 0 0 1 0-7H15"/><circle cx="18" cy="5" r="3"/>'),
   notifications: dockSvg('<path d="M6 8a6 6 0 0 1 12 0c0 7 3 9 3 9H3s3-2 3-9"/><path d="M10.3 21a1.94 1.94 0 0 0 3.4 0"/>'),
   close:    dockSvg('<line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/>'),
 };
