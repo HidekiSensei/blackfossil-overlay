@@ -4,7 +4,7 @@ import { apiErr, armConfirm } from './core.js';
 import { makePerms, can, CAPS } from './perms.js';
 import { NAV_GROUPS, NAV_SETTINGS, itemFor } from '../companion/nav.js';
 import { clean, canon } from '../companion/panels/dinos.js';
-import { initUpdates, getUpdate, hasUpdate, onUpdateChange, updateText } from '../companion/updates.js';
+import { initUpdates, getUpdate, hasUpdate, onUpdateChange, updateText, kurzFehler } from '../companion/updates.js';
 import { makeTheme, themeFromHex, hexToRgb, effectiveTier, surfacesFromAccent, THEMES, ABO_ORDER } from './theme.js';
 let fail = 0;
 const eq = (a, b, n) => { const ok = a === b; if (!ok) fail++; console.log(`${ok?'ok  ':'FAIL'} ${n}: ${JSON.stringify(a)} ${ok?'==':'!='} ${JSON.stringify(b)}`); };
@@ -305,6 +305,20 @@ const ab3 = onUpdateChange(() => { m++; });
 gefeuert.none();
 eq(m, 1, 'ein werfender Horcher blockiert die uebrigen nicht');
 ab2(); ab3();
+
+
+// Fehlermeldungen von electron-updater sind 400+ Zeichen Stacktrace und landen
+// in einer Statuszeile. Der haeufigste Fall (404) hat zudem eine Ursache, die
+// die Rohmeldung nicht nennt.
+eq(kurzFehler('HttpError: 404 Not Found "method: GET url: https://x/y.yml" at createHttpError (/tmp/a.js:1)').includes('404'),
+   true, '404 wird erkannt');
+eq(kurzFehler('irgendwas 404 irgendwo').length < 120, true, '404-Meldung ist kurz');
+eq(kurzFehler('ENOTFOUND host\n    at ClientRequest.emit (node:events:518)'), 'ENOTFOUND host',
+   'Stack nach echtem Umbruch abgeschnitten');
+eq(kurzFehler('Kaputt\\n    at Foo (/x.js:1)'), 'Kaputt', 'Stack nach ausgeschriebenem \\n abgeschnitten');
+eq(kurzFehler('Sehr lange Meldung ' + 'x'.repeat(300)).length <= 160, true, 'gedeckelt auf 160 Zeichen');
+eq(kurzFehler(''), '', 'leer bleibt leer');
+eq(kurzFehler(null), '', 'null bleibt leer');
 
 console.log(fail ? `\n${fail} FEHLGESCHLAGEN` : '\nalle bestanden');
 process.exit(fail ? 1 : 0);
