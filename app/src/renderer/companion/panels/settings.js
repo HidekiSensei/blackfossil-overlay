@@ -11,6 +11,7 @@
 import * as U from '../ui.js';
 import { escapeHtml } from '../../shared/format.js';
 import { THEMES } from '../../shared/theme.js';
+import { getUpdate, onUpdateChange, updateText, checkUpdate, downloadUpdate, installUpdate } from '../updates.js';
 
 let C = null;
 let tab = 'software';
@@ -23,6 +24,11 @@ const TABS = [
 
 // ctx: { api, tokenBase(), theme, perms, version(), updates, onLogout, toast }
 export function initSettings(ctx) { C = ctx; }
+
+// Von aussen den Software-Reiter vorwaehlen. Genutzt, wenn der rote Punkt in
+// der Navigation steht: wer wegen eines Updates auf Settings klickt, will
+// nicht erst noch den richtigen Reiter suchen.
+export function openSoftwareTab() { tab = 'software'; }
 
 export function renderSettings(root) {
   if (!TABS.some((t) => t.id === tab)) tab = 'software';
@@ -62,33 +68,35 @@ function renderSoftware(box) {
 // Der Feed liegt im eigenen Backend (/overlay, Kanal "companion"). Die
 // Versionsnummer stammt aus derselben package.json wie das Overlay — beide
 // Apps tragen damit zwangslaeufig dieselbe Version.
+// Zeigt nur noch an, was companion/updates.js weiss. Frueher registrierte
+// diese Funktion die IPC-Zuhoerer selbst — bei jedem Oeffnen des Reiters neu,
+// ohne sie je zu entfernen, und vor dem ersten Oeffnen ueberhaupt nicht.
+// Meldungen des stuendlichen Timers gingen deshalb verloren.
 function wireUpdates(box) {
   const st = box.querySelector('#cpUpdStatus');
   const btn = box.querySelector('#cpUpdBtn');
   if (!st || !btn) return;
-  const set = (t) => { st.textContent = t; };
-  const u = C.updates;
 
-  btn.onclick = () => { set('Suche nach Updates…'); u.check(); };
-  // Die Handler bleiben ueber Panel-Neuaufbauten hinweg registriert, deshalb
-  // pruefen sie, ob ihre Elemente noch im Dokument haengen — sonst schreibt
-  // ein alter Handler in ein laengst ersetztes DOM.
-  const live = () => st.isConnected;
-  u.onNone(() => { if (live()) set('Aktuell — kein Update verfügbar.'); });
-  u.onAvailable((v) => {
-    if (!live()) return;
-    set(`Version ${v} verfügbar.`);
-    btn.textContent = 'Herunterladen';
-    btn.onclick = () => { set('Lädt…'); u.download(); };
-  });
-  u.onProgress((p) => { if (live()) set(`Lädt… ${p}%`); });
-  u.onReady((v) => {
-    if (!live()) return;
-    set(`Version ${v} bereit.`);
-    btn.textContent = 'Neu starten & installieren';
-    btn.onclick = () => u.install();
-  });
-  u.onError((m) => { if (live()) set('Update fehlgeschlagen: ' + m); });
+  const zeichnen = (u) => {
+    if (!st.isConnected) { ab(); return; }   // Reiter gewechselt → abmelden
+    st.textContent = updateText(u);
+    if (u.state === 'bereit') {
+      btn.textContent = 'Neu starten & installieren';
+      btn.onclick = () => installUpdate(C.bf);
+    } else if (u.state === 'verfuegbar') {
+      btn.textContent = 'Herunterladen';
+      btn.onclick = () => downloadUpdate(C.bf);
+    } else {
+      btn.textContent = 'Nach Updates suchen';
+      btn.onclick = () => checkUpdate(C.bf);
+    }
+    btn.disabled = u.state === 'pruefe' || u.state === 'laedt';
+  };
+
+  // Abmelden, sobald die Elemente aus dem Dokument fliegen — sonst waechst die
+  // Zuhoererliste mit jedem Reiterwechsel.
+  const ab = onUpdateChange(zeichnen);
+  zeichnen(getUpdate());
 }
 
 // Release-Notes kommen aus derselben Datei wie beim Overlay — die Apps laufen
