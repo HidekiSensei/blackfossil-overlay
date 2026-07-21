@@ -7,58 +7,43 @@
 
 ## [Unreleased]
 
-## v1.10.0 — Die Companion-App 🖥️
+## v1.10.0 — Wandern & Server-Übersicht 🥾
 
 ### ✨ Neu
 
-- **Companion-App** — eine zweite Anwendung neben dem Overlay, die **ohne laufendes Spiel**
-  funktioniert. Damit sind Karte, Team- und Server-Werkzeuge erreichbar, ohne selbst online zu sein.
-  Sie installiert sich getrennt und läuft parallel zum Overlay.
-  - **Vollbild-Karte** mit allen Spielern: Namen, Dino und Wachstum, Spuren der letzten Minuten,
-    Rechteck-Auswahl, Zoom bis 15×, Heatmap.
-  - **Karten-Editor** für Zonen, Teleports und KI-Encounter — anlegen, verschieben, Punkte
-    hinzufügen und löschen, alles hinter einem Bearbeiten-Schalter.
-  - **Spieler** — alle Konten durchsuchbar, Anwesende zuerst. Im Detail: Nachricht schicken,
-    beschenken, folgen, Blitzschlag. Mehrere gleichzeitig per Strg.
-  - **Tokens** — Dino-Token mit Art, Geschlecht, Wachstum, Primes und Mutationen; dazu die Garage
-    eines Spielers ansehen, bearbeiten und aufräumen. PvP-Turnier-Builds vergeben.
-  - **Dino-Verwaltung**, **Welt** (Tageszeit, Wetter, Wachstums-Stopp), **Ankündigungen**,
-    **Support-Tickets**, **Verwarnungen**, **Accounts**, **Lexikon** und ein **Staff-Handbuch**.
-  - **Player- und Team-Audit** als echte Tabellen mit Filtern und Sortierung.
-  - **Mithören**: Admins können den Sprachfunk im Umkreis eines Spielers verfolgen.
-
-- **Wandern** im Overlay — Bestenliste fürs Laufen, Fliegen und Schwimmen, mit Wochen- und
-  Gesamtwertung, persönlichen Rekorden und Live-Distanzanzeige. Dinos lassen sich benennen.
-
-- **Farbschemata** in der Companion: sieben Vorlagen plus eigene Farbe. Ein Farbwert genügt —
-  Akzente, Rahmen und Hintergründe leiten sich daraus ab.
+- **Wandern** — Bestenliste fürs Laufen, Fliegen und Schwimmen, mit Wochen- und Gesamtwertung,
+  persönlichen Rekorden und einer Live-Distanzanzeige im HUD.
+- **Dino-Namen**: Dinos in der Garage lassen sich benennen; der Name bleibt am Dino.
 
 ### 🔧 Verbessert
 
-- **Server-Panel** im Overlay in Reiter aufgeteilt, mit neuem Übersichts-Dashboard: Auslastung,
-  Festplatte, Datenbank-Antwortzeit und ein 24-Stunden-Verlauf der Spielerzahl.
-- **Updates und Änderungshinweise** kommen jetzt vom eigenen Server statt von GitHub. Für dich
-  ändert sich am Ablauf nichts — es aktualisiert sich weiterhin von selbst.
-- Ein **roter Punkt** an den Einstellungen zeigt an, wenn eine neue Version bereitsteht; ein Klick
-  führt direkt dorthin.
+- **Server-Panel** in Reiter aufgeteilt, mit neuem Übersichts-Dashboard: Auslastung, Festplatte,
+  Datenbank-Antwortzeit und ein 24-Stunden-Verlauf der Spielerzahl.
+- **Updates und Änderungshinweise** kommen jetzt vom eigenen Server statt von GitHub. Am Ablauf
+  ändert sich für dich nichts — das Overlay aktualisiert sich weiterhin von selbst.
 
 ### 🐛 Behoben
 
-- **Windows**: Das Overlay lag im Fenstermodus versetzt über dem Spiel und misst sich jetzt korrekt ein.
 - **Sprachfunk**: Kurzes Flackern des Todes-Zustands konnte die Tonkette zerlegen — entprellt.
 - **Zuschauen**: Im Zuschauer-Modus zeigt die Karte einen Punkt statt eines Blickrichtungs-Pfeils,
   und der Kompass blendet sich aus.
-- Kartenmarker behalten ihre Bedeutung, statt sich mitzufärben — ein Teleportpunkt sieht überall
-  gleich aus.
 
 ### Intern
 
-- Auto-Update und Release-Notes laufen über das eigene Backend (`/overlay`), damit das Repository
-  privat werden kann. Overlay und Companion nutzen getrennte Kanäle.
-- Neuer CI-Riegel gegen versehentlich committete Test-Umleitungen (Produktions-URL, Ports).
-- Installer werden nicht mehr blind zwischengespeichert — der Dateiname ist versionslos, wodurch
-  bis zu einen Tag lang die alte Fassung ausgeliefert wurde.
-- Rang-Prüfung für das Schreiben der Class-Limits ergänzt (fehlte vollständig).
+- **Companion-App** — zweite Anwendung neben dem Overlay, die ohne laufendes Spiel funktioniert.
+  Vorerst **Beta und dem Team vorbehalten**. Enthaelt Vollbild-Karte mit Karten-Editor,
+  Spielerverwaltung, Tokens, Dino- und Weltverwaltung, Ankuendigungen, Support, Verwarnungen,
+  Accounts, Audits, Lexikon, Staff-Handbuch und Mithoeren.
+- Farbschemata in der Companion (sieben Vorlagen plus eigene Farbe, alles aus einem Farbwert
+  abgeleitet); roter Punkt an den Einstellungen bei verfuegbarem Update.
+- Auto-Update und Release-Notes laufen ueber das eigene Backend (`/overlay`), damit das Repository
+  privat werden kann. Overlay und Companion nutzen getrennte Kanaele.
+- Windows: Overlay misst sich im Fenstermodus korrekt aufs Spielfenster ein.
+- Kartenmarker folgen bewusst NICHT dem Farbschema — ein Teleportpunkt sieht ueberall gleich aus.
+- CI-Riegel gegen versehentlich committete Test-Umleitungen (Produktions-URL, Ports).
+- Installer werden nicht mehr blind zwischengespeichert; der Dateiname ist versionslos, wodurch bis
+  zu einen Tag lang die alte Fassung ausgeliefert wurde.
+- Rang-Pruefung fuer das Schreiben der Class-Limits ergaenzt (fehlte vollstaendig).
 
 ## v1.9.2 — Menü-Frischekur & Software-Tab ✨
 
