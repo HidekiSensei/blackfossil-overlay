@@ -550,7 +550,7 @@ function toggleCompass() { compassHidden = !compassHidden; localStorage.setItem(
 function compassLoop() {
   compassRAF = requestAnimationFrame(compassLoop);
   const online = me && typeof me.heading === 'number';
-  const hide = compassHidden || (me && me.isFlying); // Fly-Mode: keine Blickrichtung → Kompass aus
+  const hide = compassHidden || (me && me.isSpectating); // Fly-Mode: keine Blickrichtung → Kompass aus
   compassSetHidden(hide);
   if (hide) { compassHd = null; return; }
   if (!online) { compassHd = null; renderCompass(); return; }

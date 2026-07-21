@@ -533,7 +533,7 @@ function headingMapAngle(p) {
 function arrowAngle(p) { return (typeof p.heading === 'number') ? headingMapAngle(p) : ((typeof p.dirAngle === 'number') ? p.dirAngle : -Math.PI / 2); }
 function drawGroupMember(ctx, px, py, p, scale) {
   const col = groupColorFor(p.steamId);
-  if (p.isFlying) { // Fly-/Admin-Modus: Punkt statt Pfeil (keine Blickrichtung)
+  if (p.isSpectating) { // Fly-/Admin-Modus: Punkt statt Pfeil (keine Blickrichtung)
     ctx.beginPath(); ctx.arc(px, py, 4 * scale, 0, Math.PI * 2);
     ctx.fillStyle = col; ctx.fill();
     ctx.lineWidth = 1.2 * scale; ctx.strokeStyle = 'rgba(0,0,0,0.8)'; ctx.stroke();
@@ -934,7 +934,7 @@ function placeLabels(ctx, labels, scale, opts, w, h) {
 function drawPlayer(ctx, px, py, p, scale) {
   const sz = 9 * SELF_SIZE * scale;
   ctx.save(); ctx.shadowColor = SELF_COLOR; ctx.shadowBlur = 7 * scale;   // Glow → klar erkennbar
-  if (p.isFlying) {
+  if (p.isSpectating) {
     // Fly-/Admin-Modus: keine Blickrichtung → Punkt statt Pfeil.
     ctx.beginPath(); ctx.arc(px, py, sz * 0.5, 0, Math.PI * 2);
     ctx.fillStyle = SELF_COLOR; ctx.fill();
