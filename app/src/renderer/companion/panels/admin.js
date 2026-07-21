@@ -15,7 +15,6 @@ let tab = 'welt';
 // Rechte-Zuordnung steht dort, hier nur die Beschriftung.
 const TITLES = {
   welt: ['Welt', 'Welt-Einstellungen des laufenden Servers.'],
-  limits: ['Class-Limits', 'Erlaubte Arten und Obergrenzen.'],
   ops: ['Betrieb', 'Zustand der Dienste hinter dem Server.'],
 };
 
@@ -40,7 +39,6 @@ export function renderAdmin(root, view) {
     <div id="adBody"></div>
   </div>`;
   if (tab === 'welt') renderWelt();
-  else if (tab === 'limits') renderLimits();
   else renderOps();
 }
 
@@ -82,20 +80,6 @@ async function renderWelt() {
   for (const w of WEATHER) el(`adW_${w}`).onclick = () => send('/admin/world/weather', { weather: w }, `Wetter: ${w}`);
 }
 
-async function renderLimits() {
-  const box = el('adBody');
-  box.innerHTML = U.card(U.muted('Lade Limits…'));
-  try {
-    const d = await C.api('GET', '/admin/dino-limits');
-    const limits = d.limits || d || {};
-    const names = Object.keys(limits).sort();
-    box.innerHTML = names.length
-      ? U.card(`<div class="cp-list cp-scroll">` + names.map((sp) =>
-          U.item(sp, null, U.badge(String(limits[sp])))).join('') + `</div>`)
-        + U.hint('Bearbeiten kommt mit der Übernahme des vollen Editors.')
-      : U.card(U.empty('Keine Limits gesetzt.'));
-  } catch (e) { box.innerHTML = U.card(U.muted('Limits nicht abrufbar: ' + e.message)); }
-}
 
 async function send(path, body, okMsg) {
   try { await C.api('POST', path, body); C.toast(okMsg, 'success'); }

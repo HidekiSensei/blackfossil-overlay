@@ -24,6 +24,10 @@ export function makePerms(token, opts = {}) {
     online: !!opts.online,
     name: token.name || '',
     rank: token.rank || '',
+    // Eigene SteamID. /token nennt sie `identity` (es ist die LiveKit-Identity,
+    // die dort gleich der SteamID ist) — deshalb der abweichende Feldname.
+    // Gebraucht ueberall dort, wo man eine Aktion auf sich selbst richtet.
+    steamId: token.identity || '',
   };
 }
 
@@ -54,6 +58,7 @@ export const CAPS = {
   'limits.write':      'admin',   // POST /admin/dino-limits
   'ops.read':          'admin',   // GET  /admin/ops/*     (h.require "admin")
   'voice.listen':      'admin',   // POST /voice/listen    (voiceIsAdmin + Audit)
+  'dino.polymorph':    'admin',   // POST /admin/players/{id}/polymorph (WorldRoutes = admin)
 
   // ── Server ────────────────────────────────────────────────────────────
   'server.status':     'staff',   // GET  /admin/server/status

@@ -27,6 +27,7 @@ import {
   initListen, startListening, stopListening, retarget, setRadius,
   isListening, listenTarget, listenRadius, applyVolumes, audibleCount,
 } from './companion/listen.js';
+import { initDinos, renderDinos } from './companion/panels/dinos.js';
 import { NAV_GROUPS, NAV_SETTINGS, itemFor, collapsedGroups, saveCollapsed } from './companion/nav.js';
 import { initServer, renderServer, stopServer } from './companion/panels/server.js';
 import { initAdmin, renderAdmin } from './companion/panels/admin.js';
@@ -873,8 +874,8 @@ const PANELS = {
   paudit: (r) => renderTeam(r, 'paudit'),
   taudit: (r) => renderTeam(r, 'taudit'),
   welt: (r) => renderAdmin(r, 'welt'),
-  limits: (r) => renderAdmin(r, 'limits'),
   ops: (r) => renderAdmin(r, 'ops'),
+  dinos: renderDinos,
   server: renderServer,
   support: renderSupport,
   lexikon: renderLexikon,
@@ -1126,6 +1127,7 @@ async function boot() {
     players: () => players,
     onChange: updateListenUi,
   });
+  initDinos(panelCtx);
   initEditor(editorCtx);
 
   // Nicht erlaubte Punkte gar nicht erst erzeugen — tote Buttons verrotten.
