@@ -4,6 +4,7 @@ import { apiErr, armConfirm } from './core.js';
 import { makePerms, can, CAPS } from './perms.js';
 import { NAV_GROUPS, NAV_SETTINGS, itemFor } from '../companion/nav.js';
 import { clean, canon } from '../companion/panels/dinos.js';
+import { initUpdates, getUpdate, hasUpdate, onUpdateChange, updateText } from '../companion/updates.js';
 import { makeTheme, themeFromHex, hexToRgb, effectiveTier, surfacesFromAccent, THEMES, ABO_ORDER } from './theme.js';
 let fail = 0;
 const eq = (a, b, n) => { const ok = a === b; if (!ok) fail++; console.log(`${ok?'ok  ':'FAIL'} ${n}: ${JSON.stringify(a)} ${ok?'==':'!='} ${JSON.stringify(b)}`); };
@@ -228,6 +229,69 @@ eq(canon({ Rex: 4 }) === canon({ Rex: 4, Allo: 8 }), false, 'eine zusaetzliche A
 eq(canon(clean({ Rex: 0, Allo: 8 })), 'Allo=8', 'Nullwerte fallen raus');
 eq(canon(clean({})), '', 'leere Karte bleibt leer');
 eq(canon(clean({ Rex: -1 })), '', 'negative Werte fallen raus');
+
+
+// ── Updates ────────────────────────────────────────────────────────────────
+// Kern des Umbaus: die IPC-Zuhoerer werden EINMAL registriert. Vorher tat das
+// der Software-Reiter bei jedem Oeffnen neu (und vor dem ersten Oeffnen gar
+// nicht) — der stuendliche Timer meldete sich also ins Leere, und die
+// Zuhoerer stapelten sich.
+const gefeuert = {};
+const bfStub = {
+  onUpdateAvailable: (f) => { gefeuert.avail = f; zaehl('avail'); },
+  onUpdateNone: (f) => { gefeuert.none = f; zaehl('none'); },
+  onUpdateProgress: (f) => { gefeuert.prog = f; zaehl('prog'); },
+  onUpdateReady: (f) => { gefeuert.ready = f; zaehl('ready'); },
+  onUpdateError: (f) => { gefeuert.err = f; zaehl('err'); },
+};
+const zaehler = {};
+function zaehl(k) { zaehler[k] = (zaehler[k] || 0) + 1; }
+
+initUpdates(bfStub);
+initUpdates(bfStub);   // zweiter Aufruf darf NICHTS zusaetzlich registrieren
+initUpdates(bfStub);
+eq(zaehler.avail, 1, 'IPC-Zuhoerer nur einmal registriert, auch bei Mehrfach-Init');
+
+eq(getUpdate().state, 'idle', 'Startzustand ist idle');
+eq(hasUpdate(), false, 'ohne Update kein roter Punkt');
+
+gefeuert.avail('1.9.9');
+eq(getUpdate().state, 'verfuegbar', 'Meldung setzt den Zustand');
+eq(getUpdate().version, '1.9.9', 'Version uebernommen');
+eq(hasUpdate(), true, 'verfuegbar => roter Punkt');
+eq(updateText(getUpdate()), 'Version 1.9.9 verfügbar.', 'Statustext passt');
+
+gefeuert.prog(42);
+eq(hasUpdate(), false, 'waehrend des Ladens KEIN Punkt — es laeuft ja schon');
+eq(updateText(getUpdate()), 'Lädt… 42%', 'Fortschritt im Text');
+
+gefeuert.ready('1.9.9');
+eq(hasUpdate(), true, 'bereit => Punkt wieder da (Neustart noetig)');
+
+gefeuert.none();
+eq(hasUpdate(), false, 'aktuell => kein Punkt');
+eq(getUpdate().state, 'aktuell', 'Zustand aktuell');
+
+gefeuert.err('Netzwerk weg');
+eq(updateText(getUpdate()), 'Update fehlgeschlagen: Netzwerk weg', 'Fehlertext');
+eq(hasUpdate(), false, 'Fehler ist kein Grund fuer einen Punkt');
+
+// Abmelden muss wirken, sonst waechst die Liste mit jedem Reiterwechsel.
+let n = 0;
+const ab = onUpdateChange(() => { n++; });
+gefeuert.none();
+eq(n, 1, 'angemeldeter Horcher wird benachrichtigt');
+ab();
+gefeuert.none();
+eq(n, 1, 'nach dem Abmelden nicht mehr');
+
+// Ein kaputter Horcher darf die anderen nicht mitreissen.
+const ab2 = onUpdateChange(() => { throw new Error('kaputt'); });
+let m = 0;
+const ab3 = onUpdateChange(() => { m++; });
+gefeuert.none();
+eq(m, 1, 'ein werfender Horcher blockiert die uebrigen nicht');
+ab2(); ab3();
 
 console.log(fail ? `\n${fail} FEHLGESCHLAGEN` : '\nalle bestanden');
 process.exit(fail ? 1 : 0);

@@ -44,6 +44,9 @@ export const NAV_GROUPS = [
       { view: 'paudit', icon: '🔍', label: 'Player-Audit', cap: 'team.playerAudit' },
       { view: 'tokens', icon: '🎁', label: 'Tokens', cap: 'token.dino' },
       { view: 'server', icon: '📢', label: 'Server', cap: 'server.status' },
+      // Handbuch: Nachschlagewerk aller Staff-Funktionen. Staff-Cap (nicht null),
+      // sonst waere die Moderation-Gruppe auch fuer Nicht-Staff sichtbar.
+      { view: 'handbuch', icon: '📖', label: 'Handbuch', cap: 'team.handbuch' },
     ],
   },
   {

@@ -22,7 +22,8 @@ import {
 } from './map.js';
 import { baseClass, escapeHtml } from './shared/format.js';
 import { makeTheme } from './shared/theme.js';
-import { initSettings, renderSettings } from './companion/panels/settings.js';
+import { initSettings, renderSettings, openSoftwareTab } from './companion/panels/settings.js';
+import { initUpdates, hasUpdate, onUpdateChange } from './companion/updates.js';
 import {
   initListen, startListening, stopListening, retarget, setRadius,
   isListening, listenTarget, listenRadius, applyVolumes, audibleCount,
@@ -36,6 +37,7 @@ import { initAdmin, renderAdmin } from './companion/panels/admin.js';
 import { initTeam, renderTeam } from './companion/panels/team.js';
 import { initSupport, renderSupport, stopSupport } from './companion/panels/support.js';
 import { initLexikon, renderLexikon } from './companion/panels/lexikon.js';
+import { initHandbuch, renderHandbuch } from './companion/panels/handbuch.js';
 
 let config = { tokenBase: '' };
 let sessionToken = null;
@@ -882,6 +884,7 @@ const PANELS = {
   server: renderServer,
   support: renderSupport,
   lexikon: renderLexikon,
+  handbuch: renderHandbuch,
   settings: renderSettings,
 };
 
@@ -889,6 +892,7 @@ const PANELS = {
 const settingsCtx = {
   perms: () => perms,
   toast,
+  bf: window.bf,
   theme,
   tokenBase: () => config.tokenBase,
   version: () => window.bf.getVersion(),
@@ -954,9 +958,28 @@ function renderNav() {
   });
 }
 
+// Punkt an- oder abschalten, ohne die Navigation neu zu erzeugen.
+function zeichnePunkt() {
+  const b = document.querySelector('.cp-nav-btn[data-view="settings"]');
+  if (!b) return;
+  const da = b.querySelector('.cp-nav-dot');
+  if (hasUpdate() && !da) {
+    const d = document.createElement('span');
+    d.className = 'cp-nav-dot';
+    d.title = 'Update verfügbar';
+    b.appendChild(d);
+  } else if (!hasUpdate() && da) {
+    da.remove();
+  }
+}
+
 function navBtn(i) {
+  // Roter Punkt nur an Settings, und nur wenn wirklich etwas anliegt. Ein
+  // Punkt, der auch ohne Anlass leuchtet, wird binnen Tagen ignoriert.
+  const punkt = i.view === 'settings' && hasUpdate()
+    ? `<span class="cp-nav-dot" title="Update verfügbar"></span>` : '';
   return `<button class="cp-nav-btn" data-view="${i.view}">`
-    + `<span class="cp-nav-ico">${i.icon}</span> ${escapeHtml(i.label)}</button>`;
+    + `<span class="cp-nav-ico">${i.icon}</span> ${escapeHtml(i.label)}${punkt}</button>`;
 }
 
 // Nach einer Rechte-Aenderung (z. B. eigener Dino kam online) neu aufbauen.
@@ -1076,6 +1099,9 @@ function navTo(view) {
     dirty = true;
     refreshMapObjects();
   }
+  // Steht der Punkt an Settings, ist der Anlass ein Update — dann direkt in
+  // den Software-Reiter, statt den Nutzer suchen zu lassen.
+  if (view === 'settings' && hasUpdate()) openSoftwareTab();
   const render = PANELS[view];
   if (render) {
     try { render(el('cpPanelView')); }
@@ -1122,8 +1148,15 @@ async function boot() {
   // ueber effectiveTier() alles frei (siehe shared/theme.js).
   theme.setFromToken(t);
   initTeam(panelCtx); initAdmin(panelCtx); initServer(panelCtx);
-  initSupport(panelCtx); initLexikon(panelCtx);
+  initSupport(panelCtx); initLexikon(panelCtx); initHandbuch(panelCtx);
   initSettings(settingsCtx);
+  // EINMAL registrieren, nicht erst beim Oeffnen des Software-Reiters: der
+  // stuendliche Timer im Hauptprozess meldet sich sonst ins Leere, und
+  // electron-updater wiederholt die Meldung nicht.
+  initUpdates(window.bf);
+  // Nur den Punkt nachziehen statt die ganze Navigation neu zu bauen — ein
+  // Neuaufbau wuerde den aufgeklappten Zustand der Gruppen anfassen.
+  onUpdateChange(() => zeichnePunkt());
   initListen({
     api, toast,
     can: (c) => can(perms, c),

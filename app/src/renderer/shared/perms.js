@@ -50,6 +50,9 @@ export const CAPS = {
   // Team-Audit ist bewusst STRENGER als Player-Audit: es zeigt, was jedes
   // Staff-Mitglied getan hat (internal/audit requireAdminHuman).
   'team.staffAudit':   'admin',   // GET  /admin/staff-audit
+  // Handbuch: Nachschlagewerk aller Staff-Funktionen — fuer jeden im Team
+  // sichtbar (der Inhalt filtert sich je Rang selbst im Panel).
+  'team.handbuch':     'staff',
 
   // ── Admin / Welt ──────────────────────────────────────────────────────
   'world.read':        'admin',   // GET  /admin/world/*   (WorldRoutes = admin)
