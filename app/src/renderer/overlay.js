@@ -1,5 +1,6 @@
 import { Room, RoomEvent, Track, ParticipantEvent, AudioPresets } from 'livekit-client';
 import { loadMapImage, drawFullMap, drawMinimap, drawHeatmap, normToWorld, worldToNorm, zoneAt, zonesAt, resetCal, solveAffine, getCal, setCalAffine, setZones, newZone, ZONES, ZONE_TYPES, ZONE_META, loadZoneLayer, setZoneLayer, isZoneLayerVisible, setGoldenZone, goldenZoneCenter, groupColorFor, setMarkerStyle, drawAiEncounters } from './map.js';
+import { THEMES, makeTheme, aboIndex } from './shared/theme.js';
 import { el, apiErr, makeApi, makeApiAction, armConfirm } from './shared/core.js';
 import { baseClass, fmtGrow, escapeHtml, fmtTod } from './shared/format.js';
 import { USER_POOLS, userLabel, warnItemUser, matchUser } from './shared/users.js';
@@ -12,92 +13,58 @@ const svArmConfirm = armConfirm;
 const svFmtTod = fmtTod;
 
 // ── Color-Themes (Overlay personalisieren) ───────────────────────────────────
-// rgb = "r,g,b" des Akzents (für rgba(var(--accent-rgb),a) in FX/Blitzen).
-// panel = ans Theme gekoppelte Hintergrundfarbe der Panels (dunkler Akzent-Ton).
-// min = Mindest-Abo-Rang (0 Fossil/Free · 1 Knochen · 2 Bernstein · 3 Obsidian). Gating über aboTier.
-const BF_THEMES = {
-  violett: { name: 'Violett', min: 0, accent: '#8b5cf6', accent2: '#a78bfa', accentD: '#7c3aed', border: 'rgba(139,92,246,0.32)', rgb: '139,92,246', panel: 'rgba(20,13,38,0.82)', inputBg: '#160d28' },
-  blau:    { name: 'Blau',    min: 1, accent: '#3b82f6', accent2: '#60a5fa', accentD: '#2563eb', border: 'rgba(59,130,246,0.32)', rgb: '59,130,246', panel: 'rgba(12,18,38,0.82)', inputBg: '#0c1426' },
-  cyan:    { name: 'Cyan',    min: 1, accent: '#06b6d4', accent2: '#22d3ee', accentD: '#0891b2', border: 'rgba(6,182,212,0.32)', rgb: '6,182,212', panel: 'rgba(8,24,30,0.82)', inputBg: '#07181d' },
-  gruen:   { name: 'Grün',    min: 1, accent: '#22c55e', accent2: '#4ade80', accentD: '#16a34a', border: 'rgba(34,197,94,0.32)', rgb: '34,197,94', panel: 'rgba(10,28,18,0.82)', inputBg: '#0a1c12' },
-  gold:    { name: 'Gold',    min: 2, accent: '#f59e0b', accent2: '#fbbf24', accentD: '#d97706', border: 'rgba(245,158,11,0.32)', rgb: '245,158,11', panel: 'rgba(32,24,8,0.84)', inputBg: '#1c1506' },
-  rot:     { name: 'Rot',     min: 2, accent: '#ef4444', accent2: '#f87171', accentD: '#dc2626', border: 'rgba(239,68,68,0.32)', rgb: '239,68,68', panel: 'rgba(34,12,12,0.84)', inputBg: '#1e0c0c' },
-  pink:    { name: 'Pink',    min: 2, accent: '#ec4899', accent2: '#f472b6', accentD: '#db2777', border: 'rgba(236,72,153,0.32)', rgb: '236,72,153', panel: 'rgba(34,12,26,0.84)', inputBg: '#1e0c18' },
-};
-// ── Abo-Gating (Stichtag-aware aboTier kommt aus /token) ─────────────────────
-const ABO_ORDER = ['Fossil', 'Knochen', 'Bernstein', 'Obsidian'];
-let myAboTier = 'Fossil';
+// Definition und Ableitungslogik liegen in shared/theme.js, damit die
+// Companion dieselben Schemata anbietet. Hier bleibt nur, was overlay-eigen
+// ist: der Picker (nutzt showToast/el) und die Minimap-Invalidierung.
+const BF_THEMES = THEMES;
 let mySkinFree = false;   // 🎨 Skin-Creator gratis (ab Knochen ODER Beta-Tester-Rolle) — aus /token
-const myAboIdx = () => Math.max(0, ABO_ORDER.indexOf(myAboTier));
-const themeUnlocked = (key) => { const t = BF_THEMES[key]; return !!t && myAboIdx() >= (t.min || 0); };
+const bfTheme = makeTheme({
+  storageKey: 'bf-theme',
+  customKey: 'bf-custom',
+  // Die Karte selbst folgt dem Theme nicht (map.js: Markerfarben sind
+  // Bedeutungen). Neu gezeichnet wird trotzdem — Rahmen und Flaechen drumherum
+  // haengen sehr wohl am Akzent.
+  onApply: () => { minimapDirty = true; },
+});
+// Abo-Rang als Zahl — auch ausserhalb der Themes gebraucht (Skin-Creator,
+// Geschlechtswechsel). Quelle ist derselbe Rang, den setAboTier gesetzt hat.
+const myAboIdx = () => aboIndex(bfTheme.tier());
+const themeUnlocked = (key) => bfTheme.unlocked(key);
+const applyTheme = (key, persist) => bfTheme.apply(key, persist);
 function setAboTier(tier) {
-  myAboTier = ABO_ORDER.includes(tier) ? tier : 'Fossil';
-  // Gespeicherte Theme-Wahl jetzt mit korrektem Rang anwenden (beim Laden war der Rang noch unbekannt).
-  applyTheme(localStorage.getItem('bf-theme') || 'violett');
+  bfTheme.setTier(tier);
   // Picker IMMER neu rendern, sobald der Rang da ist — sonst zeigen Schlösser + fehlender
   // Color-Input den veralteten Fossil-Stand (Settings ist ein eigenes Panel, nie featureOpen).
   renderThemePicker();
 }
-// Custom-Theme (Obsidian): vollständiges Theme aus EINER Akzent-Farbe ableiten.
-function hexToRgb(hex) { const n = parseInt(String(hex).slice(1), 16); return [(n >> 16) & 255, (n >> 8) & 255, n & 255]; }
-function rgbToHex(r, g, b) { const h = (v) => ('0' + Math.max(0, Math.min(255, Math.round(v))).toString(16)).slice(-2); return '#' + h(r) + h(g) + h(b); }
-function themeFromHex(hex) {
-  const [r, g, b] = hexToRgb(hex);
-  const li = (v) => v + (255 - v) * 0.25, dk = (v) => v * 0.82;
-  return {
-    name: 'Custom', min: 3, accent: hex, accent2: rgbToHex(li(r), li(g), li(b)), accentD: rgbToHex(dk(r), dk(g), dk(b)),
-    border: `rgba(${r},${g},${b},0.32)`, rgb: `${r},${g},${b}`,
-    panel: `rgba(${Math.round(r * 0.14)},${Math.round(g * 0.14)},${Math.round(b * 0.14)},0.84)`, inputBg: rgbToHex(r * 0.16, g * 0.16, b * 0.16),
-  };
-}
-let currentTheme = localStorage.getItem('bf-theme') || 'violett';
-function buildTheme(key) {
-  if (key === 'custom') return themeFromHex(localStorage.getItem('bf-custom') || '#8b5cf6');
-  return BF_THEMES[key] || BF_THEMES.violett;
-}
-// persist nur bei expliziter Nutzer-Wahl → Fallback-auf-Violett (Rang noch unbekannt/herabgestuft)
-// überschreibt NICHT die gespeicherte Präferenz.
-function applyTheme(key, persist) {
-  const allowed = key === 'custom' ? myAboIdx() >= 3 : themeUnlocked(key);
-  if (!allowed) key = 'violett';
-  const t = buildTheme(key); currentTheme = key;
-  const r = document.documentElement.style;
-  r.setProperty('--accent', t.accent); r.setProperty('--accent-2', t.accent2);
-  r.setProperty('--accent-d', t.accentD); r.setProperty('--border', t.border);
-  r.setProperty('--accent-rgb', t.rgb); r.setProperty('--panel', t.panel);
-  r.setProperty('--input-bg', t.inputBg);
-  if (persist) localStorage.setItem('bf-theme', key);
-  minimapDirty = true;   // Theme-Farben geändert → Minimap neu zeichnen
-}
 function renderThemePicker() {
   const box = el('themePicker'); if (!box) return;
+  const currentTheme = bfTheme.current();
   box.innerHTML = Object.entries(BF_THEMES).map(([k, t]) => {
     const locked = !themeUnlocked(k);
-    const tip = locked ? `${t.name} 🔒 ab ${ABO_ORDER[t.min]}` : t.name;
+    const tip = locked ? `${t.name} 🔒 ab ${bfTheme.minTierFor(k)}` : t.name;
     return `<button class="theme-sw${k === currentTheme ? ' on' : ''}${locked ? ' locked' : ''}" data-theme="${k}" title="${tip}" style="background:linear-gradient(135deg,${t.accent},${t.accentD})">${locked ? '🔒' : ''}</button>`;
   }).join('') + customThemeHTML();
   box.querySelectorAll('.theme-sw').forEach((b) => b.onclick = () => {
     const k = b.dataset.theme;
-    if (!themeUnlocked(k)) { showToast(`🔒 „${BF_THEMES[k].name}" gibt's ab Rang ${ABO_ORDER[BF_THEMES[k].min]}.`, 'error'); return; }
+    if (!themeUnlocked(k)) { showToast(`🔒 „${BF_THEMES[k].name}" gibt's ab Rang ${bfTheme.minTierFor(k)}.`, 'error'); return; }
     applyTheme(k, true);
-    box.querySelectorAll('.theme-sw,.theme-custom').forEach((x) => x.classList.toggle('on', x.dataset.theme === currentTheme));
+    box.querySelectorAll('.theme-sw,.theme-custom').forEach((x) => x.classList.toggle('on', x.dataset.theme === bfTheme.current()));
   });
   wireCustomTheme(box);
 }
 function customThemeHTML() {
-  if (myAboIdx() < 3) return `<div class="theme-custom locked" title="Eigene Akzentfarbe — exklusiv für Obsidian">🎨🔒 Eigene Farbe</div>`;
-  const cur = localStorage.getItem('bf-custom') || '#8b5cf6';
-  return `<label class="theme-custom${currentTheme === 'custom' ? ' on' : ''}" data-theme="custom" title="Eigene Akzentfarbe wählen">🎨 <input type="color" id="themeCustomInput" value="${cur}"></label>`;
+  if (!bfTheme.unlocked('custom')) return `<div class="theme-custom locked" title="Eigene Akzentfarbe — exklusiv für Obsidian">🎨🔒 Eigene Farbe</div>`;
+  return `<label class="theme-custom${bfTheme.current() === 'custom' ? ' on' : ''}" data-theme="custom" title="Eigene Akzentfarbe wählen">🎨 <input type="color" id="themeCustomInput" value="${bfTheme.customHex()}"></label>`;
 }
 function wireCustomTheme(box) {
   const inp = box.querySelector('#themeCustomInput'); if (!inp) return;
   inp.oninput = () => {
-    localStorage.setItem('bf-custom', inp.value);
-    applyTheme('custom', true);
-    box.querySelectorAll('.theme-sw,.theme-custom').forEach((x) => x.classList.toggle('on', x.dataset.theme === currentTheme));
+    bfTheme.setCustomHex(inp.value);
+    box.querySelectorAll('.theme-sw,.theme-custom').forEach((x) => x.classList.toggle('on', x.dataset.theme === bfTheme.current()));
   };
 }
-applyTheme(currentTheme);   // sofort beim Laden anwenden (kein Flash; Rang folgt via setAboTier)
+applyTheme(bfTheme.current());   // sofort beim Laden anwenden (kein Flash; Rang folgt via setAboTier)
 
 // ── Blitz-Effekte an/aus (Settings-Toggle, persistent) ──────────────────────
 let fxOff = localStorage.getItem('bf-noblitz') === '1';

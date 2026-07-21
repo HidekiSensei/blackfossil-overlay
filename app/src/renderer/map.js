@@ -1,6 +1,15 @@
 // Karten-Rendering: Welt-Koordinaten → Bild, Zonen, Spieler, Minimap.
 // Kalibrierung wird in localStorage gespeichert und ist live justierbar.
 
+// ── Markerfarben ────────────────────────────────────────────────────────────
+// Die Karte folgt dem Farbschema BEWUSST NICHT. Jede Farbe hier ist eine
+// Bedeutung, keine Dekoration: Rot = PvP, Rot = Admin, Gelb = Wegpunkt,
+// Cyan = ich selbst, Violett = Teleport. Wer die ans Theme haengt, macht
+// Marker bei hellen Schemata unlesbar und nimmt ihnen die Wiedererkennung —
+// ein Teleportpunkt soll ueberall wie ein Teleportpunkt aussehen.
+const TP_COLOR = 'rgba(139,92,246,0.92)';
+const TP_COLOR_HOT = '#c084fc';
+
 // ── Zonen (Welt-Koordinaten, vom Server) ────────────────────────────────────
 // Mehrere benannte Zonen über 5 Typen. Array wird IN PLACE mutiert (ES-Module-
 // Live-Binding: niemals neu zuweisen). Jedes Element: { id, type, name, points }.
@@ -955,7 +964,7 @@ function drawWaypoint(ctx, px, py, scale = 1) {
 function drawTeleport(ctx, px, py, number, highlight, scale = 1) {
   const r = (highlight ? 13 : 10) * scale;
   ctx.beginPath(); ctx.arc(px, py, r, 0, Math.PI * 2);
-  ctx.fillStyle = highlight ? '#c084fc' : 'rgba(139,92,246,0.92)';
+  ctx.fillStyle = highlight ? TP_COLOR_HOT : TP_COLOR;
   ctx.fill();
   ctx.lineWidth = (highlight ? 3 : 2) * scale; ctx.strokeStyle = '#fff'; ctx.stroke();
   ctx.fillStyle = '#fff'; ctx.font = `bold ${(highlight ? 13 : 11) * scale}px system-ui`;

@@ -37,3 +37,11 @@ export function fmtTod(t) {
   const h = Math.floor(t), m = Math.round((t - h) * 60);
   return `${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}`;
 }
+
+// Welt-Einheiten je Meter. Gleicher Wert wie im Backend (voice.unitsPerMeter):
+// dessen maxHearRange von 15000 Einheiten entspricht 75 m Sprechreichweite.
+//
+// ACHTUNG: In map.js steht im Kommentar "100 Welt-Einh. = 1 m" — das
+// widerspricht diesem Wert. Fuer Distanzen gilt 200; der Kommentar dort ist
+// bislang unbestaetigt und beruehrt nur die Massstabs-Anzeige.
+export const UNITS_PER_M = 200;
