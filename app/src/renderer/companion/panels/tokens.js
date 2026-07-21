@@ -24,6 +24,10 @@ let pvp = null;      // /admin/pvp/config
 // Liste die Auswahl nicht verwirft.
 const gewaehlt = { base: new Set(), parent: new Set(), elder: new Set() };
 let primes = new Set();
+// Klappzustand der Mutationen. Ohne das ginge die Klappe bei JEDEM Chip-Klick
+// zu, weil das Neuzeichnen das <details> mitsamt seinem Zustand ersetzt —
+// man muesste sie nach jeder Auswahl neu oeffnen.
+let mutsOffen = false;
 
 // Serverseitige Obergrenzen (staffcfg.Dedup). Das Overlay ist strenger und
 // koppelt sie an Primes und Elder-Stacks; das Backend erzwingt das NICHT.
@@ -159,7 +163,14 @@ function zeichneMuts() {
       + `</div>`;
   };
 
-  box.innerHTML = U.expander('Mutationen', gruppe('base', 'Basis') + gruppe('parent', 'Eltern') + gruppe('elder', 'Elder'));
+  // Zustand VOR dem Ueberschreiben ablesen und danach wiederherstellen.
+  const vorher = box.querySelector('details');
+  if (vorher) mutsOffen = vorher.open;
+  box.innerHTML = U.expander('Mutationen',
+    gruppe('base', 'Basis') + gruppe('parent', 'Eltern') + gruppe('elder', 'Elder'), mutsOffen);
+  // Manuelles Auf- und Zuklappen merken.
+  const det = box.querySelector('details');
+  if (det) det.ontoggle = () => { mutsOffen = det.open; };
 
   box.querySelectorAll('[data-mut]').forEach((b) => {
     b.onclick = () => {
@@ -220,12 +231,17 @@ async function garageLaden() {
           const teile = [baseClass(s.dinoClass), fmtGrow(s.grow), s.gender === 'Female' ? 'weiblich' : 'männlich'];
           if (s.elderStacks) teile.push(`Elder ×${s.elderStacks}`);
           if ((s.primes || []).length) teile.push(`${s.primes.length} Primes`);
-          return U.item(s.label || baseClass(s.dinoClass), teile.filter(Boolean).join(' · '),
-            U.btn('tkDel-' + s.id, 'Löschen', { size: 'sm', variant: 'danger' }));
+          return `<div class="cp-gar-slot">`
+            + U.item(s.label || baseClass(s.dinoClass), teile.filter(Boolean).join(' · '),
+              U.btn('tkEdit-' + s.id, 'Bearbeiten', { size: 'sm' })
+              + U.btn('tkDel-' + s.id, 'Löschen', { size: 'sm', variant: 'danger' }))
+            + `<div id="tkForm-${U.esc(s.id)}"></div></div>`;
         }).join('') + `</div>`
       : U.empty('Garage ist leer.'));
 
     for (const s of slots) {
+      const e = el('tkEdit-' + s.id);
+      if (e) e.onclick = () => slotBearbeiten(u, s);
       const b = el('tkDel-' + s.id);
       if (!b) continue;
       b.onclick = () => {
@@ -350,4 +366,135 @@ async function primesSetzen() {
     C.toast(`Primes für ${userLabel(u)} gesetzt.`, 'success');
   } catch (e) { C.toast('Fehlgeschlagen: ' + e.message, 'error'); }
   finally { btn.disabled = false; }
+}
+
+// ── Garage-Slot bearbeiten ─────────────────────────────────────────────────
+//
+// Die ART fehlt hier bewusst: /admin/dino-token/edit nimmt kein `dino`-Feld.
+// Wer die Art aendern will, loescht den Slot und vergibt neu. Ein Feld
+// anzubieten, das der Server verwirft, waere schlimmer als keines.
+//
+// Nicht gesetzte Felder laesst das Backend unveraendert. Wir senden trotzdem
+// alle, weil das Formular ohnehin den vollstaendigen Stand zeigt — sonst
+// muesste man raten, was gerade gilt.
+const editMut = { base: new Set(), parent: new Set(), elder: new Set() };
+let editPrimes = new Set();
+let editMutsOffen = false;
+
+function slotBearbeiten(u, slot) {
+  const box = el('tkForm-' + slot.id);
+  if (!box) return;
+  if (box.dataset.offen) { box.dataset.offen = ''; box.innerHTML = ''; return; }
+  box.dataset.offen = '1';
+
+  editPrimes = new Set(slot.primes || []);
+  const m = slot.mutations || {};
+  editMut.base = new Set(m.base || []);
+  editMut.parent = new Set(m.parent || []);
+  editMut.elder = new Set(m.elder || []);
+  editMutsOffen = false;
+
+  box.innerHTML = `<div class="cp-gar-form">`
+    + `<div class="cp-row">`
+      + U.select('tkESex-' + slot.id, 'Geschlecht',
+        [{ value: 'Male', label: 'Männlich' }, { value: 'Female', label: 'Weiblich' }],
+        slot.gender === 'Female' ? 'Female' : 'Male')
+      + U.field('tkEGrow-' + slot.id, 'Wachstum %',
+        { type: 'number', value: String(Math.round((slot.grow || 0) * 100) || 1), min: 1, max: 100 })
+      + U.field('tkEElder-' + slot.id, 'Elder-Stacks',
+        { type: 'number', value: String(slot.elderStacks || 0), min: 0, max: 3 })
+    + `</div>`
+    + `<div id="tkEPrimes-${U.esc(slot.id)}"></div>`
+    + `<div id="tkEMuts-${U.esc(slot.id)}"></div>`
+    + `<div class="cp-btn-row cp-btn-row-left">`
+      + U.btn('tkESave-' + slot.id, 'Speichern', { size: 'sm', variant: 'primary' })
+      + U.btn('tkECancel-' + slot.id, 'Abbrechen', { size: 'sm' })
+    + `</div>`
+    + U.hint('Die Art lässt sich nicht ändern — dafür Slot löschen und neu vergeben.')
+    + `</div>`;
+
+  zeichneEditPrimes(slot);
+  zeichneEditMuts(slot);
+
+  el('tkECancel-' + slot.id).onclick = () => { box.dataset.offen = ''; box.innerHTML = ''; };
+  el('tkESave-' + slot.id).onclick = async () => {
+    const b = el('tkESave-' + slot.id);
+    const growPct = Number(el('tkEGrow-' + slot.id).value);
+    if (!Number.isFinite(growPct) || growPct < 1 || growPct > 100) {
+      C.toast('Wachstum muss zwischen 1 und 100 liegen.', 'error'); return;
+    }
+    b.disabled = true;
+    try {
+      await C.api('POST', '/admin/dino-token/edit', {
+        targetSteamId: u.steamId,
+        slotId: slot.id,
+        gender: el('tkESex-' + slot.id).value,
+        grow: growPct / 100,
+        elderStacks: Math.max(0, Math.min(3, Number(el('tkEElder-' + slot.id).value) || 0)),
+        primes: [...editPrimes],
+        mutations: { base: [...editMut.base], parent: [...editMut.parent], elder: [...editMut.elder] },
+      });
+      C.toast('Slot gespeichert.', 'success');
+      garageLaden();
+    } catch (err) { C.toast('Fehlgeschlagen: ' + err.message, 'error'); b.disabled = false; }
+  };
+}
+
+function zeichneEditPrimes(slot) {
+  const box = el('tkEPrimes-' + slot.id);
+  if (!box) return;
+  const labels = (cfg && cfg.primeLabels) || [];
+  box.innerHTML = U.sec(`Prime-Bedingungen (${editPrimes.size}/${labels.length})`)
+    + `<div class="cp-chip-wrap">` + labels.map((l, i) => {
+      const n = i + 1;
+      return `<button type="button" class="cp-chip${editPrimes.has(n) ? ' on' : ''}" data-ep="${n}">${U.esc(l)}</button>`;
+    }).join('') + `</div>`;
+  box.querySelectorAll('[data-ep]').forEach((b) => {
+    b.onclick = () => {
+      const n = Number(b.dataset.ep);
+      if (editPrimes.has(n)) editPrimes.delete(n); else editPrimes.add(n);
+      zeichneEditPrimes(slot);
+    };
+  });
+}
+
+function zeichneEditMuts(slot) {
+  const box = el('tkEMuts-' + slot.id);
+  if (!box) return;
+  const diet = (cfg && cfg.dietBySpecies || {})[baseClass(slot.dinoClass)] || 'both';
+  const sexEl = el('tkESex-' + slot.id);
+  const sex = sexEl ? sexEl.value : (slot.gender || 'Male');
+  const liste = ((cfg && cfg.mutations) || []).filter((m) => {
+    if (m.diet && m.diet !== 'both' && diet !== 'both' && m.diet !== diet) return false;
+    if (m.femaleOnly && sex !== 'Female') return false;
+    return true;
+  });
+
+  const gruppe = (key, titel) => {
+    const sset = editMut[key];
+    return U.sec(`${titel} (${sset.size}/${CAP[key]})`)
+      + `<div class="cp-chip-wrap">` + liste.map((m) =>
+        `<button type="button" class="cp-chip${sset.has(m.value) ? ' on' : ''}" data-em="${key}|${U.esc(m.value)}"`
+        + `${m.description ? ` title="${U.esc(m.description)}"` : ''}>${U.esc(m.label || m.value)}</button>`).join('')
+      + `</div>`;
+  };
+
+  const vorher = box.querySelector('details');
+  if (vorher) editMutsOffen = vorher.open;
+  box.innerHTML = U.expander('Mutationen',
+    gruppe('base', 'Basis') + gruppe('parent', 'Eltern') + gruppe('elder', 'Elder'), editMutsOffen);
+  const det = box.querySelector('details');
+  if (det) det.ontoggle = () => { editMutsOffen = det.open; };
+
+  box.querySelectorAll('[data-em]').forEach((b) => {
+    b.onclick = () => {
+      const [key, val] = b.dataset.em.split('|');
+      const sset = editMut[key];
+      if (sset.has(val)) sset.delete(val);
+      else if (sset.size >= CAP[key]) { C.toast(`Höchstens ${CAP[key]} in dieser Generation.`, 'error'); return; }
+      else sset.add(val);
+      zeichneEditMuts(slot);
+    };
+  });
+  if (sexEl) sexEl.onchange = () => zeichneEditMuts(slot);
 }
