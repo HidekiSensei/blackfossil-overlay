@@ -102,6 +102,23 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
+      # Ab 1.10.0 fragt AUCH die Produktivversion das eigene Backend nach Updates
+      # (main.js setupAutoUpdate). Ohne diesen Upload suchen alle Clients ins Leere —
+      # der GitHub-Release allein genuegt dann nicht mehr.
+      - name: Overlay-Artefakte aufs Backend laden (Windows)
+        if: steps.v.outputs.exists == 'false'
+        working-directory: app
+        shell: bash
+        run: |
+          for f in release/latest.yml release/*.exe release/*.exe.blockmap; do
+            [ -e "$f" ] || continue
+            echo "Upload $(basename "$f")"
+            curl -fsS -H "Authorization: Bearer $BF_OVERLAY_UPLOAD_TOKEN" -F "file=@$f" "$API/overlay/upload"
+          done
+        env:
+          API: https://api.blackfossil.de
+          BF_OVERLAY_UPLOAD_TOKEN: ${{ secrets.BF_OVERLAY_UPLOAD_TOKEN }}
+
   # Linux-AppImage ins SELBE Release. NACH dem Windows-Job, nicht parallel: sonst wuerden beide
   # gleichzeitig das Draft-Release anlegen wollen (Race), und den Tag setzt ohnehin nur "release".
   # AppImage und nicht deb/rpm/pacman — electron-updater 6.8.9 nimmt auf Linux per Default den
@@ -140,6 +157,34 @@ jobs:
         run: npx electron-builder --linux --publish always
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Overlay-Artefakte aufs Backend laden (Linux)
+        working-directory: app
+        shell: bash
+        run: |
+          for f in release/latest-linux.yml release/*.AppImage; do
+            [ -e "$f" ] || continue
+            echo "Upload $(basename "$f")"
+            curl -fsS -H "Authorization: Bearer $BF_OVERLAY_UPLOAD_TOKEN" -F "file=@$f" "$API/overlay/upload"
+          done
+        env:
+          API: https://api.blackfossil.de
+          BF_OVERLAY_UPLOAD_TOKEN: ${{ secrets.BF_OVERLAY_UPLOAD_TOKEN }}
+
+      # Release-Notes fuers Update-Fenster BEIDER Apps. Wurde bisher nur im dev-Build
+      # erzeugt — auf Prod blieb "Was ist neu" deshalb dauerhaft leer.
+      # --require laesst den Job scheitern, wenn der CHANGELOG-Abschnitt zur Version
+      # fehlt: lieber ein roter Build als ein stiller leerer Reiter.
+      - name: Release-Notes erzeugen und hochladen
+        working-directory: app
+        shell: bash
+        run: |
+          node scripts/changelog-to-json.js --require "${VERSION}" --out releases.json
+          curl -fsS -H "Authorization: Bearer $BF_OVERLAY_UPLOAD_TOKEN" -F "file=@releases.json" "$API/overlay/upload"
+        env:
+          VERSION: ${{ needs.release.outputs.version }}
+          API: https://api.blackfossil.de
+          BF_OVERLAY_UPLOAD_TOKEN: ${{ secrets.BF_OVERLAY_UPLOAD_TOKEN }}
 
   # Companion-App ins SELBE Release. Wieder sequenziell nach build-linux, aus demselben
   # Race-Grund. Der Feed ist getrennt: electron-builder.companion.yml setzt

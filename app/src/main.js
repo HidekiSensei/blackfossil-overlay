@@ -63,15 +63,16 @@ function setupAutoUpdate() {
   if (!app.isPackaged) return; // im Dev nicht prüfen
   autoUpdater.autoDownload = false;
   autoUpdater.autoInstallOnAppQuit = true; // Fallback: spätestens beim Beenden
-  // NUR die Testversion zieht schon vom Backend-Feed (api-test/overlay). Die Produktivversion bleibt
-  // vorerst UNVERÄNDERT auf dem GitHub-Feed (build.publish "github"), bis Prod bewusst umgestellt wird.
-  // Erkennung test vs prod: patch-prod.js patcht TOKEN_BASE api-test→api nur im Prod-Build.
-  if (TOKEN_BASE.includes('api-test')) {
-    try { autoUpdater.setFeedURL({ provider: 'generic', url: TOKEN_BASE + '/overlay', channel: 'latest' }); } catch {}
-    // Prereleases zulassen: Test-Builds tragen eine monotone Version 1.9.x-dev.<run> und sollen bei
-    // JEDEM dev-Push updaten.
-    autoUpdater.allowPrerelease = true;
-  }
+  // Ab 1.10.0 zieht AUCH die Produktivversion vom eigenen Backend (/overlay) statt von GitHub.
+  // Der GitHub-Release bleibt als Ablage bestehen (build.publish "github"), aber gefragt wird das
+  // Backend — damit das Repo privat werden kann, ohne die Update-Kette zu brechen.
+  //
+  // Voraussetzung, sonst suchen ALLE Clients ins Leere: das Backend muss /overlay ausliefern und
+  // release.yml muss latest.yml/latest-linux.yml samt Installern dorthin hochladen.
+  try { autoUpdater.setFeedURL({ provider: 'generic', url: TOKEN_BASE + '/overlay', channel: 'latest' }); } catch {}
+  // Prereleases nur im Test: dessen Builds tragen eine monotone Version 1.10.x-dev.<run> und sollen
+  // bei JEDEM dev-Push updaten. Prod bekommt nur echte Releases.
+  if (TOKEN_BASE.includes('api-test')) autoUpdater.allowPrerelease = true;
   // Default-Logger von electron-updater ist `console` → schreibt beim Update-Check auf stdout und
   // war die konkrete Crash-Quelle (EPIPE, siehe oben). Update-Status geht ohnehin über die
   // autoUpdater-Events an den Renderer; hier reicht ein No-Op, damit der Updater nicht auf stdout schreibt.
