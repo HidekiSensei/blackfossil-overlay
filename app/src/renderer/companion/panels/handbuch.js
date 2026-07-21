@@ -58,14 +58,26 @@ function renderList() {
           + `<span class="${badgeClass(f.need)}">${U.esc(badgeLabel(f.need))}</span></div>`).join('')).join('')
     : U.empty(term ? 'Keine passende Funktion.' : 'Für deinen Rang sind keine Funktionen hinterlegt.');
 
-  box.innerHTML = `<div class="cp-field"><input id="hbSearch" class="cp-input" placeholder="🔎 Funktion suchen…" value="${U.esc(term)}"></div>`
+  // Analog zum Lexikon links: Suche oben, darunter eine Trennlinie (cp-hb-search),
+  // dann die scrollende Liste. Beim Neuaufbau (Filter/Suche) die Scrollposition der
+  // Liste erhalten — sonst springt sie hoch.
+  const prevScroll = (() => { const l = box.querySelector('.cp-hb-list'); return l ? l.scrollTop : 0; })();
+  box.innerHTML = `<div class="cp-hb-search"><input id="hbSearch" class="cp-input" placeholder="🔎 Funktion suchen…" value="${U.esc(term)}"></div>`
     + `<div class="cp-list cp-hb-list">${listHtml}</div>`;
+  const listEl = box.querySelector('.cp-hb-list'); if (listEl) listEl.scrollTop = prevScroll;
 
   const s = el('hbSearch');
   // Cursor-Position halten, damit das Tippen nicht springt (Re-Render bei jedem Zeichen).
   s.oninput = () => { const pos = s.selectionStart; term = s.value; renderList(); const s2 = el('hbSearch'); s2.focus(); s2.setSelectionRange(pos, pos); };
   box.querySelectorAll('[data-hb]').forEach((n) => {
-    n.onclick = () => { sel = n.dataset.hb; renderList(); renderDetail(); };
+    // NUR die Auswahl-Markierung umsetzen (kein Neuaufbau der Liste) — so bleibt
+    // die Scrollposition erhalten und der geklickte Eintrag im Blick.
+    n.onclick = () => {
+      sel = n.dataset.hb;
+      box.querySelectorAll('[data-hb].active').forEach((x) => x.classList.remove('active'));
+      n.classList.add('active');
+      renderDetail();
+    };
   });
 }
 
@@ -74,9 +86,11 @@ function renderDetail() {
   const f = HANDBUCH.find((x) => x.id === sel);
   if (!f) { box.innerHTML = U.empty('Links eine Funktion wählen.'); return; }
 
-  const li = (arr, tag) => (arr || []).map((x) => `<li>${U.esc(x)}</li>`).join('') || `<li>—</li>`;
+  const li = (arr) => (arr || []).map((x) => `<li>${U.esc(x)}</li>`).join('') || `<li>—</li>`;
+  // Analog zum Lexikon rechts: Titel links, Rang-Label rechts, darunter die
+  // Trennlinie (cp-hb-topbar spiegelt cp-lex-topbar) — dann der Inhalt.
   box.innerHTML =
-    `<div class="cp-hb-head">`
+    `<div class="cp-hb-topbar">`
       + `<div class="cp-hb-title">${U.esc(f.title)}</div>`
       + `<span class="${badgeClass(f.need)}">${U.esc(badgeLabel(f.need))}</span>`
     + `</div>`
