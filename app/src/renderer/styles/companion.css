@@ -838,3 +838,8 @@ input[type="range"] { accent-color: var(--accent); }
 }
 .cp-chip:hover { background: var(--cp-surface-2); color: #ddd; }
 .cp-chip.on { background: rgba(var(--accent-rgb), .18); border-color: rgba(var(--accent-rgb), .45); color: #fff; }
+
+/* Betroffene Ziele einer Aktion. Als Abzeichen-Wolke statt als Liste: bei 50
+   Spielern braucht eine Liste den halben Bildschirm, die Namen sollen aber
+   VOR dem Klick vollstaendig lesbar sein. */
+.cp-pl-targets { display: flex; flex-wrap: wrap; gap: var(--cp-s1); max-height: 180px; overflow-y: auto; }
