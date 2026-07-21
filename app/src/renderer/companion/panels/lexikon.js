@@ -10,6 +10,7 @@ let C = null;
 let sel = null;
 let filter = 'all';   // 'all' | 'carni' | 'herbi' | 'both'
 let limits = {};
+let disabled = new Set();   // im Spawn-Picker gesperrte Spezies (Backend: /dino-limits.disabled)
 
 // Labels/Farben identisch zum Overlay (overlay.js DIET_LABEL/DIET_DOT), damit
 // beide Oberflaechen dieselbe Sprache sprechen. Farbe steckt in cp-diet-*.
@@ -33,7 +34,9 @@ export function renderLexikon(root) {
   // Limits nachladen und danach nur neu zeichnen, wenn das Panel noch offen ist.
   C.api('GET', '/dino-limits').then((d) => {
     limits = d.limits || d || {};
-    if (C.isActive('lexikon')) renderDetail();
+    disabled = new Set(d.disabled || []);
+    // Liste mitzeichnen: das Gesperrt-Badge haengt auch an den Eintraegen.
+    if (C.isActive('lexikon')) { renderList(); renderDetail(); }
   }).catch(() => { /* Lexikon bleibt ohne Limits nutzbar */ });
 }
 
@@ -61,7 +64,8 @@ function renderList() {
     return `<div class="cp-item cp-item-click${n === sel ? ' active' : ''}" data-sp="${U.esc(n)}">`
       + `<img class="cp-lex-thumb" src="${imgSrc(n)}" alt="" onerror="this.style.visibility='hidden'">`
       + `<div class="cp-item-main"><div class="cp-item-title">${U.esc(n)}</div>`
-      + `<div class="cp-item-sub"><span class="cp-diet-${d.diet}">●</span> ${U.esc(DIET[d.diet] || '')}</div></div></div>`;
+      + `<div class="cp-item-sub"><span class="cp-diet-${d.diet}">●</span> ${U.esc(DIET[d.diet] || '')}`
+      + (disabled.has(n) ? ` <span class="cp-lex-locked">· gesperrt</span>` : '') + `</div></div></div>`;
   }).join('') || U.empty('Keine Arten in dieser Gruppe.');
 
   el('lexList').innerHTML = tabs + U.card(`<div class="cp-list cp-lex-list">${items}</div>`);
@@ -93,7 +97,9 @@ function renderDetail() {
     + `<div class="cp-lex-meta"><span class="cp-diet-${d.diet}">●</span> `
       + `${U.esc(DIET[d.diet] || d.diet)} · <b>${U.esc(d.role || '')}</b> · Wachstum: ${U.esc(d.growth || '—')}`
     + `</div>`
-    + `<div class="cp-badge-row">${U.badge(lim ? `Limit ${lim}` : 'kein Limit', lim ? '' : 'ok')}</div>`
+    + `<div class="cp-badge-row">${disabled.has(sel)
+        ? U.badge('Auf diesem Server gesperrt', 'off')
+        : U.badge(lim != null ? `Limit ${lim}` : 'kein Limit', lim != null ? '' : 'ok')}</div>`
     + `<div class="cp-lex-cols">`
       + `<div class="cp-lex-col cp-lex-good"><div class="cp-lex-col-head">Stärken</div><ul>${li(d.strengths)}</ul></div>`
       + `<div class="cp-lex-col cp-lex-bad"><div class="cp-lex-col-head">Schwächen</div><ul>${li(d.weaknesses)}</ul></div>`

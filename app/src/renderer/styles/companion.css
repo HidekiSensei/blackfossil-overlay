@@ -599,5 +599,7 @@ input[type="range"] { accent-color: var(--accent); }
 
 .cp-lex-list { max-height: calc(100vh - 260px); min-height: 300px; overflow-y: auto; }
 
+.cp-lex-locked { color: var(--cp-danger); }
+
 .cp-lex-nav { display: flex; gap: var(--cp-s2); margin-top: var(--cp-s4); }
 .cp-lex-nav .cp-btn { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
