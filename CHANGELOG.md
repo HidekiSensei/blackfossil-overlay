@@ -1,5 +1,81 @@
 # Changelog
 
+<!-- Kuratiert & spielerfreundlich. CI erzeugt daraus releases.json fürs Overlay-Update-Fenster.
+     Neue Version: einen "## vX.Y.Z — Titel"-Abschnitt oben ergänzen (Version MUSS zu package.json
+     passen), Punkte unter "## [Unreleased]" nach oben verschieben. "### Intern" wird aus den
+     öffentlichen Notes herausgefiltert. -->
+
+## [Unreleased]
+
+## v1.10.0 — Wandern & Server-Übersicht 🥾
+
+### ✨ Neu
+
+- **Wandern** — Bestenliste fürs Laufen, Fliegen und Schwimmen, mit Wochen- und Gesamtwertung,
+  persönlichen Rekorden und einer Live-Distanzanzeige im HUD.
+- **Dino-Namen**: Dinos in der Garage lassen sich benennen; der Name bleibt am Dino.
+- **Companion-App** — an einer zweiten Anwendung neben dem Overlay wird gearbeitet. Sie läuft
+  gerade in einer geschlossenen Beta mit einem kleinen Kreis. Mehr dazu, sobald sie so weit ist.
+
+### 🔧 Verbessert
+
+- **Server-Panel** in Reiter aufgeteilt, mit neuem Übersichts-Dashboard: Auslastung, Festplatte,
+  Datenbank-Antwortzeit und ein 24-Stunden-Verlauf der Spielerzahl.
+- **Updates und Änderungshinweise** kommen jetzt vom eigenen Server statt von GitHub. Am Ablauf
+  ändert sich für dich nichts — das Overlay aktualisiert sich weiterhin von selbst.
+
+### 🐛 Behoben
+
+- **Sprachfunk**: Kurzes Flackern des Todes-Zustands konnte die Tonkette zerlegen — entprellt.
+- **Zuschauen**: Im Zuschauer-Modus zeigt die Karte einen Punkt statt eines Blickrichtungs-Pfeils,
+  und der Kompass blendet sich aus.
+
+### Intern
+
+- **Companion-App** (oeffentlich nur als Beta erwaehnt, ohne Details): laeuft ohne Spiel,
+  Zugang ueber BETA_STAFF_ONLY auf Staff begrenzt. Umfang: Vollbild-Karte mit Karten-Editor,
+  Spielerverwaltung, Tokens, Dino- und Weltverwaltung, Ankuendigungen, Support, Verwarnungen,
+  Accounts, Audits, Lexikon, Staff-Handbuch und Mithoeren.
+- Farbschemata in der Companion (sieben Vorlagen plus eigene Farbe, alles aus einem Farbwert
+  abgeleitet); roter Punkt an den Einstellungen bei verfuegbarem Update.
+- Auto-Update und Release-Notes laufen ueber das eigene Backend (`/overlay`), damit das Repository
+  privat werden kann. Overlay und Companion nutzen getrennte Kanaele.
+- Windows: Overlay misst sich im Fenstermodus korrekt aufs Spielfenster ein.
+- Kartenmarker folgen bewusst NICHT dem Farbschema — ein Teleportpunkt sieht ueberall gleich aus.
+- CI-Riegel gegen versehentlich committete Test-Umleitungen (Produktions-URL, Ports).
+- Installer werden nicht mehr blind zwischengespeichert; der Dateiname ist versionslos, wodurch bis
+  zu einen Tag lang die alte Fassung ausgeliefert wurde.
+- Rang-Pruefung fuer das Schreiben der Class-Limits ergaenzt (fehlte vollstaendig).
+
+## v1.9.2 — Menü-Frischekur & Software-Tab ✨
+
+### ✨ Neu
+- Neuer **Software**-Tab in den Einstellungen: zeigt die Version und die letzten Änderungen.
+- Menüs überarbeitet: echte Reiter-Tabs, einheitliche Buttons/Regler/Schalter, aufgeräumtes Design.
+- Eigener **Ansage**-Tab im Team-Panel für server-weite Durchsagen.
+- Fenster-Transparenz der Menüs umschaltbar (unter „HUD-Sichtbarkeit").
+
+### 🔧 Fixes
+- Einstellungen, Team- und Admin-Fenster sind jetzt gleich groß und scrollen sauber.
+- Player-Audit: der Aktions-Filter ist jetzt ein durchsuchbares Auswahl-Popup statt der fummeligen Liste.
+
+## v1.9.1 — Voice-Hotfix 🔧
+
+### 🔧 Fixes
+- Knistern behoben, Ausgabegerät-Auswahl korrigiert, Not-Aus-Schalter für 3D/Effekte.
+
+## v1.9.0 — Räumlicher Ton & Gottstimme 🎙️
+
+### ✨ Neu
+- Räumlicher Voice-Ton (3D-Panning) — du hörst, aus welcher Richtung jemand spricht.
+- **Gottstimme**: server-weite Admin-Durchsage „von oben" mit dezentem Himmels-Hall.
+- Unterwasser dämpft die Stimmen jetzt hörbar.
+
+## v1.8.2 — Test-Installer parallel 🧪
+
+### ✨ Neu
+- Test-Version läuft parallel zur Produktiv-App (eigener Deep-Link + eigener Datenordner).
+
 ## v1.7.5 — Kalibrierung: endlich alle Punkte an Land ✅
 
 ### 🔧 Fixes

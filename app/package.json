@@ -1,15 +1,18 @@
 {
   "name": "blackfossil-overlay",
-  "version": "1.9.2",
+  "version": "1.10.0",
   "description": "BlackFossil Overlay — Proximity Chat, Map & Minimap für The Isle",
   "author": "BlackFossil",
   "main": "src/main.js",
   "scripts": {
-    "build:renderer": "esbuild src/renderer/login.js src/renderer/overlay.js --bundle --outdir=src/renderer/dist --format=iife --platform=browser",
+    "build:renderer": "esbuild src/renderer/login.js src/renderer/overlay.js src/renderer/companion.js --bundle --outdir=src/renderer/dist --format=iife --platform=browser",
     "watch:renderer": "npm run build:renderer -- --watch",
+    "test:shared": "node src/renderer/shared/shared.test.mjs",
     "start": "npm run build:renderer && electron .",
     "dev": "npm run build:renderer && electron .",
-    "dist": "npm run build:renderer && electron-builder --win --publish never"
+    "dist": "npm run build:renderer && electron-builder --win --publish never",
+    "start:companion": "npm run build:renderer && electron src/companion-main.js",
+    "dist:companion": "npm run build:renderer && electron-builder --win --config electron-builder.companion.yml --publish never"
   },
   "dependencies": {
     "electron-updater": "^6.8.9",
@@ -37,6 +40,7 @@
       "src/main.js",
       "src/preload.js",
       "src/renderer/*.html",
+      "src/renderer/styles/**",
       "src/renderer/dist/**",
       "src/renderer/assets/**",
       "package.json"
@@ -65,6 +69,7 @@
       "allowToChangeInstallationDirectory": false
     },
     "linux": {
+      "executableName": "blackfossil-overlay-test",
       "target": [
         {
           "target": "AppImage",
