@@ -1,7 +1,14 @@
 import { Room, RoomEvent, Track, ParticipantEvent, AudioPresets } from 'livekit-client';
 import { loadMapImage, drawFullMap, drawMinimap, drawHeatmap, normToWorld, worldToNorm, zoneAt, zonesAt, resetCal, solveAffine, getCal, setCalAffine, setZones, newZone, ZONES, ZONE_TYPES, ZONE_META, loadZoneLayer, setZoneLayer, isZoneLayerVisible, setGoldenZone, goldenZoneCenter, groupColorFor, setMarkerStyle } from './map.js';
+import { el, apiErr, makeApi, makeApiAction, armConfirm } from './shared/core.js';
+import { baseClass, fmtGrow, escapeHtml, fmtTod } from './shared/format.js';
+import { USER_POOLS, userLabel, warnItemUser, matchUser } from './shared/users.js';
 
-const el = (id) => document.getElementById(id);
+// Generischer Server-Panel-API-Call. tokenBase/sessionToken werden als Getter
+// durchgereicht, weil beide erst asynchron gesetzt werden (siehe shared/core.js).
+const svApi = makeApi({ tokenBase: () => config.tokenBase, token: () => sessionToken });
+const svArmConfirm = armConfirm;
+const svFmtTod = fmtTod;
 
 // ── Color-Themes (Overlay personalisieren) ───────────────────────────────────
 // rgb = "r,g,b" des Akzents (für rgba(var(--accent-rgb),a) in FX/Blitzen).
@@ -539,7 +546,7 @@ function updateHeart(d) {
   // GROW (aktueller Wachstumsstand 0..100 %)
   const grow = online && typeof d.grow === 'number' ? Math.max(0, Math.min(1, d.grow)) : 0;
   setHex(grow, online ? '#8fae54' : gray, 'ggE1', 'ggF1', 'ggF2');
-  { const v = document.getElementById('growVal'); if (v) v.textContent = online ? Math.round(grow * 100) + '%' : '—'; }
+  { const v = document.getElementById('growVal'); if (v) v.textContent = online ? fmtGrow(grow) : '—'; }
   // GROW-RATE = Σ Nährstoffe (0..3) → Anzeige 0..300 %, Füllung /3.
   // Ab 75 % Grow stoppt das Wachstum (Adult) → Rate auf 0.
   const nut = (online && grow <= 0.75) ? ((d.carbs || 0) + (d.protein || 0) + (d.lipid || 0)) : 0;
@@ -1739,7 +1746,6 @@ function renderMapGroup() {
 // Zeichnet die vom Game-Server (/ai/encounters) gelieferten Spawnpunkte (rote Rauten) und
 // Patrouillen (gestrichelte Linien) auf die große Karte. Platzhalter-Einträge mit Spawn {0,0}
 // (noch nicht platziert) werden übersprungen. sc = 1/mapZoom hält Marker/Text zoom-konstant.
-function aiSpeciesShort(sp) { return String(sp || '').replace(/^BP_/, '').replace(/_C$/, ''); }
 function drawAiEncounters(ctx, w, h, sc) {
   const placed = (p) => p && (p.x !== 0 || p.y !== 0);
   for (const e of aiEncounters) {
@@ -1762,7 +1768,7 @@ function drawAiEncounters(ctx, w, h, sc) {
     ctx.restore();
     // Label: Encounter-Name + Anzahl + Nacht-Icon
     const night = e.params && e.params.activeAt === 'night';
-    const label = `${e.name || aiSpeciesShort(e.species)}${e.count > 1 ? ' ×' + e.count : ''}${night ? ' 🌙' : ''}`;
+    const label = `${e.name || baseClass(e.species)}${e.count > 1 ? ' ×' + e.count : ''}${night ? ' 🌙' : ''}`;
     ctx.font = `bold ${Math.max(9, Math.round(11 * sc))}px sans-serif`; ctx.textAlign = 'center'; ctx.textBaseline = 'bottom';
     ctx.lineWidth = 3 * sc; ctx.strokeStyle = 'rgba(0,0,0,0.85)'; ctx.strokeText(label, sx, sy - 10 * sc);
     ctx.fillStyle = '#fecaca'; ctx.fillText(label, sx, sy - 10 * sc);
@@ -1964,7 +1970,6 @@ async function abortAutoCalib() {
 }
 
 // ── Teleport-Punkte ──────────────────────────────────────────────────────────
-function escapeHtml(s) { return String(s).replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c])); }
 
 async function loadTeleports() {
   if (!sessionToken) return;
@@ -2057,61 +2062,6 @@ let adminUsers = [];            // volle User-Liste (für robuste Suche/Filter)
 let admSelectedSteamId = null;
 
 // ── User-Suchfelder: robust + skalierend ─────────────────────────────────────
-// Alle User-Picker (Admin-Panel + Dino-Token/Prime via userSearchHTML) teilen dieses Verhalten.
-// Ein natives <datalist> mit ~1000 Optionen zeigt in Chromium NICHT zuverlässig alle Vorschläge
-// (deshalb wurden User "nicht gefunden", obwohl sie in der Liste standen). Lösung: das Datalist
-// wird beim Tippen dynamisch mit nur den Top-Treffern befüllt — mit wenigen Optionen klappt es.
-// USER_POOLS: input-id → User-Array, das dieses Feld durchsucht.
-const USER_POOLS = {};
-
-// userLabel baut den Dropdown-Anzeigetext "RP (Steam, Discord)". Fehlende Teile fallen graziös
-// weg: ohne RP-Name → "Steam (Discord)", ohne Steam → "RP (Discord)" usw. So sieht Staff alle
-// gesetzten Namen auf einen Blick, und die Substring-Suche (das Label enthält alle drei) trifft
-// jeden der drei Namen.
-function userLabel(u) {
-  const rp = (u.rpName || '').trim();
-  const steam = (u.ingameName || '').trim();
-  const disc = (u.discordName || u.name || '').trim();
-  const primary = rp || steam || disc || u.steamId || '';
-  const extras = [];
-  if (rp) { if (steam) extras.push(steam); if (disc && disc !== steam) extras.push(disc); }
-  else if (steam) { if (disc && disc !== steam) extras.push(disc); }
-  return extras.length ? `${primary} (${extras.join(', ')})` : primary;
-}
-// userNames = alle gesetzten Namen eines Users (RP/Steam/Discord/Legacy) klein geschrieben.
-function userNames(u) {
-  return [u.rpName, u.ingameName, u.discordName, u.name].filter(Boolean).map((s) => s.toLowerCase());
-}
-// warnItemUser bringt ein /admin/players/search-Item (playerName = Ingame) auf die gemeinsame
-// User-Form, damit userLabel/matchUser (RP/Steam/Discord) auch auf die Verwarnungs-Suche passen.
-function warnItemUser(p) {
-  return { steamId: p.steamId, discordId: p.discordId, rpName: p.rpName, ingameName: p.playerName, discordName: p.discordName, name: p.discordName || p.playerName };
-}
-
-// matchUser löst den getippten/eingefügten Wert robust zum User auf: SteamID/DiscordID exakt
-// (Copy-Paste!), kombiniertes Label bzw. einer der drei Namen exakt (case-insensitive),
-// Dedup-Suffix "… (…1234)", sonst eindeutiger Teilstring über RP/Steam/Discord.
-function matchUser(v, users) {
-  v = (v || '').trim();
-  users = users || [];
-  if (!v) return null;
-  const lv = v.toLowerCase();
-  let m = users.find((u) => u.steamId === v || u.discordId === v);
-  if (m) return m;
-  const label = users.filter((u) => userLabel(u).toLowerCase() === lv);
-  if (label.length === 1) return label[0];
-  const exact = users.filter((u) => userNames(u).includes(lv));
-  if (exact.length === 1) return exact[0];
-  const suf = v.match(/\(…(\w{4})\)\s*$/);
-  if (suf) {
-    m = users.find((u) => (u.steamId || u.discordId || '').slice(-4) === suf[1] && lv.startsWith(userLabel(u).toLowerCase()));
-    if (m) return m;
-  }
-  const sub = users.filter((u) => userLabel(u).toLowerCase().includes(lv) || (u.steamId || '').includes(v));
-  if (sub.length === 1) return sub[0];
-  return (label[0] || exact[0]) || null; // mehrdeutig → erster Kandidat; sonst nichts
-}
-
 // filterDatalist befüllt das zum Input gehörende <datalist> mit den Top-Treffern zur aktuellen
 // Eingabe (Name/SteamID/DiscordID, Teilstring, case-insensitive), gedeckelt auf 50.
 function filterDatalist(inp) {
@@ -3118,16 +3068,6 @@ async function svRenderClassLimits() {
     } catch (e) { if (res) res.textContent = '⚠️ ' + e.message; showToast(e.message, 'error'); }
   };
 }
-// Generischer Server-Panel-API-Call (GET/POST/PATCH/DELETE) → geparste Antwort, wirft bei !ok.
-async function svApi(method, path, body) {
-  const opt = { method, headers: { Authorization: `Bearer ${sessionToken}` } };
-  if (body !== undefined && body !== null) { opt.headers['Content-Type'] = 'application/json'; opt.body = JSON.stringify(body); }
-  const r = await fetch(`${config.tokenBase}${path}`, opt);
-  let d = {}; try { d = await r.json(); } catch {}
-  if (!r.ok) throw new Error(apiErr(d) || `HTTP ${r.status}`);
-  return d;
-}
-function svFmtTod(t) { const h = Math.floor(t), m = Math.round((t - h) * 60); return `${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}`; }
 
 // 🌍 Welt: Zeit / Wetter / Grow-Stop
 async function renderSvWelt() {
@@ -3577,7 +3517,7 @@ async function admLoadUserInfo() {
     const d = await res.json(); if (!res.ok) throw new Error(apiErr(d));
     const toks = Object.entries(d.tokens || {}).filter(([, n]) => n > 0).map(([k, n]) => `${k} ×${n}`).join(', ') || '—';
     const dino = d.dino && d.dino.online
-      ? `${escapeHtml(d.dino.dinoClass || '?')} · ${Math.round((d.dino.grow || 0) * 100)}%${d.dino.elderReplicationStacks ? ` · 🪦${d.dino.elderReplicationStacks}` : ''}`
+      ? `${escapeHtml(d.dino.dinoClass || '?')} · ${fmtGrow(d.dino.grow || 0)}${d.dino.elderReplicationStacks ? ` · 🪦${d.dino.elderReplicationStacks}` : ''}`
       : 'offline';
     el('admUserInfo').innerHTML =
       `<div><b>${escapeHtml(d.name || u.name)}</b> ${d.rank ? `<span style="color:var(--accent)">${escapeHtml(d.rank)}</span>` : ''}</div>` +
@@ -4374,7 +4314,7 @@ function groupMembersHtml() {
     html = members.map((p) => {
       const you = !!p.isYou;
       const partner = me.partnerSteamId && p.steamId === me.partnerSteamId;
-      const grow = p.grow != null ? `${Math.round(p.grow * 100)}%` : '';
+      const grow = fmtGrow(p.grow);
       const dist = (!you && me) ? `${Math.round(Math.hypot(p.x - me.x, p.y - me.y) / UNITS_PER_M)} m` : '';
       const crown = (lead && p.steamId === lead) ? ' 👑' : '';
       const tag = you ? ' <span style="color:var(--accent-2)">(Du)</span>' : (partner ? ' 💞' : (p.ovgroup ? ' 🔗' : ''));
@@ -4561,7 +4501,7 @@ function renderProfile() {
   if (d.isBleeding) tags.push('🩸 blutet');
   // Profil zeigt KEINE Dino-Vitals (die stehen im Dino-Tab) — stattdessen Account-/Status-Infos.
   const onlineDino = d.online
-    ? `${escapeHtml(d.dino || '?')} · ${d.gender === 'Female' ? '♀' : '♂'} · ${Math.round((d.grow || 0) * 100)}%${tags.length ? ' · ' + tags.join(' · ') : ''}`
+    ? `${escapeHtml(d.dino || '?')} · ${d.gender === 'Female' ? '♀' : '♂'} · ${fmtGrow(d.grow || 0)}${tags.length ? ' · ' + tags.join(' · ') : ''}`
     : 'Aktuell nicht im Spiel';
   const inGroup = !!(me && (me.groupId || players.some((p) => p.ovgroup)));
   const qa = questState && questState.active;
@@ -5186,7 +5126,7 @@ function questProgressHtml() {
     const dinoOk = p.rightDino;
     const growOk = (p.grow || 0) >= (questState.growTarget || 0.8);
     chips = `<span class="q-chip ${dinoOk ? 'ok' : 'no'}">${dinoOk ? '✅' : '🦖'} ${dinoOk ? 'Richtiger Dino' : 'Spiele ' + escapeHtml(a.dinoName || a.dino)}</span>`
-      + `<span class="q-chip ${growOk ? 'ok' : 'no'}">📈 ${Math.round((p.grow || 0) * 100)}% / ${target}%</span>`
+      + `<span class="q-chip ${growOk ? 'ok' : 'no'}">📈 ${fmtGrow(p.grow || 0)} / ${target}%</span>`
       + `<span class="q-chip ${p.isPrime ? 'ok' : 'no'}">${p.isPrime ? '⭐' : '☆'} Prime</span>`;
   }
   return `<div class="q-progress" id="qProgress">${chips}</div>`;
@@ -5966,7 +5906,7 @@ function dinoPreview(card, cls) {
 
 function dinoCardEl(card, onClick) {
   const d = document.createElement('div'); d.className = 'dino-card';
-  d.innerHTML = dinoPreview(card) + `<div class="body"><div class="nm">${card.dino}${card.isElder ? ' 👑' : ''}</div><div class="mt">${card.gender || ''} · ${Math.round((card.grow || 0) * 100)}%</div></div>` + paletteHTML(card.colors);
+  d.innerHTML = dinoPreview(card) + `<div class="body"><div class="nm">${card.dino}${card.isElder ? ' 👑' : ''}</div><div class="mt">${card.gender || ''} · ${fmtGrow(card.grow || 0)}</div></div>` + paletteHTML(card.colors);
   d.onclick = onClick; return d;
 }
 // Garage/Markt-Dino-Info: gespeicherte Dino-Karten → Vitals als Prozent (kein Cur/Max-Kontext).
@@ -6067,7 +6007,7 @@ function showDinoDetail(card, ctx) {
       <div class="prevwrap ddbig">${dinoPreviewSVG(card)}<img class="photo" src="${dinoImgSrc(card.dino)}" alt="" onerror="this.remove()"></div>
       <div style="flex:1;min-width:0">
         <div class="dd-nm" style="overflow:hidden;text-overflow:ellipsis">${escapeHtml(card.dino || '?')}</div>
-        <div style="font-size:12px;color:var(--muted);margin:3px 0 9px">${Math.round((card.grow || 0) * 100)}% Wachstum</div>
+        <div style="font-size:12px;color:var(--muted);margin:3px 0 9px">${fmtGrow(card.grow || 0)} Wachstum</div>
         <div style="display:flex;gap:5px;flex-wrap:wrap">${badges}</div>
         ${paletteHTML(card.colors)}
       </div>
@@ -6103,18 +6043,7 @@ function showDinoDetail(card, ctx) {
 // Fehlermeldung robust extrahieren: Backend liefert {error:{code,message}}, der
 // token-service (proxied) {error:"text"}. Sonst gäbe „throw new Error(d.error)" bei
 // einem Objekt die Meldung „[object Object]".
-function apiErr(d, fallback) {
-  const e = d && d.error;
-  if (e && typeof e === 'object') return e.message || e.code || fallback || 'Fehler';
-  return e || fallback || 'Fehler';
-}
-async function apiAction(path, body, okMsg, reload) {
-  try {
-    const res = await fetch(`${config.tokenBase}${path}`, { method: 'POST', headers: { Authorization: `Bearer ${sessionToken}`, 'Content-Type': 'application/json' }, body: JSON.stringify(body || {}) });
-    const d = await res.json(); if (!res.ok) throw new Error(apiErr(d));
-    showToast(okMsg.replace('{dino}', d.dino || ''), 'success'); pollHud(); if (reload) await reload();
-  } catch (err) { showToast(err.message, 'error'); }
-}
+const apiAction = makeApiAction({ api: svApi, toast: (m, k) => showToast(m, k), after: () => pollHud() });
 const unparkById = (id) => apiAction('/garage/unpark', { slotId: id }, '⬆️ {dino} ausgeparkt', loadGarage);
 const buyOfferId = (id) => apiAction('/market/buy', { offerId: id }, '🦖 {dino} gekauft!', loadMarket);
 
@@ -6688,7 +6617,7 @@ function showSellDialog(card) {
   const serverBtn = canSell
     ? `<button id="sdServer" style="width:100%;margin-bottom:8px">💰 An Server verkaufen (+${price.toLocaleString('de-DE')})</button>`
     : `<button id="sdServer" style="width:100%;margin-bottom:8px;opacity:.55;cursor:not-allowed" disabled title="Verkauf erst ab ${minPct}% Wachstum — aktuell ${growPct}%.">💰 An Server verkaufen (ab ${minPct}%)</button>`;
-  box.innerHTML = `<div style="display:flex;gap:14px;align-items:center;margin-bottom:14px">${dinoPreview(card, 'dd')}<div><div style="font-size:18px;font-weight:700">${card.dino}${card.isElder ? ' 👑' : ''}</div><div style="font-size:12px;color:var(--muted)">${card.gender || ''} · ${Math.round((card.grow || 0) * 100)}%</div></div></div>
+  box.innerHTML = `<div style="display:flex;gap:14px;align-items:center;margin-bottom:14px">${dinoPreview(card, 'dd')}<div><div style="font-size:18px;font-weight:700">${card.dino}${card.isElder ? ' 👑' : ''}</div><div style="font-size:12px;color:var(--muted)">${card.gender || ''} · ${fmtGrow(card.grow || 0)}</div></div></div>
     ${serverBtn}
     <div style="display:flex;gap:6px;margin-bottom:8px">
       <input id="sdPrice" type="number" min="1" placeholder="Preis in Punkten" style="flex:1;padding:9px;border-radius:8px;border:1px solid var(--border);background:var(--input-bg);color:#eee;font-size:13px">
@@ -7044,7 +6973,7 @@ async function dtLoadGarage() {
     if (d.error) throw new Error(d.error);
     const slots = d.slots || [];
     if (!slots.length) { box.innerHTML = '<div class="dt-muted">Garage leer.</div>'; return; }
-    box.innerHTML = slots.map((s) => `<div class="dt-slot"><span>${escapeHtml(s.dinoClass || s.label || '?')} · ${Math.round((s.grow || 0) * 100)}% · ${escapeHtml(s.gender || '')}${(s.elderStacks || 0) > 0 ? ' 👑' : ''}${(s.primes || []).length >= 5 ? ' ⭐' : ''}</span>${dtTab === 'delete' ? `<button class="secondary" data-del="${s.id}" style="flex:none;width:auto;padding:5px 10px;color:#fca5a5">🗑️</button>` : `<button data-edit="${s.id}" style="flex:none;width:auto;padding:5px 10px">✏️</button>`}</div>`).join('');
+    box.innerHTML = slots.map((s) => `<div class="dt-slot"><span>${escapeHtml(s.dinoClass || s.label || '?')} · ${fmtGrow(s.grow || 0)} · ${escapeHtml(s.gender || '')}${(s.elderStacks || 0) > 0 ? ' 👑' : ''}${(s.primes || []).length >= 5 ? ' ⭐' : ''}</span>${dtTab === 'delete' ? `<button class="secondary" data-del="${s.id}" style="flex:none;width:auto;padding:5px 10px;color:#fca5a5">🗑️</button>` : `<button data-edit="${s.id}" style="flex:none;width:auto;padding:5px 10px">✏️</button>`}</div>`).join('');
     box.querySelectorAll('[data-del]').forEach((b) => { b.onclick = () => { if (b.dataset.armed) { apiAction('/admin/dino-token/delete', { targetSteamId: sid, slotId: b.dataset.del }, '🗑️ Token gelöscht', dtLoadGarage); } else { b.dataset.armed = '1'; b.textContent = 'Sicher?'; setTimeout(() => { b.textContent = '🗑️'; delete b.dataset.armed; }, 2500); } }; });
     box.querySelectorAll('[data-edit]').forEach((b) => { b.onclick = () => dtOpenEdit(sid, slots.find((s) => s.id === b.dataset.edit)); });
   } catch (e) { box.innerHTML = `<div style="color:#ef4444;font-size:13px">${escapeHtml(e.message || '')}</div>`; }
@@ -7210,11 +7139,6 @@ async function svLoadStatus() {
     if (d.error) throw new Error(d.error);
     box.innerHTML = d.running ? '🟢 Server läuft' : '🔴 Server ist AUS';
   } catch (e) { box.innerHTML = `<span style="color:#ef4444">${escapeHtml(e.message || '')}</span>`; }
-}
-function svArmConfirm(btn, label, fn) {
-  if (btn.dataset.armed) { fn(); return; }
-  btn.dataset.armed = '1'; const t = btn.textContent; btn.textContent = label;
-  setTimeout(() => { btn.textContent = t; delete btn.dataset.armed; }, 2500);
 }
 function renderServer() {
   let html = `
