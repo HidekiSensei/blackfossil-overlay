@@ -59,6 +59,13 @@ export const CAPS = {
   'ops.read':          'admin',   // GET  /admin/ops/*     (h.require "admin")
   'voice.listen':      'admin',   // POST /voice/listen    (voiceIsAdmin + Audit)
   'dino.polymorph':    'admin',   // POST /admin/players/{id}/polymorph (WorldRoutes = admin)
+  'team.lightning':    'ingame',  // POST /admin/lightning  (requireRank "ingame")
+  'team.follow':       'ingame',  // POST/DELETE /admin/follow
+  'team.toast':        'staff',   // POST /admin/toast
+  'team.gift':         'ingame',  // POST /admin/gift
+  'token.dino':        'staff',   // /admin/dino-token/*
+  'token.pvp':         'staff',   // /admin/pvp/*
+  'token.prime':       'staff',   // POST /admin/prime
 
   // ── Server ────────────────────────────────────────────────────────────
   'server.status':     'staff',   // GET  /admin/server/status

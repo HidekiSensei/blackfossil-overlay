@@ -260,8 +260,8 @@ input[type="range"] { accent-color: var(--accent); }
 #cpMapCanvas:active { cursor: grabbing; }
 
 /* ── Scrollbars ───────────────────────────────────────────────────────── */
-.cp-pad::-webkit-scrollbar, .cp-scroll::-webkit-scrollbar, .cp-lex-list::-webkit-scrollbar { width: 9px; }
-.cp-pad::-webkit-scrollbar-thumb, .cp-scroll::-webkit-scrollbar-thumb, .cp-lex-list::-webkit-scrollbar-thumb {
+.cp-pad::-webkit-scrollbar, .cp-scroll::-webkit-scrollbar, .cp-lex-list::-webkit-scrollbar, .cp-pl-list::-webkit-scrollbar { width: 9px; }
+.cp-pad::-webkit-scrollbar-thumb, .cp-scroll::-webkit-scrollbar-thumb, .cp-lex-list::-webkit-scrollbar-thumb, .cp-pl-list::-webkit-scrollbar-thumb {
   background: rgba(255, 255, 255, 0.13); border-radius: 999px;
 }
 .cp-pad::-webkit-scrollbar-thumb:hover, .cp-scroll::-webkit-scrollbar-thumb:hover, .cp-lex-list::-webkit-scrollbar-thumb:hover { background: rgba(255, 255, 255, 0.22); }
@@ -801,6 +801,59 @@ input[type="range"] { accent-color: var(--accent); }
 .cp-msel-list { max-height: 260px; overflow-y: auto; display: flex; flex-direction: column; gap: 2px; }
 .cp-msel-item { padding: 2px 4px; border-radius: var(--cp-r-sm); }
 .cp-msel-item:hover { background: var(--cp-surface-2); }
+
+/* ── Spielerliste (Moderation) ────────────────────────────────────────────── */
+/* Aufbau wie im Lexikon: Liste links, Detail rechts. Die Liste scrollt fuer
+   sich und laedt beim Scrollen nach — 1250 Zeilen auf einmal kosten spuerbar
+   und liest niemand. */
+.cp-pl-count { margin: var(--cp-s2) 0; font-size: 11.5px; }
+.cp-pl-list {
+  max-height: calc(100vh - 300px); min-height: 300px; overflow-y: auto;
+  display: flex; flex-direction: column; gap: 2px;
+}
+.cp-pl-row {
+  display: flex; align-items: center; gap: var(--cp-s3); width: 100%;
+  padding: var(--cp-s2) var(--cp-s3); height: 42px; flex: none;
+  font: inherit; color: inherit; text-align: left;
+  background: transparent; border: 1px solid transparent; border-radius: var(--cp-r-sm);
+  cursor: pointer; transition: background .12s, border-color .12s;
+}
+.cp-pl-row:hover { background: var(--cp-surface); }
+.cp-pl-row.on { background: rgba(var(--accent-rgb), .16); border-color: rgba(var(--accent-rgb), .38); }
+/* Punkt statt Text: der Zustand ist binaer und soll beim Ueberfliegen einer
+   langen Liste ohne Lesen erfassbar sein. */
+.cp-pl-status { width: 8px; height: 8px; border-radius: 50%; flex: none; background: #4b4658; }
+.cp-pl-status.on { background: var(--cp-ok); box-shadow: 0 0 0 2px rgba(74, 222, 128, .2); }
+.cp-pl-main { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 1px; }
+.cp-pl-name { font-size: 13px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.cp-pl-sub { font-size: 11px; color: var(--muted); }
+.cp-pl-more { padding: var(--cp-s3); text-align: center; font-size: 11px; color: var(--muted); }
+.cp-pl-title {
+  display: flex; align-items: center; gap: var(--cp-s3);
+  font-size: 16px; font-weight: 600; margin-bottom: var(--cp-s4);
+}
+.cp-pl-facts { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: var(--cp-s2) var(--cp-s4); }
+.cp-pl-fact { display: flex; gap: var(--cp-s2); font-size: 12.5px; }
+.cp-pl-fact-k { color: var(--muted); min-width: 62px; flex: none; }
+.cp-pl-fact-v { overflow: hidden; text-overflow: ellipsis; }
+
+/* Auswahl-Chips (Primes, Mutationen). Umbrechend statt scrollend: bei 40
+   Mutationen ist ein waagerechter Scroll unbedienbar. */
+.cp-chip-wrap { display: flex; flex-wrap: wrap; gap: var(--cp-s1); }
+.cp-chip {
+  padding: 4px var(--cp-s3); height: 26px; flex: none;
+  font: inherit; font-size: 11.5px; color: var(--muted);
+  background: var(--cp-surface); border: 1px solid var(--cp-line);
+  border-radius: 999px; cursor: pointer;
+  transition: background .12s, color .12s, border-color .12s;
+}
+.cp-chip:hover { background: var(--cp-surface-2); color: #ddd; }
+.cp-chip.on { background: rgba(var(--accent-rgb), .18); border-color: rgba(var(--accent-rgb), .45); color: #fff; }
+
+/* Betroffene Ziele einer Aktion. Als Abzeichen-Wolke statt als Liste: bei 50
+   Spielern braucht eine Liste den halben Bildschirm, die Namen sollen aber
+   VOR dem Klick vollstaendig lesbar sein. */
+.cp-pl-targets { display: flex; flex-wrap: wrap; gap: var(--cp-s1); max-height: 180px; overflow-y: auto; }
 
 /* Roter Punkt am Settings-Eintrag, wenn ein Update anliegt.
    Rechtsbuendig statt neben dem Text: so springt die Beschriftung nicht,
