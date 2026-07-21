@@ -20,7 +20,7 @@ import {
   ZONE_LAYERS, ZONE_META, setZoneLayer, isZoneLayerVisible,
   normToWorld, worldToNorm, zoneObjectAt, encounterHandles, zoneMidpoints, encounterMidpoints,
 } from './map.js';
-import { baseClass, escapeHtml } from './shared/format.js';
+import { baseClass, escapeHtml, UNITS_PER_M } from './shared/format.js';
 import { makeTheme } from './shared/theme.js';
 import { initSettings, renderSettings, openSoftwareTab } from './companion/panels/settings.js';
 import { initUpdates, hasUpdate, onUpdateChange } from './companion/updates.js';
@@ -232,9 +232,43 @@ function render() {
   });
   { const list = visibleEncounters();
     if (showAi && list.length) drawAiEncounters(ctx, MAP_SIZE, MAP_SIZE, 1 / sc, list, baseClass); }
+  drawListenRadius(ctx, 1 / sc);
   drawPlacement(ctx, 1 / sc);
   ctx.setTransform(1, 0, 0, 1, 0, 0);
   updateMapStat();
+}
+
+// Mithoer-Umkreis: zeigt exakt den Bereich, aus dem gerade Stimmen durchkommen.
+//
+// Der Kreis liegt um den ABGEHOERTEN Spieler, nicht um den Admin — genau so
+// rechnet listen.js die Lautstaerken (Distanz zum Ziel, harte Kante). Ein Kreis
+// um den eigenen Dino haette hier keine Bedeutung; der Admin sitzt beim
+// Mithoeren in der Regel gar nicht auf dem Server.
+function drawListenRadius(ctx, scale) {
+  if (!isListening()) return;
+  const t = players.find((p) => p.steamId === listenTarget());
+  if (!t) return;   // Ziel offline/nicht in der Liste → nichts zu zeigen
+
+  const c = worldToNorm(t.x, t.y);
+  // Radius ueber einen Delta-Punkt statt ueber einen Skalierungsfaktor: die
+  // Kalibrierung ist eine affine Matrix (kann drehen), die Laenge des
+  // transformierten Vektors ist deshalb die ehrliche Umrechnung.
+  const e = worldToNorm(t.x + listenRadius() * UNITS_PER_M, t.y);
+  const r = Math.hypot(e.nx - c.nx, e.ny - c.ny) * MAP_SIZE;
+  if (!(r > 0)) return;
+
+  const px = c.nx * MAP_SIZE, py = c.ny * MAP_SIZE;
+  ctx.save();
+  ctx.beginPath();
+  ctx.arc(px, py, r, 0, Math.PI * 2);
+  // Dezente Fuellung, damit die Flaeche lesbar ist, ohne die Karte zuzudecken.
+  ctx.fillStyle = 'rgba(56,189,248,0.10)';
+  ctx.fill();
+  ctx.setLineDash([6 * scale, 4 * scale]);
+  ctx.lineWidth = 2 * scale;
+  ctx.strokeStyle = 'rgba(56,189,248,0.85)';
+  ctx.stroke();
+  ctx.restore();
 }
 
 // Vorschau der bereits gesetzten Punkte, damit man beim Aufziehen einer Zone
@@ -1008,6 +1042,11 @@ function updateListenUi() {
   lb.setAttribute('aria-checked', an ? 'true' : 'false');
   if (box) box.hidden = !an;
   if (lv) lv.textContent = listenRadius() + ' m' + (an ? ` · ${audibleCount()} hörbar` : '');
+  // Karte sofort nachziehen: der Mithoer-Kreis haengt an Zustand UND Radius.
+  // Hier gebuendelt, weil sowohl Start/Stop (onChange) als auch der
+  // Radius-Regler durch diese Funktion laufen. render() steigt selbst aus,
+  // wenn die Karte gerade nicht sichtbar ist.
+  render();
 }
 
 // ── Legende & Layer ────────────────────────────────────────────────────────
