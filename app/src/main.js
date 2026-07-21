@@ -4,6 +4,9 @@ const fs = require('node:fs');
 const http = require('node:http');
 const { exec, spawn, execSync } = require('node:child_process');
 const { autoUpdater } = require('electron-updater');
+// Natives Fenster-Tracking (Windows): SetWinEventHook statt PowerShell-Probes.
+// Faellt bei jedem Fehler still auf den Legacy-Pfad zurueck (BF_LEGACY_TRACKING=1 erzwingt ihn).
+const nativeOv = require('./native-overlay');
 
 // ── Robustheit: kaputte stdout/stderr-Pipe (EPIPE) darf das Overlay nicht crashen ──
 // Startet das AppImage aus einem Launcher/Terminal, das sich später schließt, bricht die
@@ -305,6 +308,11 @@ function bringOverlayToFront() {
 function isGameForeground() {
   if (process.platform !== 'win32') return true;   // Dev: immer aktiv
   if (overlayInteractive) return true;             // Map/Settings offen → Overlay hat Fokus
+  // Natives Tracking: focus/blur kommen event-getrieben vom WinEventHook.
+  // Vor dem ERSTEN Attach niemals ausblenden (Pendant zu fgEverSawGame unten).
+  if (nativeOv.state.enabled) {
+    return nativeOv.state.targetHasFocus || !nativeOv.state.everAttached;
+  }
   // Keine frischen Daten (Prozess tot/zu langsam) → anzeigen statt verstecken
   if (!fgName || Date.now() - fgUpdatedAt > 6000) return true;
   const isGame = fgName.includes('theisle');       // lockerer Treffer
@@ -361,9 +369,13 @@ let gameWasRunning = false; // war The Isle beim letzten Tick schon einmal an?
 let gameMissCount = 0;      // aufeinanderfolgende "nicht erkannt"-Ticks (Entprellung)
 let fgHideCount = 0;        // aufeinanderfolgende "nicht im Vordergrund"-Ticks (Hysterese)
 function startGameWatch() {
-  startForegroundWatch();
-  startGameGeometryWatch();
+  // Erst das Fenster: openOverlay() initialisiert das native Tracking; nur wenn
+  // das NICHT verfuegbar ist, werden die PowerShell-Probes ueberhaupt gestartet.
   if (!overlayWindow) openOverlay();
+  if (!nativeOv.state.enabled) {
+    startForegroundWatch();
+    startGameGeometryWatch();
+  }
   const tick = async () => {
     if (!overlayWindow) return;
     const running = await isGameRunning();
@@ -390,7 +402,9 @@ function startGameWatch() {
     gameMissCount = 0;
     gameWasRunning = true;
     if (process.platform !== 'win32') syncOverlayToGameWindow();
-    else applyGameRectWin();   // Windows: Overlay dem (windowed) Spielfenster nachführen
+    // Windows: mit nativem Tracking fuehrt die Bibliothek das Fenster selbst nach
+    // (moveresize-Events); nur der Legacy-Pfad braucht das Poll-Nachfuehren.
+    else if (!nativeOv.state.enabled) applyGameRectWin();
     // Läuft → nur sichtbar UND mit aktiven Hotkeys, wenn The Isle im Vordergrund ist.
     // Hysterese: erst nach 2 "nicht im Vordergrund"-Ticks ausblenden (kein Flackern).
     const fg = isGameForeground();
@@ -547,7 +561,11 @@ function openOverlay() {
   const { bounds } = screen.getPrimaryDisplay();
   overlayWindow = new BrowserWindow({
     x: bounds.x, y: bounds.y, width: bounds.width, height: bounds.height,
-    transparent: true, frame: false, resizable: false, movable: false,
+    // resizable auf Windows: das native Tracking (und schon applyGameRectWin) setzt
+    // die Fenstergroesse programmatisch; ohne resizable verweigert Chromium Groessen-
+    // aenderungen von aussen teils (so auch die Empfehlung von electron-overlay-window).
+    // User-Resize bleibt trotzdem unmoeglich: frame:false + movable:false.
+    transparent: true, frame: false, resizable: process.platform === 'win32', movable: false,
     skipTaskbar: true, hasShadow: false, fullscreenable: false, show: false, icon: appIcon(),
     // backgroundThrottling:false → Poll (/positions) läuft auch weiter, wenn das Fenster
     // beim Raustabben versteckt wird. Sonst drosselt Chromium den Timer → Overlay-Aktivität
@@ -573,6 +591,13 @@ function openOverlay() {
   overlayWindow.on('closed', () => {
     overlayWindow = null; unregisterHotkeys();
     if (gameWatchTimer) { clearInterval(gameWatchTimer); gameWatchTimer = null; }
+  });
+
+  // Natives Fenster-Tracking initialisieren (nur Windows; Rueckgabe false = Legacy-
+  // Pfad, startGameWatch startet dann die PowerShell-Probes). Warnungen (z. B.
+  // UIPI: Spiel laeuft als Admin) gehen als Toast an den Renderer.
+  nativeOv.init(overlayWindow, (type, message) => {
+    try { overlayWindow?.webContents.send('overlay-warning', { type, message }); } catch {}
   });
 
   registerHotkeys();
@@ -735,7 +760,10 @@ ipcMain.handle('capture-screen', async () => {
 ipcMain.on('set-overlay-bounds', (_e, b) => {
   if (!overlayWindow || overlayWindow.isDestroyed()) return;
   try {
-    const { bounds } = screen.getPrimaryDisplay();
+    // Basis-Flaeche = Spielfenster (natives Tracking), sonst Primaeranzeige.
+    // Vorher schrumpfte der Idle-Shrink bei windowed-Spiel auf die FALSCHE Flaeche
+    // (Primaermonitor) und der Geometrie-Poll vergroesserte im naechsten Tick zurueck.
+    const bounds = nativeOv.gameDipBounds(overlayWindow) || screen.getPrimaryDisplay().bounds;
     if (b && b.full) {
       overlayWindow.setBounds({ x: bounds.x, y: bounds.y, width: bounds.width, height: bounds.height });
     } else if (b && typeof b.height === 'number') {
@@ -751,11 +779,19 @@ ipcMain.on('set-interactive', (_e, interactive) => {
   overlayWindow.setIgnoreMouseEvents(!interactive, { forward: true });
   if (interactive) {
     overlayWindow.setAlwaysOnTop(true, 'screen-saver');
+    try { overlayWindow.setFocusable(true); } catch {}
+    try { overlayWindow.show(); } catch {}        // aktiviert (anders als showInactive)
+    if (nativeOv.activate()) {
+      // Nativer Pfad: schlichter Fokuswechsel reicht, weil der Aufruf im Kontext
+      // echter Nutzereingabe steht (Dock-Hotkey/Klick) — Windows erlaubt
+      // SetForegroundWindow dann regulaer. Genau so macht es Awakened PoE Trade;
+      // der ALT-Tap-/AttachThreadInput-Umweg (bringOverlayToFront) entfaellt.
+      return;
+    }
+    // ── Legacy-Pfad (natives Tracking nicht verfuegbar) ──
     // Fokus möglichst hart vom Spiel holen — sonst landen Klicks im Spiel (Kameradrehung/
     // Biss). Windows sperrt den Foreground-Steal teils; app.focus({steal}) + ein kurzes
     // setFocusable-Toggle umgeht das zuverlässiger als focus() allein.
-    try { overlayWindow.setFocusable(true); } catch {}
-    try { overlayWindow.show(); } catch {}        // aktiviert (anders als showInactive)
     try { overlayWindow.moveTop(); } catch {}
     try { overlayWindow.focus(); } catch {}
     try { app.focus({ steal: true }); } catch {}  // App-Ebene: Foreground hart stehlen
@@ -765,7 +801,12 @@ ipcMain.on('set-interactive', (_e, interactive) => {
     setTimeout(() => { try { if (overlayInteractive && overlayWindow) { overlayWindow.focus(); app.focus({ steal: true }); bringOverlayToFront(); } } catch {} }, 60);
   } else {
     try { overlayWindow.setFocusable(true); } catch {}
-    overlayWindow.blur();            // gibt den Fokus zurück ans Spiel
+    // Nativer Pfad: Fokus EXPLIZIT ans Spielfenster zurueckgeben (SetForegroundWindow
+    // auf das Ziel) — zuverlaessiger als blur(), das nur "irgendwem" den Fokus laesst.
+    if (!nativeOv.release()) overlayWindow.blur();
+    // release() setzt ignoreMouseEvents ohne forward-Option → forward re-asserten,
+    // sonst bekommt der Renderer keine mousemove-Events mehr (Hover-Effekte tot).
+    overlayWindow.setIgnoreMouseEvents(true, { forward: true });
   }
 });
 

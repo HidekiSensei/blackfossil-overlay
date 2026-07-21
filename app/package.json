@@ -15,6 +15,7 @@
     "dist:companion": "npm run build:renderer && electron-builder --win --config electron-builder.companion.yml --publish never"
   },
   "dependencies": {
+    "electron-overlay-window": "^4.1.0",
     "electron-updater": "^6.8.9",
     "livekit-client": "^2.9.4",
     "uiohook-napi": "^1.5.4"

@@ -27,4 +27,6 @@ contextBridge.exposeInMainWorld('bf', {
   updateInstall: () => ipcRenderer.send('update-install'),
   onGameClosed: (cb) => ipcRenderer.on('game-closed', () => cb()),
   onGameFocus: (cb) => ipcRenderer.on('game-focus', (_e, focused) => cb(focused)),
+  // Warnungen aus dem Main-Prozess (z. B. UIPI: Spiel läuft als Admin, Overlay nicht)
+  onOverlayWarning: (cb) => ipcRenderer.on('overlay-warning', (_e, w) => cb(w)),
 });
