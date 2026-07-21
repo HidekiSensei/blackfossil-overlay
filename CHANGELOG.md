@@ -14,6 +14,8 @@
 - **Wandern** — Bestenliste fürs Laufen, Fliegen und Schwimmen, mit Wochen- und Gesamtwertung,
   persönlichen Rekorden und einer Live-Distanzanzeige im HUD.
 - **Dino-Namen**: Dinos in der Garage lassen sich benennen; der Name bleibt am Dino.
+- **Companion-App** — an einer zweiten Anwendung neben dem Overlay wird gearbeitet. Sie läuft
+  gerade in einer geschlossenen Beta mit einem kleinen Kreis. Mehr dazu, sobald sie so weit ist.
 
 ### 🔧 Verbessert
 
@@ -30,8 +32,8 @@
 
 ### Intern
 
-- **Companion-App** — zweite Anwendung neben dem Overlay, die ohne laufendes Spiel funktioniert.
-  Vorerst **Beta und dem Team vorbehalten**. Enthaelt Vollbild-Karte mit Karten-Editor,
+- **Companion-App** (oeffentlich nur als Beta erwaehnt, ohne Details): laeuft ohne Spiel,
+  Zugang ueber BETA_STAFF_ONLY auf Staff begrenzt. Umfang: Vollbild-Karte mit Karten-Editor,
   Spielerverwaltung, Tokens, Dino- und Weltverwaltung, Ankuendigungen, Support, Verwarnungen,
   Accounts, Audits, Lexikon, Staff-Handbuch und Mithoeren.
 - Farbschemata in der Companion (sieben Vorlagen plus eigene Farbe, alles aus einem Farbwert
