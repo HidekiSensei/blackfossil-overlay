@@ -82,6 +82,16 @@ body.bf-noblur .map-panel {
 #growTimer .gt-track { height: 6px; border-radius: 4px; background: rgba(255,255,255,.14); overflow: hidden; }
 #growTimer .gt-fill { height: 100%; width: 0%; border-radius: 4px;
   background: linear-gradient(90deg, var(--accent), var(--accent-2)); transition: width .5s linear; }
+/* 🐾 Wander-Distanz-HUD: plopt beim Sammeln auf, gleiche Optik wie der Grow-Timer. */
+#distHud { position: absolute; top: 52px; left: 50%; transform: translateX(-50%); display: none;
+  background: var(--panel); border: 1px solid var(--border); border-radius: 14px; padding: 7px 12px;
+  box-shadow: var(--glow); min-width: 190px; font-size: 12px; z-index: 5; animation: distPop .22s ease-out; }
+@keyframes distPop { from { opacity: 0; transform: translateX(-50%) translateY(-4px); } }
+#distHud .dh-head { font-weight: 700; margin-bottom: 5px; color: var(--accent-2); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+#distHud .dh-row { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 2px 0; }
+#distHud .dh-cat { color: var(--muted); }
+#distHud .dh-val { font-weight: 700; font-variant-numeric: tabular-nums; }
+#distHud .dh-inc { color: #4ade80; font-weight: 700; font-size: 11px; }
 /* Event-Timer-Panel: default links, etwa mittig (unter der Lebensanzeige), verschieb-/skalierbar. */
 #eventPanel { position: fixed; left: 16px; top: 45%; display: none; transform-origin: top left;
   background: var(--panel); border: 1px solid var(--border); border-radius: 14px; padding: 8px 12px;
@@ -445,10 +455,10 @@ body.bf-solid-dialogs #bigMap {
 
 /* Timer-Anzeigen (Grow · Goldene Zone · PvE-Park): verschiebbar + skalierbar.
    Skalierung wächst vom Anker nach rechts/unten (kein Springen beim Skalieren). */
-#growTimer, #goldenHud, #parkWarn, #eventPanel { transform-origin: top left; }
+#growTimer, #goldenHud, #parkWarn, #eventPanel, #distHud { transform-origin: top left; }
 /* Im Edit-Modus auch inaktive Timer zeigen, damit man sie platzieren kann
    (überschreibt das inline gesetzte display:none der Render-Funktionen). */
-body.bf-edit #growTimer, body.bf-edit #goldenHud, body.bf-edit #parkWarn, body.bf-edit #eventPanel { display: block !important; }
+body.bf-edit #growTimer, body.bf-edit #goldenHud, body.bf-edit #parkWarn, body.bf-edit #eventPanel, body.bf-edit #distHud { display: block !important; }
 
 /* Dock (Overlay-/Nav-Modus, „^") */
 /* #dock = transparenter Anker; #dockInner = sichtbares Panel, das beim Öffnen vom Blitz auseinandergeschoben wird */
@@ -668,6 +678,7 @@ body.bf-hide-hudHeart #hudHeart,
 body.bf-hide-minimapWrap #minimapWrap,
 body.bf-hide-hudInfo #hudInfo,
 body.bf-hide-eventPanel #eventPanel,
+body.bf-hide-distHud #distHud,
 body.bf-hide-growTimer #growTimer,
 body.bf-hide-goldenHud #goldenHud { display: none !important; }
 /* Dienst-/Admin-Modus: Lebensanzeige ausblenden */
@@ -1057,7 +1068,7 @@ body.bf-noanim *, body.bf-noanim *::before, body.bf-noanim *::after { animation:
 .lb-input { flex: 1; min-width: 0; padding: 8px 10px; border-radius: 8px; border: 1px solid var(--border); background: var(--input-bg, #160d28); color: #eee; font-size: 13px; }
 .lb-mine { border: 1px solid var(--border); border-radius: 12px; padding: 12px; background: rgba(255,255,255,0.03); }
 .lb-mine-name { margin-bottom: 10px; }
-.lb-mine-stats { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; }
+.lb-mine-stats { display: grid; grid-template-columns: repeat(auto-fit, minmax(130px, 1fr)); gap: 8px; }
 .lb-stat { border: 1px solid var(--border); border-radius: 9px; padding: 7px 9px; background: rgba(0,0,0,0.18); }
 .lb-stat-l { font-size: 11px; color: var(--muted); }
 .lb-stat-v { font-size: 16px; font-weight: 700; margin-top: 2px; }

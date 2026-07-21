@@ -702,6 +702,49 @@ function renderEventPanel() {
   ensureTimerLayout('eventPanel'); // nach display → Breite messbar (Rand-Klemmung, wie growTimer)
 }
 
+// ── 🐾 Wander-Distanz-HUD ────────────────────────────────────────────────────
+// Kleines Fenster, das aufplopt, wenn gerade Distanz dazukommt, und die aktuelle Lauf-/Schwimm-
+// (bzw. Flug-/Schwimm-)Distanz des aktiven Dinos zeigt — damit man nicht ins Dock muss. Nach kurzer
+// Ruhe blendet es sich aus. Ausblendbar über den Settings-Toggle (HIDEABLE 'distHud'), verschiebbar.
+let distHudState = { cur: {}, delta: {}, prev: {}, categories: ['walk', 'swim'], name: '', lastGainAt: 0, seeded: false };
+const DIST_HUD_IDLE_MS = 8000; // so lange nach dem letzten Zuwachs bleibt das HUD sichtbar
+async function pollDistHud() {
+  const box = el('distHud'); if (!box) return;
+  if (!me || hiddenEls.has('distHud')) { box.style.display = 'none'; return; } // off-server / vom Spieler ausgeblendet
+  let d;
+  try { d = await svApi('GET', '/me/migration'); } catch { return; }
+  const live = (d.live || []).reduce((m, c) => { m[c.category] = c; return m; }, {});
+  distHudState.categories = (Array.isArray(d.categories) && d.categories.length) ? d.categories : ['walk', 'swim'];
+  distHudState.name = d.dinoName || '';
+  const cur = {};
+  for (const k of distHudState.categories) cur[k] = (live[k] || {}).totalM || 0;
+  const delta = {};
+  if (distHudState.seeded) { // erster Poll setzt nur den Ausgangswert (kein Fehl-Plopp)
+    for (const k of distHudState.categories) {
+      const inc = cur[k] - (distHudState.prev[k] || 0);
+      if (inc > 0.5) { delta[k] = inc; distHudState.lastGainAt = Date.now(); }
+    }
+  }
+  distHudState.seeded = true;
+  distHudState.prev = cur; distHudState.cur = cur; distHudState.delta = delta;
+  renderDistHud();
+}
+function renderDistHud() {
+  const box = el('distHud'); if (!box) return;
+  if (!me || hiddenEls.has('distHud')) { box.style.display = 'none'; return; }
+  if (Date.now() - distHudState.lastGainAt > DIST_HUD_IDLE_MS) { box.style.display = 'none'; return; } // Ruhe → ausblenden
+  box.style.display = 'block';
+  ensureTimerLayout('distHud');
+  const rows = distHudState.categories.map((k) => {
+    const m = LB_CATS.find((c) => c.key === k) || { icon: '', label: k };
+    const inc = distHudState.delta[k] || 0;
+    return `<div class="dh-row"><span class="dh-cat">${m.icon} ${m.label}</span>`
+      + `<span class="dh-val">${lbFmtDist(distHudState.cur[k] || 0)}${inc > 0 ? ` <span class="dh-inc">+${Math.round(inc)} m</span>` : ''}</span></div>`;
+  }).join('');
+  const head = distHudState.name ? `🏷️ ${escapeHtml(distHudState.name)}` : '🐾 Wanderung';
+  box.innerHTML = `<div class="dh-head">${head}</div>${rows}`;
+}
+
 let config = { hotkeys: {} };
 let room = null;
 let micEnabled = false;
@@ -1062,6 +1105,8 @@ function startPositionPolling() {
   setInterval(poll, 100);
   setInterval(updateParkWarn, 1000); // Countdown flüssig runterzählen (unabhängig vom Positions-Poll)
   setInterval(updateGoldenHud, 1000); // Golden-Timer flüssig zwischen den Polls interpolieren
+  setInterval(pollDistHud, 2500);     // Wander-Distanz-HUD: plopt beim Sammeln auf, blendet bei Ruhe aus
+  setInterval(renderDistHud, 1000);   // flüssiges Ausblenden zwischen den Polls
 }
 
 // PvE-Groß-Dino: bleibender Einpark-Countdown oben. parkAt (Deadline in ms) kommt aus /positions;
@@ -4200,10 +4245,18 @@ async function lbLoadMine() {
   catch (e) { box.innerHTML = `<div class="lb-muted">Meine Wanderung nicht ladbar (${escapeHtml(e.message)}).</div>`; return; }
   const live = (d.live || []).reduce((m, c) => { m[c.category] = c; return m; }, {});
   const recs = (d.records || []).reduce((m, r) => { m[r.category] = r; return m; }, {});
-  const cur = live[lbState.cat] || {};
-  const rec = recs[lbState.cat];
-  const meta = LB_CATS.find((c) => c.key === lbState.cat) || LB_CATS[0];
+  // Die fürs aktive Dino relevanten Kategorien (Lauf+Schwimm bzw. Flug+Schwimm) — vom Backend.
+  const cats = (Array.isArray(d.categories) && d.categories.length) ? d.categories : ['walk', 'swim'];
   const activeName = d.dinoName ? `🏷️ ${escapeHtml(d.dinoName)}` : '<span class="lb-muted">unbenannt</span>';
+  const tiles = cats.map((k) => {
+    const m = LB_CATS.find((c) => c.key === k) || { icon: '', label: k };
+    const c = live[k] || {}, r = recs[k];
+    return `<div class="lb-stat">
+      <div class="lb-stat-l">${m.icon} ${m.label}</div>
+      <div class="lb-stat-v">${lbFmtDist(c.totalM)}</div>
+      <div class="lb-muted" style="margin-top:2px">Woche ${lbFmtDist(c.weeklyM)}${r ? ` · 🏆 ${lbFmtDist(r.distanceM)}` : ''}</div>
+    </div>`;
+  }).join('');
   box.innerHTML = `
     <div class="lb-mine">
       <div class="lb-mine-name">
@@ -4211,11 +4264,7 @@ async function lbLoadMine() {
         <div style="font-weight:600">${activeName}</div>
         <div class="lb-muted" style="margin-top:4px">Namen vergibst du in der <b>Garage</b> — sie sind an den jeweiligen Dino gebunden.</div>
       </div>
-      <div class="lb-mine-stats">
-        <div class="lb-stat"><div class="lb-stat-l">${meta.icon} Diese Woche</div><div class="lb-stat-v">${lbFmtDist(cur.weeklyM)}</div></div>
-        <div class="lb-stat"><div class="lb-stat-l">Σ Gesamt (Dino)</div><div class="lb-stat-v">${lbFmtDist(cur.totalM)}</div></div>
-        <div class="lb-stat"><div class="lb-stat-l">🏆 Rekord</div><div class="lb-stat-v">${rec ? lbFmtDist(rec.distanceM) : '—'}</div></div>
-      </div>
+      <div class="lb-mine-stats">${tiles}</div>
     </div>`;
 }
 
@@ -7959,6 +8008,7 @@ const MOVABLE = [
   // Timer-Anzeigen: Standard rechts neben der Punkte-Anzeige (HUD-Pille), verschiebbar + skalierbar.
   { id: 'growTimer',   label: 'Grow-Timer', resize: 'scale' },
   { id: 'eventPanel',  label: 'Event-Timer', resize: 'scale' },
+  { id: 'distHud',     label: 'Wander-Distanz', resize: 'scale' },
   { id: 'goldenHud',   label: 'Goldene-Zone-Timer', resize: 'scale' },
   { id: 'parkWarn',    label: 'PvE-Park-Countdown', resize: 'scale' },
   { id: 'settings',    label: 'Einstellungen', resize: true },
@@ -7983,7 +8033,7 @@ function movTransform(id) { return SCALE_IDS.has(id) ? 'scale(var(--info-scale,1
 // ── Timer-Anzeigen (Grow · Goldene Zone · PvE-Park) ─────────────────────────
 // Standard-Layout: rechts neben der HUD-Pille (Punkte-Anzeige), vertikal gestapelt.
 // Sobald der Spieler sie verschiebt, gewinnt die gespeicherte Position (bf-layout).
-const TIMER_IDS = ['growTimer', 'eventPanel', 'goldenHud', 'parkWarn'];
+const TIMER_IDS = ['growTimer', 'eventPanel', 'distHud', 'goldenHud', 'parkWarn'];
 function ensureTimerLayout(id) {
   const e = el(id), hud = el('hud');
   if (!e || !hud) return;
@@ -8009,7 +8059,8 @@ function reattachEditHandle(id) {
 // nur platzieren, während gerade ein Timer läuft. Sichtbarkeit erzwingt CSS (body.bf-edit).
 function setTimerEditPreview(on) {
   for (const id of TIMER_IDS) ensureTimerLayout(id);
-  if (!on) { renderGrowTimer(); updateGoldenHud(); updateParkWarn(); return; }  // echten Zustand zurück
+  if (!on) { renderGrowTimer(); updateGoldenHud(); updateParkWarn(); renderDistHud(); return; }  // echten Zustand zurück
+  { const dh = el('distHud'); if (dh && !dh.innerHTML) dh.innerHTML = '<div class="dh-head">🐾 Wanderung</div><div class="dh-row"><span class="dh-cat">🏃 Laufen</span><span class="dh-val">1.20 km</span></div><div class="dh-row"><span class="dh-cat">🌊 Schwimmen</span><span class="dh-val">340 m</span></div>'; }
   const g = el('goldenHud');
   if (g && !golden) {
     g.className = 'gh-active';
@@ -8032,6 +8083,7 @@ const HIDEABLE = [
   { id: 'minimapWrap', label: 'Minimap' },
   { id: 'hudInfo',     label: 'Voice-Infos' },   // Mikrofon / Reichweite / Zone
   { id: 'eventPanel',  label: 'Aktive Events' },
+  { id: 'distHud',     label: 'Wander-Distanz' },
   { id: 'growTimer',   label: 'Grow-Timer' },
   { id: 'goldenHud',   label: 'Goldene Zone' },
 ];
@@ -8042,6 +8094,7 @@ const HUD_TOGGLES_UI = [
   { id: 'minimapWrap', label: 'Minimap',       desc: 'Kleine Karte mit Spielern in deiner Nähe.',            hidden: () => miniHidden,                  toggle: toggleMinimap },
   { id: 'compassWrap', label: 'Kompass',       desc: 'Himmelsrichtungs-Leiste am oberen Rand.',              hidden: () => compassHidden,               toggle: toggleCompass },
   { id: 'eventPanel',  label: 'Aktive Events', desc: 'Laufende Server-Events mit Countdown.',                hidden: () => hiddenEls.has('eventPanel'), toggle: () => toggleHidden('eventPanel') },
+  { id: 'distHud',     label: 'Wander-Distanz', desc: 'Plopt auf, wenn du Distanz sammelst — zeigt Lauf/Schwimm/Flug.', hidden: () => hiddenEls.has('distHud'), toggle: () => toggleHidden('distHud') },
   { id: 'hudHeart',    label: 'Lebensanzeige', desc: 'Dein Herz-/Lebens-Balken.',                            hidden: () => hiddenEls.has('hudHeart'),   toggle: () => toggleHidden('hudHeart') },
   { id: 'hudInfo',     label: 'Infoboxen',     desc: 'Status-Boxen (Sprechreichweite, Zone …).',            hidden: () => hiddenEls.has('hudInfo'),    toggle: () => toggleHidden('hudInfo') },
   { id: 'growTimer',   label: 'Grow-Timer',    desc: 'Fortschritt deines Dino-Wachstums.',                  hidden: () => hiddenEls.has('growTimer'),  toggle: () => toggleHidden('growTimer') },
