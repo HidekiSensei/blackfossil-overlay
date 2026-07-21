@@ -8,6 +8,13 @@
 // USER_POOLS: input-id → User-Array, das dieses Feld durchsucht.
 export const USER_POOLS = {};
 
+// GET /admin/users antwortet mit { users: [...] }, NICHT mit einem nackten Array.
+// Dieses Wissen steht bewusst nur hier — zweimal geraten kostete schon einen Bug.
+export function usersFrom(d) {
+  if (Array.isArray(d)) return d;
+  return (d && Array.isArray(d.users)) ? d.users : [];
+}
+
 // userLabel baut den Anzeigetext "RP (Steam, Discord)". Fehlende Teile fallen graziös
 // weg: ohne RP-Name → "Steam (Discord)", ohne Steam → "RP (Discord)" usw. So sieht Staff alle
 // gesetzten Namen auf einen Blick, und die Substring-Suche (das Label enthält alle drei) trifft

@@ -1,8 +1,9 @@
 import { Room, RoomEvent, Track, ParticipantEvent, AudioPresets } from 'livekit-client';
-import { loadMapImage, drawFullMap, drawMinimap, drawHeatmap, normToWorld, worldToNorm, zoneAt, zonesAt, resetCal, solveAffine, getCal, setCalAffine, setZones, newZone, ZONES, ZONE_TYPES, ZONE_META, loadZoneLayer, setZoneLayer, isZoneLayerVisible, setGoldenZone, goldenZoneCenter, groupColorFor, setMarkerStyle } from './map.js';
+import { loadMapImage, drawFullMap, drawMinimap, drawHeatmap, normToWorld, worldToNorm, zoneAt, zonesAt, resetCal, solveAffine, getCal, setCalAffine, setZones, newZone, ZONES, ZONE_TYPES, ZONE_META, loadZoneLayer, setZoneLayer, isZoneLayerVisible, setGoldenZone, goldenZoneCenter, groupColorFor, setMarkerStyle, drawAiEncounters } from './map.js';
 import { el, apiErr, makeApi, makeApiAction, armConfirm } from './shared/core.js';
 import { baseClass, fmtGrow, escapeHtml, fmtTod } from './shared/format.js';
 import { USER_POOLS, userLabel, warnItemUser, matchUser } from './shared/users.js';
+import { DINO_LEXIKON, LEX_ORDER, lexOrderedNames } from './shared/lexikon.js';
 
 // Generischer Server-Panel-API-Call. tokenBase/sessionToken werden als Getter
 // durchgereicht, weil beide erst asynchron gesetzt werden (siehe shared/core.js).
@@ -1707,7 +1708,7 @@ function renderBigMap() {
   const view = { ctx, w: cv.width, h: cv.height };
   if (heatmapMode) drawHeatmap(view, players, me);
   else drawFullMap(view, players, waypoints, teleports, hoveredTp, 1 / mapZoom);
-  if (!heatmapMode && isTeam && aiLayerOn) drawAiEncounters(ctx, cv.width, cv.height, 1 / mapZoom);
+  if (!heatmapMode && isTeam && aiLayerOn) drawAiEncounters(ctx, cv.width, cv.height, 1 / mapZoom, aiEncounters, baseClass);
   ctx.setTransform(1, 0, 0, 1, 0, 0);
   if (calibMode) drawCalibOverlay(ctx, cv.width, cv.height);
   renderMapGroup();
@@ -1746,34 +1747,6 @@ function renderMapGroup() {
 // Zeichnet die vom Game-Server (/ai/encounters) gelieferten Spawnpunkte (rote Rauten) und
 // Patrouillen (gestrichelte Linien) auf die große Karte. Platzhalter-Einträge mit Spawn {0,0}
 // (noch nicht platziert) werden übersprungen. sc = 1/mapZoom hält Marker/Text zoom-konstant.
-function drawAiEncounters(ctx, w, h, sc) {
-  const placed = (p) => p && (p.x !== 0 || p.y !== 0);
-  for (const e of aiEncounters) {
-    if (e.enabled === false || !placed(e.spawn)) continue;
-    const s = worldToNorm(e.spawn.x, e.spawn.y);
-    const sx = s.nx * w, sy = s.ny * h;
-    // Patrouille: gestrichelte Linie + Stützpunkte
-    const patrol = Array.isArray(e.patrol) ? e.patrol.filter(placed) : [];
-    if (patrol.length >= 2) {
-      ctx.beginPath();
-      patrol.forEach((pt, i) => { const n = worldToNorm(pt.x, pt.y); const x = n.nx * w, y = n.ny * h; i ? ctx.lineTo(x, y) : ctx.moveTo(x, y); });
-      ctx.setLineDash([6 * sc, 4 * sc]); ctx.lineWidth = 2 * sc; ctx.strokeStyle = 'rgba(248,113,113,0.9)'; ctx.stroke(); ctx.setLineDash([]);
-      for (const pt of patrol) { const n = worldToNorm(pt.x, pt.y); ctx.beginPath(); ctx.arc(n.nx * w, n.ny * h, 3 * sc, 0, 2 * Math.PI); ctx.fillStyle = '#f87171'; ctx.fill(); }
-    }
-    // Spawn-Marker: rote Raute mit weißem Rand
-    const d = 6 * sc;
-    ctx.save(); ctx.translate(sx, sy); ctx.rotate(Math.PI / 4);
-    ctx.fillStyle = '#ef4444'; ctx.fillRect(-d, -d, 2 * d, 2 * d);
-    ctx.lineWidth = 1.5 * sc; ctx.strokeStyle = '#fff'; ctx.strokeRect(-d, -d, 2 * d, 2 * d);
-    ctx.restore();
-    // Label: Encounter-Name + Anzahl + Nacht-Icon
-    const night = e.params && e.params.activeAt === 'night';
-    const label = `${e.name || baseClass(e.species)}${e.count > 1 ? ' ×' + e.count : ''}${night ? ' 🌙' : ''}`;
-    ctx.font = `bold ${Math.max(9, Math.round(11 * sc))}px sans-serif`; ctx.textAlign = 'center'; ctx.textBaseline = 'bottom';
-    ctx.lineWidth = 3 * sc; ctx.strokeStyle = 'rgba(0,0,0,0.85)'; ctx.strokeText(label, sx, sy - 10 * sc);
-    ctx.fillStyle = '#fecaca'; ctx.fillText(label, sx, sy - 10 * sc);
-  }
-}
 // Encounters vom Backend holen (staff-gated). Statische Konfig → ein Fetch pro Karten-Öffnen reicht.
 async function loadAiEncounters() {
   if (!isTeam || !sessionToken) return;
@@ -5242,41 +5215,11 @@ async function abandonQuest() {
 }
 
 // ── Dino-Lexikon (statischer Content, von Hideki/Team pflegbar) ───────────────
-const DINO_LEXIKON = {
-  Tyrannosaurus:    { diet: 'carni', role: 'Apex-Räuber', growth: 'langsam', strengths: ['Höchster Schaden & HP', 'Einschüchterung', 'Bisskraft'], weaknesses: ['Wendet langsam', 'Ziel für Rudel', 'Hoher Hunger'], tip: 'Meide offene Kämpfe gegen Gruppen — nutze Deckung und gezielte Bisse.', fact: 'Lebte vor ~68–66 Mio. Jahren in Nordamerika. Mit bis zu 13 m Länge und einer der stärksten Bisskräfte aller Landtiere — Zähne so groß wie Bananen.' },
-  Allosaurus:       { diet: 'carni', role: 'Apex / Rudel', growth: 'mittel', strengths: ['Starker Bleed', 'Rudeltaktik', 'Ausgewogen'], weaknesses: ['Einzeln verwundbar'], tip: 'Jage im Rudel und setze auf Blutung statt Dauer-Tank.', fact: 'Top-Räuber des Oberjura (~155 Mio. J.) in Nordamerika. Schlug den Oberkiefer wie eine Axt in die Beute und riss Stücke heraus.' },
-  Carnotaurus:      { diet: 'carni', role: 'Schneller Mid-Carni', growth: 'mittel', strengths: ['Hohe Geschwindigkeit', 'Sprint'], weaknesses: ['Wenig HP', 'Schwach im Dauerkampf'], tip: 'Hit & Run — schlage zu und löse dich, lass dich nicht festklammern.', fact: 'Kreidezeit-Südamerika. Namensgebend sind die Stirnhörner; mit winzigen Ärmchen und langen Beinen einer der schnellsten Großraubsaurier.' },
-  Ceratosaurus:     { diet: 'carni', role: 'Mid-Carni (semi-aquatisch)', growth: 'mittel', strengths: ['Bleed', 'Wendig', 'Wasser'], weaknesses: ['Zerbrechlich'], tip: 'Nutze Wasser zum Jagen und Fliehen.', fact: 'Oberjura-Nordamerika. Trug ein markantes Nasenhorn und eine Reihe knöcherner Hautplatten am Rücken; lebte neben Allosaurus.' },
-  Deinosuchus:      { diet: 'carni', role: 'Aquatischer Apex', growth: 'langsam', strengths: ['Tödlich im Wasser', 'Grab/Latch'], weaknesses: ['An Land langsam & hilflos'], tip: 'Kämpfe nur im oder am Wasser — locke Beute ans Ufer.', fact: 'Kein Dino, sondern ein bis zu 10 m langer Verwandter heutiger Krokodile (Kreidezeit). Lauerte am Wasser selbst Dinosauriern auf.' },
-  Dilophosaurus:    { diet: 'carni', role: 'Small-Carni', growth: 'schnell', strengths: ['Giftspucke aus Distanz', 'Wendig'], weaknesses: ['Sehr fragil'], tip: 'Schwäche aus Distanz an, stell dich nie offen.', fact: 'Frühjura-Nordamerika (~193 Mio. J.). Hatte zwei dünne Kopfkämme — anders als im Film aber kein Gift und keine Halskrause, und war ~6 m lang.' },
-  Herrerasaurus:    { diet: 'carni', role: 'Small-Carni', growth: 'schnell', strengths: ['Schnell', 'Bleed', 'Agil'], weaknesses: ['Winzige HP'], tip: 'Hit & Run gegen Kleintiere, Kämpfe gegen Große meiden.', fact: 'Einer der ältesten Dinosaurier überhaupt (Trias, ~231 Mio. J., Argentinien) — leicht gebaut und flink, ein Blick in die Frühzeit der Dinos.' },
-  Omniraptor:       { diet: 'carni', role: 'Rudel-Raptor', growth: 'schnell', strengths: ['Rudel', 'Pounce/Sprung', 'Wendig'], weaknesses: ['Einzeln schwach'], tip: 'Nur im Rudel stark — koordiniert Pounces.', fact: 'Spielname; angelehnt an Dromaeosaurier wie Utahraptor — den größten bekannten „Raptor" (~5–7 m) mit großer Sichelkralle und Federn.' },
-  Pteranodon:       { diet: 'carni', role: 'Flieger / Scout', growth: 'mittel', strengths: ['Flug', 'Aufklärung', 'Fisch'], weaknesses: ['Am Boden hilflos'], tip: 'Bleib in der Luft und scoute für deine Gruppe.', fact: 'Ein Flugsaurier (kein Dinosaurier) der Kreidezeit mit bis zu 7 m Spannweite, zahnlosem Schnabel und langem Kopfkamm.' },
-  Troodon:          { diet: 'carni', role: 'Nacht-Jäger (Small)', growth: 'schnell', strengths: ['Nachtsicht', 'Gift', 'Rudel'], weaknesses: ['Extrem fragil'], tip: 'Jage nachts und nur in der Gruppe.', fact: 'Kleiner Kreidezeit-Theropod mit großem Gehirn und riesigen Augen — galt als besonders „clever" und war wohl nachtaktiv.' },
-  Austroraptor:     { diet: 'carni', role: 'Großer Raptor / Fischjäger', growth: 'mittel', strengths: ['Größter Raptor', 'Stark am Wasser', 'Rudel'], weaknesses: ['Schmaler Kiefer', 'Kaum Panzerung'], tip: 'Jage entlang von Ufern und Flüssen — im Rudel deutlich gefährlicher.', fact: 'Raptor der späten Kreidezeit aus Argentinien (~70 Mio. J.). Mit ~5–6 m einer der größten Dromaeosaurier; sein langer, flacher Schädel mit konischen Zähnen spricht für Fischfang.' },
-  Baryonyx:         { diet: 'carni', role: 'Semi-aquatischer Carni', growth: 'mittel', strengths: ['Riesige Daumenkralle', 'Stark im Wasser', 'Fischfang'], weaknesses: ['An Land weniger wendig', 'Schmaler Schädel'], tip: 'Mach Gewässer zu deinem Revier — jage und flieh übers Wasser.', fact: 'Spinosaurier aus England (frühe Kreidezeit, ~125 Mio. J.). Namensgebend ist die ~30 cm lange Daumenkralle; in einem Fund lagen Fischschuppen im Magen — ein spezialisierter Fischjäger.' },
-  Triceratops:      { diet: 'herbi', role: 'Tank-Herbi (Apex)', growth: 'langsam', strengths: ['Enorme HP', 'Charge', 'Konter'], weaknesses: ['Langsam', 'Wendet schlecht'], tip: 'Stell dich und kontere Angreifer mit der Charge.', fact: 'Einer der letzten Dinos vor dem Massenaussterben (~66 Mio. J.). Drei Hörner und ein riesiger Nackenschild zum Schutz und Imponieren.' },
-  Stegosaurus:      { diet: 'herbi', role: 'Tank-Herbi', growth: 'mittel', strengths: ['Thagomizer-Schwanz', 'Hohe Defensive'], weaknesses: ['Langsam', 'Nach vorn verwundbar'], tip: 'Halte Angreifer hinter dir und triff mit dem Schwanz.', fact: 'Oberjura-Nordamerika. Die Rückenplatten dienten wohl Wärmeregulation/Schau, die Schwanzstacheln („Thagomizer") der Verteidigung — bei walnussgroßem Gehirn.' },
-  Kentrosaurus:     { diet: 'herbi', role: 'Stachel-Herbi (Mid)', growth: 'mittel', strengths: ['Schwanzstacheln', 'Starke Defensive', 'Wendiger als Stego'], weaknesses: ['Langsam', 'Nach vorn verwundbar'], tip: 'Dreh Angreifern das Hinterteil zu — die Stacheln erledigen den Rest.', fact: 'Stegosaurier aus Tansania (Oberjura, ~152 Mio. J.). Mit ~4,5 m deutlich kleiner als Stegosaurus — dafür ab der Körpermitte lange Stacheln statt Platten, plus je einen Schulterstachel.' },
-  Diabloceratops:   { diet: 'herbi', role: 'Konter-Herbi (Mid)', growth: 'mittel', strengths: ['Hörner', 'Wendig', 'Konter'], weaknesses: ['Mittlere HP'], tip: 'Aggressiver Konter — nutze die Hörner offensiv.', fact: 'Früher Ceratopsier (Kreidezeit, Utah). Zwei große Schildhörner gaben ihm das „Teufelsgesicht", das seinen Namen prägte.' },
-  Tenontosaurus:    { diet: 'herbi', role: 'Mid-Herbi', growth: 'mittel', strengths: ['Schwanzschlag', 'Zäh'], weaknesses: ['Kein Burst'], tip: 'Defensiv kämpfen, mit dem Schwanz auf Abstand halten.', fact: 'Frühe Kreidezeit-Nordamerika. Mittelgroßer Pflanzenfresser mit auffällig langem Schwanz; oft zusammen mit Deinonychus-Funden entdeckt.' },
-  Maiasaura:        { diet: 'herbi', role: 'Herden-Herbi / Nester', growth: 'mittel', strengths: ['Tritt', 'Soziale Herde', 'Nest-Heilung'], weaknesses: ['Kein starker Burst'], tip: 'In der Herde sicher — tritt nach hinten aus.', fact: '„Gute-Mutter-Echse": In Montana fand man ganze Brutkolonien — einer der ersten klaren Belege, dass Dinos ihren Nachwuchs im Nest pflegten.' },
-  Pachycephalosaurus:{ diet: 'herbi', role: 'Ramm-Herbi (Small-Mid)', growth: 'schnell', strengths: ['Aufgeladene Ramm-Charge', 'Knockback', 'Wendig'], weaknesses: ['Wenig HP'], tip: 'Lade Rammstöße auf und kite Carnivoren.', fact: 'Kreidezeit-Nordamerika. Die bis zu 25 cm dicke Schädelkuppel diente vermutlich Rivalen- und Flankenkämpfen.' },
-  Dryosaurus:       { diet: 'herbi', role: 'Fluchttier (Small)', growth: 'schnell', strengths: ['Sehr schnell', 'Ausdauernd'], weaknesses: ['Keine Offensive'], tip: 'Reines Fluchttier — renne, setze auf Ausdauer-Mutationen.', fact: 'Oberjura-Nordamerika. Kleiner, schneller Pflanzenfresser ohne Panzerung — Überleben durch reine Geschwindigkeit.' },
-  Hypsilophodon:    { diet: 'herbi', role: 'Tiny-Herbi', growth: 'schnell', strengths: ['Winzig', 'Schnell', 'Versteckt'], weaknesses: ['Wehrlos'], tip: 'Bleib unsichtbar, nutze Büsche und Deckung.', fact: 'Kleiner, flinker Pflanzenfresser (~2 m) aus der frühen Kreidezeit Englands; lange fälschlich als baumkletternd dargestellt.' },
-  Gallimimus:       { diet: 'both', role: 'Speed-Omni (Small)', growth: 'schnell', strengths: ['Extrem schnell', 'Ausdauer'], weaknesses: ['Kaum Verteidigung'], tip: 'Speed-Build — fliehe statt zu kämpfen.', fact: '„Hühnchen-Nachahmer" aus der Mongolei (Kreidezeit). Straußenähnlich, mit zahnlosem Schnabel und einer der schnellsten Dinosaurier.' },
-  Beipiaosaurus:    { diet: 'both', role: 'Krallen-Herbi (Small)', growth: 'schnell', strengths: ['Krallen', 'Wendig'], weaknesses: ['Fragil'], tip: 'Defensiv spielen und in Deckung wachsen.', fact: 'Gefiederter Therizinosaurier aus China (frühe Kreidezeit) mit langen Krallen — Pflanzen-/Allesfresser und einer der größten bekannten gefiederten Dinos.' },
-  Oviraptor:        { diet: 'both', role: 'Allesfresser (Small)', growth: 'schnell', strengths: ['Schnell', 'Wendig', 'Genügsam'], weaknesses: ['Sehr fragil', 'Kaum Offensive'], tip: 'Ausweichen statt kämpfen — lebe von Deckung und Tempo.', fact: 'Gefiederter Kleindino aus der Mongolei (~75 Mio. J.). Sein Name heißt „Eierdieb" — ein Irrtum: das berühmte Fossil saß nicht auf fremden Eiern, sondern brütete sein eigenes Gelege aus.' },
-};
 const DIET_LABEL = { carni: '🥩 Fleischfresser', herbi: '🌿 Pflanzenfresser', both: '🍽️ Allesfresser' };
 const DIET_DOT = { carni: '#ef4444', herbi: '#22c55e', both: '#f59e0b' };
 let lexSel = null;
 
 // Lexikon-Reihenfolge (für „Durchblättern"): nach Diät, dann alphabetisch
-const LEX_ORDER = ['carni', 'herbi', 'both'];
-function lexOrderedNames() {
-  return LEX_ORDER.flatMap((diet) => Object.keys(DINO_LEXIKON).filter((n) => DINO_LEXIKON[n].diet === diet).sort());
-}
 function renderLexikon() {
   const panel = el('lexikon');
   panel.classList.add('lex-wide');

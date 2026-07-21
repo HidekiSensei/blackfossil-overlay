@@ -1,0 +1,97 @@
+<!doctype html>
+<html lang="de">
+<head>
+  <meta charset="utf-8" />
+  <title>BlackFossil Companion</title>
+  <link rel="stylesheet" href="styles/app.css" />
+  <link rel="stylesheet" href="styles/companion.css" />
+</head>
+<body class="companion">
+  <div id="cpGate">
+    <img src="assets/logo.png" alt="" width="96" height="96" />
+    <h1>BlackFossil Companion</h1>
+    <p id="cpGateMsg">Lade…</p>
+    <button id="cpGateBtn" class="cp-btn cp-btn-primary" hidden>Mit Discord anmelden</button>
+  </div>
+
+  <div id="cpApp" hidden>
+    <nav id="cpNav">
+      <div class="cp-brand"><img src="assets/logo.png" alt="" width="28" height="28" /><span>Companion</span></div>
+      <button class="cp-nav-btn" data-view="map"><span class="cp-nav-ico">🗺️</span> Karte</button>
+      <button class="cp-nav-btn" data-view="team"><span class="cp-nav-ico">🛠️</span> Team</button>
+      <button class="cp-nav-btn" data-view="admin"><span class="cp-nav-ico">🖥️</span> Admin</button>
+      <button class="cp-nav-btn" data-view="server"><span class="cp-nav-ico">📢</span> Server</button>
+      <button class="cp-nav-btn" data-view="support"><span class="cp-nav-ico">🎫</span> Support</button>
+      <button class="cp-nav-btn" data-view="lexikon"><span class="cp-nav-ico">📖</span> Lexikon</button>
+      <div class="cp-nav-spacer"></div>
+      <button class="cp-nav-btn" data-view="settings"><span class="cp-nav-ico">⚙️</span> Settings</button>
+      <div class="cp-who"><div class="cp-who-name" id="cpWhoName">—</div><div id="cpWhoRank" class="cp-muted"></div></div>
+    </nav>
+
+    <main id="cpMain">
+      <section class="cp-view" data-view="map">
+        <div class="cp-bar">
+          <span id="cpMapStat" class="cp-muted"></span>
+          <div class="cp-bar-right">
+            <span class="cp-muted">Tags ab Zoom</span>
+            <input type="range" id="cpLabelZoom" min="1" max="15" step="0.1" value="1.6" />
+            <span id="cpLabelZoomVal" class="cp-muted">1.6×</span>
+            <button id="cpEditMode" class="cp-switch" role="switch" aria-checked="false" hidden>
+              <span class="cp-switch-track"><span class="cp-switch-thumb"></span></span>
+              <span>Bearbeiten</span>
+            </button>
+            <button id="cpCreateBtn" class="cp-btn cp-btn-sm" hidden>Erstellen</button>
+            <button id="cpPlayersBtn" class="cp-btn cp-btn-sm" aria-pressed="false" hidden>Spieler</button>
+            <button id="cpMapReset" class="cp-btn cp-btn-sm">Ansicht zurücksetzen</button>
+          </div>
+        </div>
+        <div id="cpMapWrap">
+          <canvas id="cpMapCanvas"></canvas>
+          <div id="cpLegend"></div>
+          <div id="cpMapTip" hidden></div>
+          <div id="cpMarquee" hidden></div>
+          <button id="cpRaidAtlas" title="Kartengrundlage von RaidAtlas — Website öffnen">
+            <img src="assets/raidatlas-logo.png" alt="RaidAtlas Interactive Maps" draggable="false">
+          </button>
+        </div>
+      </section>
+
+      <section class="cp-view" data-view="team" hidden></section>
+      <section class="cp-view" data-view="admin" hidden></section>
+      <section class="cp-view" data-view="server" hidden></section>
+      <section class="cp-view" data-view="support" hidden></section>
+      <section class="cp-view" data-view="lexikon" hidden></section>
+
+      <section class="cp-view" data-view="settings" hidden>
+        <div class="cp-pad cp-pad-narrow">
+          <div class="cp-h1">Settings</div>
+          <p class="cp-sub">Konto und Anwendung.</p>
+          <div class="cp-sec">Konto</div>
+          <div class="cp-card">
+            <div class="cp-item"><div class="cp-item-main">
+              <div class="cp-item-title" id="cpSetWho">—</div>
+              <div class="cp-item-sub" id="cpSetRank"></div>
+            </div><button id="cpLogout" class="cp-btn cp-btn-sm">Abmelden</button></div>
+          </div>
+          <div class="cp-sec">Software</div>
+          <div class="cp-card">
+            <div class="cp-item">
+              <div class="cp-item-main">
+                <div class="cp-item-title">Version <span id="cpVersion">—</span></div>
+                <div class="cp-item-sub" id="cpUpdStatus">Bereit</div>
+              </div>
+              <button id="cpUpdBtn" class="cp-btn cp-btn-sm">Nach Updates suchen</button>
+            </div>
+          </div>
+
+          <div class="cp-sec">Was ist neu</div>
+          <div class="cp-card"><div id="cpNotes" class="cp-scroll">Lade…</div></div>
+        </div>
+      </section>
+    </main>
+  </div>
+
+  <div id="cpToasts"></div>
+  <script src="dist/companion.js"></script>
+</body>
+</html>

@@ -1,2 +1,8 @@
 node_modules/
+# ohne Schraegstrich: Worktrees verlinken node_modules als SYMLINK auf das
+# kanonische Checkout — "node_modules/" allein wuerde nur ein Verzeichnis ignorieren
+# und den Symlink als neue Datei zum Commit anbieten.
+node_modules
 dist/
+release/
+release-companion/

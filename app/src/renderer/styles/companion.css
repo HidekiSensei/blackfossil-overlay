@@ -1,0 +1,548 @@
+/* ═══════════════════════════════════════════════════════════════════════════
+   Companion Design-System
+
+   Das Overlay-CSS ist historisch gewachsen: viele Einzelfall-Regeln, dazu
+   hunderte inline style="" im Markup. Fuer die Companion gilt bewusst die
+   Gegenregel — jedes Element eines Typs sieht gleich aus, weil es genau EINE
+   Klasse dafuer gibt. Inline-Styles sind hier nicht erwuenscht.
+
+   Farben kommen weiter aus app.css (--accent, --panel, --border, --muted),
+   damit Theme-Wechsel auch hier greifen.
+   ═══════════════════════════════════════════════════════════════════════════ */
+
+/* Muss ganz oben stehen und !important tragen: das hidden-Attribut setzt
+   display:none nur ueber das UA-Stylesheet, jede Autoren-Regel mit display:flex
+   schlaegt das. Ohne das waeren Gate und App gleichzeitig sichtbar. */
+[hidden] { display: none !important; }
+
+/* app.css stylt nacktes <button> global: flex:1, Verlauf, Hover-Transform und
+   ein Shimmer-::before. In der Companion sind Buttons Bausteine des
+   Design-Systems, diese Erbschaft muss also ausdruecklich weg. Ohne das
+   dehnte sich der Schliessen-Knopf ueber die halbe Panelbreite und
+   Listenzeilen teilten sich die Hoehe (beides real aufgetreten).
+   Bewusst NUR die Eigenschaften zuruecksetzen, die stoeren — ein kompletter
+   Reset auf `body.companion button` wuerde .cp-btn ueberstimmen, weil er die
+   hoehere Spezifitaet hat. */
+body.companion button { flex: none; }
+body.companion button:hover { transform: none; box-shadow: none; filter: none; }
+body.companion button::before { content: none !important; }
+
+:root {
+  /* Eine Skala statt frei gewaehlter Pixelwerte — das ist der Grund, warum
+     Abstaende ueberall gleich wirken. */
+  --cp-s1: 4px;  --cp-s2: 8px;  --cp-s3: 12px;
+  --cp-s4: 16px; --cp-s5: 24px; --cp-s6: 32px;
+  --cp-r-sm: 8px; --cp-r-md: 11px; --cp-r-lg: 14px;
+  --cp-line: rgba(255, 255, 255, 0.09);
+  --cp-surface: rgba(255, 255, 255, 0.035);
+  --cp-surface-2: rgba(255, 255, 255, 0.06);
+  --cp-danger: #f87171;
+  --cp-ok: #4ade80;
+}
+
+body.companion {
+  margin: 0; height: 100vh; overflow: hidden;
+  background: #0d0918; color: #e8e6ef;
+  font-family: system-ui, -apple-system, "Segoe UI", sans-serif;
+  font-size: 13px; line-height: 1.5;
+  -webkit-font-smoothing: antialiased;
+}
+
+/* ── Typo-Bausteine ────────────────────────────────────────────────────── */
+.cp-h1 { font-size: 19px; font-weight: 650; margin: 0 0 var(--cp-s1); letter-spacing: -0.01em; }
+.cp-sub { color: var(--muted); font-size: 12px; margin: 0 0 var(--cp-s5); }
+.cp-muted { color: var(--muted); font-size: 12px; }
+.cp-sec {
+  font-size: 11px; font-weight: 650; text-transform: uppercase;
+  letter-spacing: 0.07em; color: var(--muted);
+  margin: var(--cp-s5) 0 var(--cp-s3);
+}
+.cp-sec:first-child { margin-top: 0; }
+
+/* ── Karten ────────────────────────────────────────────────────────────── */
+.cp-card {
+  background: var(--cp-surface);
+  border: 1px solid var(--cp-line);
+  border-radius: var(--cp-r-md);
+  padding: var(--cp-s4);
+}
+.cp-card + .cp-card { margin-top: var(--cp-s3); }
+.cp-card-danger { border-color: rgba(248, 113, 113, 0.32); background: rgba(248, 113, 113, 0.05); }
+
+/* ── Buttons: EINE Basis, Varianten nur ueber Modifier ─────────────────── */
+.cp-btn {
+  display: inline-flex; align-items: center; justify-content: center; gap: var(--cp-s2);
+  padding: 0 var(--cp-s4); height: 34px;
+  font: inherit; font-size: 13px; font-weight: 550;
+  color: #e8e6ef; background: var(--cp-surface-2);
+  border: 1px solid var(--cp-line); border-radius: var(--cp-r-sm);
+  cursor: pointer; white-space: nowrap;
+  transition: background .13s, border-color .13s, opacity .13s;
+}
+.cp-btn:hover:not(:disabled) { background: rgba(255, 255, 255, 0.1); border-color: rgba(255, 255, 255, 0.18); }
+.cp-btn:active:not(:disabled) { background: rgba(255, 255, 255, 0.14); }
+.cp-btn:disabled { opacity: .42; cursor: not-allowed; }
+.cp-btn-primary {
+  background: var(--accent); border-color: transparent; color: #fff;
+}
+.cp-btn-primary:hover:not(:disabled) { background: var(--accent-2); border-color: transparent; }
+.cp-btn-danger { background: rgba(248, 113, 113, 0.14); border-color: rgba(248, 113, 113, 0.4); color: #fca5a5; }
+.cp-btn-danger:hover:not(:disabled) { background: rgba(248, 113, 113, 0.22); border-color: rgba(248, 113, 113, 0.55); }
+.cp-btn-sm { height: 28px; padding: 0 var(--cp-s3); font-size: 12px; }
+/* In Flex-Containern niemals mitwachsen — sonst wird derselbe Button je nach
+   Nachbarschaft unterschiedlich breit. Genau das soll das System verhindern. */
+.cp-btn { flex: none; }
+.cp-btn-block { width: 100%; }
+/* Zwei-Klick-Bestaetigung: der scharfe Zustand ist sichtbar, nicht nur im Text */
+.cp-btn[data-armed] { background: rgba(248, 113, 113, 0.3); border-color: var(--cp-danger); color: #fff; }
+
+.cp-btn-row { display: flex; gap: var(--cp-s2); flex-wrap: wrap; }
+.cp-btn-row > .cp-btn { flex: 1 1 0; min-width: 110px; }
+
+/* Chips: Gruppe gleichrangiger Optionen (z. B. Wetter). Grid statt Flex, damit
+   ALLE gleich breit sind — bei Flex-Wrap wird die letzte Zeile sonst gedehnt. */
+.cp-chips { display: grid; grid-template-columns: repeat(auto-fit, minmax(96px, 1fr)); gap: var(--cp-s2); }
+.cp-chips > .cp-btn { width: 100%; flex: none; }
+
+/* ── Formularfelder ───────────────────────────────────────────────────── */
+.cp-field { display: flex; flex-direction: column; gap: 5px; flex: 1; min-width: 0; }
+.cp-label { font-size: 11px; font-weight: 600; color: var(--muted); letter-spacing: 0.02em; }
+.cp-input, .cp-select, .cp-textarea {
+  width: 100%; box-sizing: border-box;
+  padding: 0 var(--cp-s3); height: 34px;
+  font: inherit; font-size: 13px; color: #e8e6ef;
+  background: rgba(0, 0, 0, 0.28);
+  border: 1px solid var(--cp-line); border-radius: var(--cp-r-sm);
+  outline: none; transition: border-color .13s;
+}
+.cp-textarea { height: auto; min-height: 84px; padding: var(--cp-s2) var(--cp-s3); resize: vertical; line-height: 1.5; }
+.cp-input:focus, .cp-select:focus, .cp-textarea:focus { border-color: rgba(var(--accent-rgb), 0.6); }
+.cp-input::placeholder, .cp-textarea::placeholder { color: rgba(255, 255, 255, 0.28); }
+.cp-select { cursor: pointer; appearance: none;
+  background-image: linear-gradient(45deg, transparent 50%, var(--muted) 50%), linear-gradient(135deg, var(--muted) 50%, transparent 50%);
+  background-position: calc(100% - 15px) 14px, calc(100% - 10px) 14px;
+  background-size: 5px 5px, 5px 5px; background-repeat: no-repeat; }
+.cp-row { display: flex; gap: var(--cp-s3); align-items: flex-end; flex-wrap: wrap; }
+.cp-row > .cp-field { flex: 1 1 200px; }
+.cp-row + .cp-row { margin-top: var(--cp-s3); }
+
+.cp-check { display: flex; align-items: center; gap: var(--cp-s2); cursor: pointer; user-select: none; font-size: 13px; }
+.cp-check input { width: auto; margin: 0; cursor: pointer; accent-color: var(--accent); }
+.cp-check + .cp-check { margin-top: var(--cp-s2); }
+.cp-hint { font-size: 11px; color: var(--muted); margin-top: var(--cp-s1); }
+
+input[type="range"] { accent-color: var(--accent); }
+
+/* ── Tabs ─────────────────────────────────────────────────────────────── */
+.cp-tabs {
+  display: flex; gap: var(--cp-s1); flex-wrap: wrap;
+  border-bottom: 1px solid var(--cp-line);
+  margin-bottom: var(--cp-s5); padding-bottom: var(--cp-s2);
+}
+.cp-tab {
+  padding: 6px var(--cp-s3); height: 30px;
+  font: inherit; font-size: 12.5px; font-weight: 550; color: var(--muted);
+  background: transparent; border: 1px solid transparent; border-radius: var(--cp-r-sm);
+  cursor: pointer; transition: background .13s, color .13s;
+}
+.cp-tab { flex: none; }
+.cp-tab:hover { background: var(--cp-surface); color: #ddd; }
+.cp-tab.active { background: rgba(var(--accent-rgb), 0.16); color: #fff; border-color: rgba(var(--accent-rgb), 0.4); }
+
+/* ── Listen / Tabellen ────────────────────────────────────────────────── */
+.cp-list { display: flex; flex-direction: column; }
+.cp-item {
+  display: flex; align-items: center; gap: var(--cp-s3);
+  padding: var(--cp-s3) 0; border-bottom: 1px solid var(--cp-line);
+}
+.cp-item:last-child { border-bottom: none; }
+.cp-item-main { flex: 1; min-width: 0; }
+.cp-item-title { font-weight: 550; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.cp-item-sub { color: var(--muted); font-size: 11.5px; margin-top: 1px; }
+
+.cp-badge {
+  display: inline-flex; align-items: center; gap: 5px;
+  padding: 2px var(--cp-s2); border-radius: 999px;
+  font-size: 11px; font-weight: 600;
+  background: var(--cp-surface-2); border: 1px solid var(--cp-line); color: var(--muted);
+}
+.cp-badge-ok { background: rgba(74, 222, 128, 0.13); border-color: rgba(74, 222, 128, 0.32); color: var(--cp-ok); }
+.cp-badge-off { background: rgba(248, 113, 113, 0.13); border-color: rgba(248, 113, 113, 0.32); color: var(--cp-danger); }
+
+.cp-empty { padding: var(--cp-s6) var(--cp-s4); text-align: center; color: var(--muted); font-size: 12.5px; }
+.cp-scroll { max-height: 300px; overflow-y: auto; }
+
+/* ── Toasts ───────────────────────────────────────────────────────────── */
+#cpToasts { position: fixed; right: var(--cp-s5); bottom: var(--cp-s5); display: flex; flex-direction: column; gap: var(--cp-s2); z-index: 90; }
+.cp-toast {
+  padding: var(--cp-s3) var(--cp-s4); border-radius: var(--cp-r-md);
+  background: #1c1630; border: 1px solid var(--cp-line);
+  box-shadow: 0 8px 26px rgba(0, 0, 0, 0.45);
+  font-size: 12.5px; max-width: 380px;
+  animation: cpToastIn .16s ease-out;
+}
+.cp-toast-success { border-color: rgba(74, 222, 128, 0.45); }
+.cp-toast-error { border-color: rgba(248, 113, 113, 0.5); }
+@keyframes cpToastIn { from { opacity: 0; transform: translateY(6px); } }
+
+/* ═══ Layout ══════════════════════════════════════════════════════════ */
+#cpGate {
+  height: 100vh; display: flex; flex-direction: column;
+  align-items: center; justify-content: center; gap: var(--cp-s4); text-align: center;
+}
+#cpGate h1 { margin: 0; font-size: 21px; font-weight: 650; }
+#cpGate p { color: var(--muted); margin: 0; max-width: 440px; }
+
+#cpApp { display: flex; height: 100vh; }
+
+#cpNav {
+  width: 196px; flex: none; display: flex; flex-direction: column; gap: 2px;
+  padding: var(--cp-s3) var(--cp-s2); box-sizing: border-box;
+  background: rgba(0, 0, 0, 0.3); border-right: 1px solid var(--cp-line);
+}
+.cp-brand {
+  display: flex; align-items: center; gap: var(--cp-s2);
+  font-weight: 650; font-size: 13.5px; padding: var(--cp-s2) var(--cp-s2) var(--cp-s4);
+}
+.cp-nav-btn {
+  display: flex; align-items: center; gap: var(--cp-s3);
+  width: 100%; text-align: left; padding: 0 var(--cp-s3); height: 36px;
+  font: inherit; font-size: 13px; font-weight: 500; color: #c9c5d6;
+  background: transparent; border: 1px solid transparent; border-radius: var(--cp-r-sm);
+  cursor: pointer; transition: background .13s, color .13s;
+}
+.cp-nav-btn { flex: none; }
+.cp-nav-btn:hover { background: var(--cp-surface); color: #fff; }
+.cp-nav-btn.active { background: rgba(var(--accent-rgb), 0.17); border-color: rgba(var(--accent-rgb), 0.36); color: #fff; }
+.cp-nav-ico { width: 17px; text-align: center; flex: none; }
+.cp-nav-spacer { flex: 1; }
+.cp-who { padding: var(--cp-s3) var(--cp-s2) var(--cp-s1); border-top: 1px solid var(--cp-line); }
+.cp-who-name { font-size: 12.5px; font-weight: 550; }
+
+#cpMain { flex: 1; min-width: 0; display: flex; flex-direction: column; }
+.cp-view { flex: 1; min-height: 0; display: flex; flex-direction: column; }
+.cp-pad { padding: var(--cp-s5) var(--cp-s6); overflow-y: auto; }
+.cp-pad-narrow { max-width: 780px; }
+
+/* ── Karte ────────────────────────────────────────────────────────────── */
+.cp-bar {
+  display: flex; align-items: center; gap: var(--cp-s4); flex-wrap: wrap;
+  padding: var(--cp-s2) var(--cp-s4); min-height: 46px; box-sizing: border-box;
+  border-bottom: 1px solid var(--cp-line); background: rgba(0, 0, 0, 0.22);
+}
+.cp-bar-right { margin-left: auto; display: flex; align-items: center; gap: var(--cp-s3); }
+#cpLabelZoom { width: 104px; }
+#cpMapWrap {
+  flex: 1; min-height: 0; position: relative;
+  display: flex; align-items: center; justify-content: center;
+  background: #08050f; overflow: hidden;
+}
+#cpMapCanvas { max-width: 100%; max-height: 100%; aspect-ratio: 1 / 1; cursor: grab; touch-action: none; }
+#cpMapCanvas:active { cursor: grabbing; }
+
+/* ── Scrollbars ───────────────────────────────────────────────────────── */
+.cp-pad::-webkit-scrollbar, .cp-scroll::-webkit-scrollbar { width: 9px; }
+.cp-pad::-webkit-scrollbar-thumb, .cp-scroll::-webkit-scrollbar-thumb {
+  background: rgba(255, 255, 255, 0.13); border-radius: 999px;
+}
+.cp-pad::-webkit-scrollbar-thumb:hover, .cp-scroll::-webkit-scrollbar-thumb:hover { background: rgba(255, 255, 255, 0.22); }
+.cp-pad::-webkit-scrollbar-track, .cp-scroll::-webkit-scrollbar-track { background: transparent; }
+
+/* ── Zweispaltige Panels (Liste links, Detail rechts) ───────────────────── */
+.cp-split { display: flex; gap: var(--cp-s4); align-items: flex-start; }
+.cp-split-side { flex: 0 0 290px; min-width: 0; }
+.cp-split-main { flex: 1; min-width: 0; }
+@media (max-width: 900px) {
+  .cp-split { flex-direction: column; }
+  .cp-split-side { flex: none; width: 100%; }
+}
+
+/* Anklickbare Listeneintraege — dieselbe Optik wie .cp-item, nur interaktiv */
+.cp-item-click { cursor: pointer; padding-left: var(--cp-s2); padding-right: var(--cp-s2); border-radius: var(--cp-r-sm); }
+.cp-item-click:hover { background: var(--cp-surface-2); }
+.cp-item-click.active { background: rgba(var(--accent-rgb), 0.16); }
+
+.cp-badge-row { display: flex; gap: var(--cp-s2); flex-wrap: wrap; }
+
+/* ── Ticket-Verlauf ────────────────────────────────────────────────────── */
+.cp-chat { display: flex; flex-direction: column; gap: var(--cp-s3); max-height: 420px; }
+.cp-msg { max-width: 82%; }
+.cp-msg-mine { align-self: flex-end; text-align: right; }
+.cp-msg-who { font-size: 10.5px; color: var(--muted); margin-bottom: 3px; }
+.cp-msg-body {
+  display: inline-block; padding: var(--cp-s2) var(--cp-s3);
+  background: var(--cp-surface-2); border: 1px solid var(--cp-line);
+  border-radius: var(--cp-r-md); text-align: left; word-break: break-word;
+}
+.cp-msg-mine .cp-msg-body { background: rgba(var(--accent-rgb), 0.16); border-color: rgba(var(--accent-rgb), 0.34); }
+
+/* ── Karten-Legende (schwebt über der Canvas) ───────────────────────────── */
+#cpLegend {
+  position: absolute; left: var(--cp-s3); bottom: var(--cp-s3);
+  padding: var(--cp-s3); border-radius: var(--cp-r-md);
+  background: rgba(13, 9, 24, 0.86); border: 1px solid var(--cp-line);
+  backdrop-filter: blur(6px); font-size: 12px; user-select: none;
+}
+.cp-leg-title {
+  font-size: 10px; font-weight: 650; text-transform: uppercase;
+  letter-spacing: 0.07em; color: var(--muted); margin-bottom: 5px;
+}
+.cp-leg-row { display: flex; align-items: center; gap: var(--cp-s2); cursor: pointer; padding: 2px 0; }
+.cp-leg-row input { width: auto; margin: 0; cursor: pointer; accent-color: var(--accent); }
+.cp-leg-swatch { width: 11px; height: 11px; border-radius: 3px; flex: none; border: 1px solid rgba(0,0,0,.5); }
+.cp-leg-tp { background: #38bdf8; border-radius: 50%; }
+.cp-leg-ai { background: #ef4444; transform: rotate(45deg); border-radius: 2px; }
+.cp-leg-player { background: #e8e6ef; border-radius: 50%; }
+
+/* Canvas fuellt jetzt den Bereich — kein aspect-ratio, keine toten Balken mehr */
+#cpMapCanvas { display: block; width: 100%; height: 100%; cursor: grab; touch-action: none; }
+#cpMapCanvas:active { cursor: grabbing; }
+.cp-leg-heat { background: linear-gradient(135deg, #f59e0b, #ef4444); }
+.cp-leg-off { opacity: .4; cursor: default; }
+
+/* ── Legenden-Toggles ───────────────────────────────────────────────────── */
+/* Buttons statt Checkboxen: die ganze Flaeche schaltet, nicht nur ein
+   13px-Kaestchen. Zustand steckt in aria-pressed — damit ist er zugleich fuer
+   Screenreader korrekt und braucht keine zweite Quelle im JS. */
+.cp-leg-grid { display: flex; flex-direction: column; gap: 3px; }
+.cp-tgl {
+  display: flex; align-items: center; gap: var(--cp-s2);
+  width: 100%; padding: 5px var(--cp-s2); height: 27px; box-sizing: border-box;
+  font: inherit; font-size: 12px; text-align: left;
+  color: var(--muted); background: transparent;
+  border: 1px solid transparent; border-radius: var(--cp-r-sm);
+  cursor: pointer; transition: background .12s, color .12s, border-color .12s;
+}
+.cp-tgl:hover:not(:disabled) { background: var(--cp-surface-2); color: #e8e6ef; }
+.cp-tgl[aria-pressed="true"] {
+  background: rgba(255, 255, 255, 0.07);
+  border-color: var(--cp-line);
+  color: #e8e6ef;
+}
+.cp-tgl[aria-pressed="false"] .cp-leg-swatch { opacity: .25; }
+.cp-tgl:disabled { opacity: .35; cursor: not-allowed; }
+.cp-tgl:focus-visible { outline: 2px solid rgba(var(--accent-rgb), .7); outline-offset: 1px; }
+
+/* ── Karten-Tooltip (Hover ueber Spieler/Ansammlung) ────────────────────── */
+#cpMapTip {
+  position: absolute; z-index: 5; pointer-events: none;
+  max-width: 260px; padding: var(--cp-s2) var(--cp-s3);
+  border-radius: var(--cp-r-sm); font-size: 12px; line-height: 1.45;
+  background: rgba(13, 9, 24, 0.94); border: 1px solid var(--cp-line);
+  box-shadow: 0 6px 20px rgba(0, 0, 0, .5);
+}
+.cp-tip-head { font-size: 10.5px; color: var(--muted); text-transform: uppercase; letter-spacing: .06em; margin-bottom: 3px; }
+.cp-tip-row { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.cp-tip-more { color: var(--muted); font-size: 11px; margin-top: 2px; }
+
+/* ── Verschiebbare Flaeche ueber der Karte ──────────────────────────────── */
+.cp-float {
+  position: absolute; z-index: 8; display: flex; flex-direction: column;
+  max-height: calc(100% - 32px);
+  background: rgba(13, 9, 24, 0.95); border: 1px solid var(--cp-line);
+  border-radius: var(--cp-r-md); box-shadow: 0 10px 34px rgba(0, 0, 0, .55);
+  backdrop-filter: blur(6px); overflow: hidden;
+}
+.cp-float-bar {
+  display: flex; align-items: center; justify-content: space-between; gap: var(--cp-s2);
+  padding: var(--cp-s2) var(--cp-s2) var(--cp-s2) var(--cp-s3);
+  background: rgba(255, 255, 255, .05); border-bottom: 1px solid var(--cp-line);
+  cursor: move; user-select: none;
+}
+.cp-float-title { font-size: 12px; font-weight: 650; }
+.cp-float-x {
+  flex: none; width: 24px; height: 24px; padding: 0;
+  display: flex; align-items: center; justify-content: center;
+  border: 0; background: transparent; color: var(--muted);
+  cursor: pointer; font-size: 13px; line-height: 1; border-radius: 5px;
+}
+.cp-float-x:hover { background: rgba(255,255,255,.1); color: #fff; }
+.cp-float-body { padding: var(--cp-s3); overflow: auto; display: flex; flex-direction: column; gap: var(--cp-s2); }
+.cp-float-search { height: 32px; font-size: 13px; flex: none; }
+.cp-float-actions { display: flex; align-items: center; justify-content: space-between; gap: var(--cp-s2); }
+.cp-float-list { display: block; max-height: 360px; overflow-y: auto; }
+
+.cp-pl-row {
+  flex: none;                      /* sonst teilen sich die Zeilen die Hoehe */
+  display: flex; align-items: center; gap: var(--cp-s2);
+  width: 100%; text-align: left; padding: 7px var(--cp-s2); min-height: 40px;
+  font: inherit; font-size: 13px; color: #ddd;
+  background: transparent; border: 1px solid transparent; border-radius: var(--cp-r-sm);
+  cursor: pointer;
+}
+.cp-pl-row:hover { background: var(--cp-surface-2); }
+.cp-pl-row.on { background: rgba(245, 158, 11, .16); border-color: rgba(245, 158, 11, .5); color: #fff; }
+.cp-pl-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--muted); flex: none; }
+.cp-pl-row.on .cp-pl-dot { background: #f59e0b; }
+.cp-pl-main { min-width: 0; display: flex; flex-direction: column; }
+.cp-pl-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.cp-pl-sub { font-size: 11.5px; color: var(--muted); margin-top: 1px; }
+
+/* ── Kartengrundlage: RaidAtlas (fest unten rechts) ─────────────────────── */
+#cpRaidAtlas {
+  position: absolute; right: var(--cp-s3); bottom: var(--cp-s3); z-index: 4;
+  padding: 8px 12px; border-radius: var(--cp-r-md); cursor: pointer;
+  background: rgba(13, 9, 24, 0.72); border: 1px solid var(--cp-line);
+  backdrop-filter: blur(4px); line-height: 0;
+  transition: background .13s, border-color .13s;
+}
+#cpRaidAtlas:hover { background: rgba(13, 9, 24, 0.92); border-color: rgba(255,255,255,.2); }
+#cpRaidAtlas img { height: 40px; width: auto; display: block; opacity: .85; }
+#cpRaidAtlas:hover img { opacity: 1; }
+
+.cp-leg-trail { background: linear-gradient(90deg, transparent, #e8e6ef); border-radius: 2px; }
+
+/* ── Reiter und Gruppen in der Spielerliste ─────────────────────────────── */
+.cp-float-tabs { margin-bottom: 0; padding-bottom: var(--cp-s1); }
+.cp-float-tabs .cp-tab { height: 26px; font-size: 12px; padding: 4px var(--cp-s3); }
+
+.cp-grp { border-bottom: 1px solid var(--cp-line); }
+.cp-grp:last-child { border-bottom: none; }
+.cp-grp-head { display: flex; align-items: stretch; gap: 2px; border-radius: var(--cp-r-sm); }
+.cp-grp-head.on { background: rgba(245, 158, 11, .16); }
+.cp-grp-toggle {
+  flex: none; width: 24px; padding: 0; font: inherit; font-size: 11px;
+  color: var(--muted); background: transparent; border: 0; cursor: pointer; border-radius: var(--cp-r-sm);
+}
+.cp-grp-toggle:hover { background: var(--cp-surface-2); color: #fff; }
+.cp-grp-pick {
+  flex: 1; min-width: 0; display: flex; flex-direction: column; align-items: flex-start;
+  padding: 7px var(--cp-s2); font: inherit; font-size: 13px; color: #ddd;
+  background: transparent; border: 0; border-radius: var(--cp-r-sm); cursor: pointer; text-align: left;
+}
+.cp-grp-pick:hover { background: var(--cp-surface-2); }
+.cp-grp-head.on .cp-grp-pick { color: #fff; }
+.cp-grp-body { padding-left: var(--cp-s4); }
+
+/* Rangfarbe im Listenpunkt — dieselbe Zuordnung wie auf der Karte */
+.cp-pl-dot.cp-pl-team { background: #f59e0b; }
+.cp-pl-dot.cp-pl-admin { background: #ef4444; }
+
+/* Rangfarben im Karten-Tooltip — dieselbe Zuordnung wie Randfarbe und Listenpunkt */
+.cp-tip-admin { color: #f87171; font-weight: 600; }
+.cp-tip-team { color: #fbbf24; font-weight: 600; }
+
+/* Auswahl-Rechteck (Strg + Ziehen). Als DOM-Element statt auf der Canvas —
+   so kostet das Aufziehen keinen Neuzeichnen-Durchlauf pro Mausbewegung. */
+#cpMarquee {
+  position: absolute; z-index: 6; pointer-events: none;
+  border: 1px solid rgba(245, 158, 11, .95);
+  background: rgba(245, 158, 11, .14);
+  border-radius: 2px;
+}
+
+/* Bearbeiten-Modus sichtbar machen: der Cursor sagt, dass der Rechtsklick jetzt
+   etwas tut. */
+#cpMapCanvas.cp-editing { cursor: crosshair; }
+#cpMapCanvas.cp-editing:active { cursor: grabbing; }
+
+/* ── Schiebeschalter ────────────────────────────────────────────────────── */
+/* role="switch" + aria-checked ist das richtige Muster fuer einen Umschalter
+   (aria-pressed beschreibt einen gedrueckten Knopf, nicht einen Zustand). */
+.cp-switch {
+  display: inline-flex; align-items: center; gap: var(--cp-s2);
+  padding: 0; height: 28px; flex: none;
+  font: inherit; font-size: 12px; font-weight: 550; color: var(--muted);
+  background: transparent; border: 0; cursor: pointer;
+}
+.cp-switch:hover { color: #e8e6ef; }
+.cp-switch[aria-checked="true"] { color: #e8e6ef; }
+.cp-switch-track {
+  position: relative; width: 34px; height: 19px; flex: none;
+  background: rgba(255, 255, 255, 0.14);
+  border: 1px solid var(--cp-line); border-radius: 999px;
+  transition: background .16s, border-color .16s;
+}
+.cp-switch[aria-checked="true"] .cp-switch-track {
+  background: var(--accent); border-color: transparent;
+}
+.cp-switch-thumb {
+  position: absolute; top: 2px; left: 2px; width: 13px; height: 13px;
+  background: #fff; border-radius: 50%;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, .5);
+  transition: transform .16s;
+}
+.cp-switch[aria-checked="true"] .cp-switch-thumb { transform: translateX(15px); }
+.cp-switch:focus-visible { outline: 2px solid rgba(var(--accent-rgb), .7); outline-offset: 2px; border-radius: 6px; }
+
+/* ── Aufklappbarer Abschnitt ────────────────────────────────────────────── */
+.cp-exp { border: 1px solid var(--cp-line); border-radius: var(--cp-r-sm); margin-top: var(--cp-s3); }
+.cp-exp-head {
+  padding: var(--cp-s2) var(--cp-s3); cursor: pointer; user-select: none;
+  font-size: 12px; font-weight: 650; color: var(--muted); list-style: none;
+}
+.cp-exp-head::-webkit-details-marker { display: none; }
+.cp-exp-head::before { content: '▸ '; }
+.cp-exp[open] .cp-exp-head::before { content: '▾ '; }
+.cp-exp-head:hover { color: #e8e6ef; }
+.cp-exp[open] .cp-exp-head { border-bottom: 1px solid var(--cp-line); color: #e8e6ef; }
+.cp-exp-body { padding: var(--cp-s3); }
+
+/* ── Checkboxen als Schiebeschalter ─────────────────────────────────────── */
+/* Bewusst rein ueber CSS: das <input type="checkbox"> bleibt im DOM, damit
+   jedes vorhandene .checked und onchange weiterarbeitet und Tastatur- sowie
+   Screenreader-Bedienung unveraendert funktionieren. Nur das Aussehen wechselt. */
+.cp-check { gap: var(--cp-s3); }
+.cp-check input[type="checkbox"] {
+  appearance: none; -webkit-appearance: none;
+  position: relative; flex: none;
+  width: 34px; height: 19px; margin: 0;
+  background: rgba(255, 255, 255, 0.14);
+  border: 1px solid var(--cp-line); border-radius: 999px;
+  cursor: pointer; transition: background .16s, border-color .16s;
+}
+.cp-check input[type="checkbox"]::after {
+  content: ''; position: absolute; top: 2px; left: 2px;
+  width: 13px; height: 13px; background: #fff; border-radius: 50%;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, .5); transition: transform .16s;
+}
+.cp-check input[type="checkbox"]:checked { background: var(--accent); border-color: transparent; }
+.cp-check input[type="checkbox"]:checked::after { transform: translateX(15px); }
+.cp-check input[type="checkbox"]:disabled { opacity: .4; cursor: not-allowed; }
+.cp-check input[type="checkbox"]:focus-visible { outline: 2px solid rgba(var(--accent-rgb), .7); outline-offset: 2px; }
+
+/* ── Zwei-Punkt-Schieber fuer Stundenbereiche ───────────────────────────── */
+.cp-hours { position: relative; height: 34px; margin-top: var(--cp-s1); }
+.cp-hours-track {
+  position: absolute; top: 15px; left: 0; right: 0; height: 4px;
+  background: rgba(255, 255, 255, 0.14); border-radius: 999px;
+}
+.cp-hours-fill { position: absolute; top: 0; height: 100%; background: var(--accent); border-radius: 999px; }
+.cp-hours input[type="range"] {
+  position: absolute; top: 0; left: 0; width: 100%; height: 34px; margin: 0;
+  appearance: none; -webkit-appearance: none; background: none; pointer-events: none;
+}
+.cp-hours input[type="range"]::-webkit-slider-thumb {
+  appearance: none; -webkit-appearance: none; pointer-events: auto;
+  width: 16px; height: 16px; border-radius: 50%;
+  background: #fff; border: 2px solid var(--accent); cursor: grab;
+  box-shadow: 0 1px 4px rgba(0, 0, 0, .5);
+}
+.cp-hours input[type="range"]:active::-webkit-slider-thumb { cursor: grabbing; }
+.cp-hours-val { display: flex; justify-content: space-between; font-size: 11px; color: var(--muted); margin-top: -2px; }
+
+/* Aufgeklappte Liste eines <select>: Chromium rendert die <option>-Elemente mit
+   Systemfarben — unter Linux hell auf hell und dadurch kaum lesbar. Sie muessen
+   deshalb ausdruecklich gesetzt werden. */
+.cp-select option,
+.cp-select optgroup {
+  background: #1c1630;
+  color: #e8e6ef;
+  padding: 6px 10px;
+}
+.cp-select option:checked,
+.cp-select option:hover { background: var(--accent); color: #fff; }
+
+/* ── Release-Notes ──────────────────────────────────────────────────────── */
+#cpNotes { max-height: 340px; }
+.cp-rel { padding: var(--cp-s3) 0; border-bottom: 1px solid var(--cp-line); }
+.cp-rel:last-child { border-bottom: none; }
+.cp-rel:first-child { padding-top: 0; }
+.cp-rel-head { display: flex; justify-content: space-between; gap: var(--cp-s3); font-weight: 600; font-size: 13px; }
+.cp-rel-date { color: var(--muted); font-weight: 400; font-size: 11.5px; white-space: nowrap; }
+.cp-rel-body { margin-top: var(--cp-s1); font-size: 12.5px; color: #c9c5d6; }
+.cp-rel-h { font-weight: 600; color: #e8e6ef; margin-top: var(--cp-s2); }
+.cp-rel-li { padding-left: var(--cp-s3); position: relative; }
+.cp-rel-li::before { content: '·'; position: absolute; left: 4px; color: var(--muted); }
+.cp-rel-ver { color: var(--accent-2); font-weight: 700; }
+.cp-rel-body strong { color: #e8e6ef; }

@@ -20,7 +20,12 @@ export function baseClass(sp) {
 // Bezeichner in overlay.js bereits als lokale Variable vorkommt.
 // null/undefined → '' (nicht "0%"), damit fehlende Werte nicht wie 0 aussehen.
 export function fmtGrow(g) {
-  return g == null ? '' : `${Math.round(g * 100)}%`;
+  if (g == null || !Number.isFinite(g)) return '';
+  // Unsinnige Werte verschweigen statt sie hochzurechnen. Die Fly-Mode-Huelle
+  // eines Admins (AdminPawn) meldet z. B. -3.3e37 — als "-3.3e+39 %" gerendert
+  // sah das aus wie ein Anzeigefehler der App.
+  if (g < 0 || g > 5) return '';
+  return `${Math.round(g * 100)}%`;
 }
 
 export function escapeHtml(s) {
