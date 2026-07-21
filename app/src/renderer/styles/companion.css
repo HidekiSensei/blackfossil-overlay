@@ -223,7 +223,25 @@ input[type="range"] { accent-color: var(--accent); }
 #cpMain { flex: 1; min-width: 0; display: flex; flex-direction: column; }
 .cp-view { flex: 1; min-height: 0; display: flex; flex-direction: column; }
 .cp-pad { padding: var(--cp-s5) var(--cp-s6); overflow-y: auto; }
-.cp-pad-narrow { max-width: 780px; }
+/* Breite: gedeckelt, aber grosszuegig. 780px liessen auf einem 1360er Fenster
+   die halbe Flaeche leer; voellig unbegrenzt waeren Fliesstext und Formulare
+   dagegen unlesbar breit. Listen und Raster sprengen den Deckel bewusst
+   (cp-pad-full), weil sie von Spalten profitieren statt von Zeilenlaenge. */
+.cp-pad-narrow { max-width: 1080px; }
+.cp-pad-full { max-width: none; }
+
+/* Abstand zwischen den Bloecken einer Ansicht. Vorher trugen einzelne
+   Bausteine ihre eigenen margins — was fehlte, sobald zwei davon
+   aufeinandertrafen, die beide keins hatten. */
+.cp-stack { display: flex; flex-direction: column; gap: var(--cp-s4); align-items: stretch; }
+.cp-stack > * { margin: 0; }
+
+/* Knopfleiste, die NICHT auf volle Breite zieht. cp-btn-row streckt seine
+   Knoepfe (flex:1) — richtig fuer zwei gleichrangige Aktionen in einer
+   schmalen Karte, falsch fuer "Speichern / Zuruecksetzen" ueber einer
+   breiten Liste, wo ein 500px breiter Speichern-Knopf entsteht. */
+.cp-btn-row-left { justify-content: flex-start; align-items: center; }
+.cp-btn-row-left > .cp-btn { flex: 0 0 auto; min-width: 0; }
 
 /* ── Karte ────────────────────────────────────────────────────────────── */
 .cp-bar {
@@ -605,6 +623,33 @@ input[type="range"] { accent-color: var(--accent); }
 .cp-navgrp-caret { width: 11px; text-align: center; flex: none; font-size: 9px; }
 .cp-navgrp-body { display: flex; flex-direction: column; gap: 2px; }
 
+/* Mithör-Regler in der Kartenleiste — nur sichtbar, solange es läuft. */
+.cp-listen-box { display: inline-flex; align-items: center; gap: var(--cp-s2); }
+.cp-listen-box input[type=range] { width: 110px; }
+
+/* ── Class-Limits ─────────────────────────────────────────────────────────── */
+/* Raster statt einer langen Spalte: die 20 Arten passen auf einem breiten
+   Fenster in vier Spalten ohne Scrollen, waehrend eine einspaltige Liste zwei
+   Drittel der Flaeche leer liess und trotzdem scrollte. Die Spaltenzahl ergibt
+   sich aus der Breite (auto-fill), bricht also von selbst auf eine Spalte. */
+.cp-dl-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(230px, 1fr)); gap: var(--cp-s2) var(--cp-s4); }
+.cp-dl-row {
+  display: flex; align-items: center; gap: var(--cp-s3);
+  padding: 3px var(--cp-s3) 3px var(--cp-s2); border-radius: var(--cp-r-sm);
+}
+.cp-dl-row:hover { background: var(--cp-surface); }
+.cp-dl-name { flex: 1; font-size: 12.5px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.cp-dl-in { width: 72px; flex: none; text-align: right; }
+/* Gesetztes Limit hervorheben — auf einen Blick sichtbar, welche Arten
+   ueberhaupt begrenzt sind, ohne jedes Feld einzeln zu lesen. */
+.cp-dl-in:not(:placeholder-shown) { border-color: rgba(var(--accent-rgb), .45); color: #fff; }
+
+/* Eingabefeld mit angehaengtem Knopf ("Mich"). Der Knopf behaelt seine
+   natuerliche Breite, das Feld nimmt den Rest — sonst teilen sich beide die
+   Zeile haelftig und das Suchfeld wird unbrauchbar schmal. */
+.cp-row-tight { display: flex; gap: var(--cp-s2); align-items: center; }
+.cp-row-tight > .cp-input { flex: 1 1 auto; min-width: 0; }
+.cp-row-tight > .cp-btn { flex: 0 0 auto; }
 /* ── Lexikon ───────────────────────────────────────────────────────────────
    Optik bewusst nah am Overlay-Lexikon (Bild-Banner, Diaet-Punkt, gruene
    Staerken / rote Schwaechen, Tipp-/Wissenswert-Box) — dieselben Farben wie
@@ -659,8 +704,15 @@ input[type="range"] { accent-color: var(--accent); }
 
 .cp-lex-locked { color: var(--cp-danger); }
 
-.cp-lex-nav { display: flex; gap: var(--cp-s2); margin-top: var(--cp-s4); }
-.cp-lex-nav .cp-btn { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+/* Detail-Topbar: Nav-Buttons oben, buendig links/rechts mit Luecke in der
+   Mitte (space-between). Die untere Trennlinie spiegelt exakt .cp-tabs der
+   Liste links, damit beide Seiten als Paar wirken. */
+.cp-lex-topbar {
+  display: flex; justify-content: space-between; align-items: center; gap: var(--cp-s2);
+  border-bottom: 1px solid var(--cp-line);
+  margin-bottom: var(--cp-s5); padding-bottom: var(--cp-s2);
+}
+.cp-lex-topbar .cp-btn { flex: none; max-width: 46%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 
 /* ── Audit-Tabellen (Player-Audit / Team-Audit) ────────────────────────────
    Vollflaechen-Layout: Kopf + Filterleiste + Fusszeile stehen fest, NUR der

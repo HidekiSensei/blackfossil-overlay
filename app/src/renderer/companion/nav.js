@@ -28,13 +28,8 @@ export const NAV_GROUPS = [
   {
     id: 'wissen',
     label: 'Wissen',
-    // Class-Limits stehen hier und nicht unter Administration: /dino-limits ist
-    // `any`, also Spielerinformation ("welche Art darf ich, wie viele gibt es
-    // schon") — nachschlagen, nicht eingreifen. Das AENDERN der Limits ist
-    // admin und sitzt im Welt-Punkt.
     items: [
       { view: 'lexikon', icon: '📖', label: 'Lexikon', cap: null },
-      { view: 'limits', icon: '🦖', label: 'Class-Limits', cap: 'limits.read' },
     ],
   },
   {
@@ -54,8 +49,14 @@ export const NAV_GROUPS = [
     id: 'administration',
     label: 'Administration',
     // Ausschliesslich admin — diese Gruppe ist fuer alle anderen unsichtbar.
+    //
+    // Dino-Verwaltung haengt bewusst an `limits.write` (admin), nicht an
+    // `limits.read` (any): der Punkt ist ein Werkzeug zum Aendern, kein
+    // Nachschlagewerk. Dass jeder die Limits LESEN darf, macht ihn nicht zur
+    // Spielerinformation.
     items: [
       { view: 'welt', icon: '🌍', label: 'Welt', cap: 'world.read' },
+      { view: 'dinos', icon: '🦖', label: 'Dino-Verwaltung', cap: 'limits.write' },
       { view: 'ops', icon: '📊', label: 'Betrieb', cap: 'ops.read' },
       { view: 'taudit', icon: '📜', label: 'Team-Audit', cap: 'team.staffAudit' },
     ],

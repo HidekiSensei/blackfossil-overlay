@@ -23,6 +23,11 @@ import {
 import { baseClass, escapeHtml } from './shared/format.js';
 import { makeTheme } from './shared/theme.js';
 import { initSettings, renderSettings } from './companion/panels/settings.js';
+import {
+  initListen, startListening, stopListening, retarget, setRadius,
+  isListening, listenTarget, listenRadius, applyVolumes, audibleCount,
+} from './companion/listen.js';
+import { initDinos, renderDinos } from './companion/panels/dinos.js';
 import { NAV_GROUPS, NAV_SETTINGS, itemFor, collapsedGroups, saveCollapsed } from './companion/nav.js';
 import { initServer, renderServer, stopServer } from './companion/panels/server.js';
 import { initAdmin, renderAdmin } from './companion/panels/admin.js';
@@ -440,6 +445,17 @@ async function pollPositions() {
     if (online !== perms.online) { perms.online = online; applyNavPermissions(); }
     // Die offene Spielerliste lebt von denselben Daten.
     if (plList && isPlayerListOpen()) plList.refresh();
+    // Mithoeren: Lautstaerken folgen den neuen Positionen. Wechselt die
+    // Auswahl auf genau einen anderen Spieler, wandert der Umkreis mit —
+    // ohne die Verbindung neu aufzubauen.
+    if (isListening()) {
+      if (highlight.size === 1) {
+        const sel = [...highlight][0];
+        if (sel !== listenTarget()) retarget(sel);
+      }
+      applyVolumes();
+      updateListenUi();
+    }
     dirty = true;
   } catch (err) {
     const s = el('cpMapStat');
@@ -858,8 +874,8 @@ const PANELS = {
   paudit: (r) => renderTeam(r, 'paudit'),
   taudit: (r) => renderTeam(r, 'taudit'),
   welt: (r) => renderAdmin(r, 'welt'),
-  limits: (r) => renderAdmin(r, 'limits'),
   ops: (r) => renderAdmin(r, 'ops'),
+  dinos: renderDinos,
   server: renderServer,
   support: renderSupport,
   lexikon: renderLexikon,
@@ -946,6 +962,18 @@ function applyNavPermissions() {
   // Steht man auf einer Ansicht, die man nicht mehr sehen darf, zurueck zur Karte.
   const cur = itemFor(currentView);
   if (cur && !navAllowed(cur)) navTo('map');
+}
+
+// Zustand des Mithoerens in der Leiste nachziehen. Zeigt auch, WIE VIELE
+// gerade tatsaechlich zu hoeren sind — ohne das waere nicht erkennbar, ob der
+// Radius zu klein ist oder schlicht niemand in der Naehe steht.
+function updateListenUi() {
+  const lb = el('cpListen'), box = el('cpListenBox'), lv = el('cpListenVal');
+  if (!lb) return;
+  const an = isListening();
+  lb.setAttribute('aria-checked', an ? 'true' : 'false');
+  if (box) box.hidden = !an;
+  if (lv) lv.textContent = listenRadius() + ' m' + (an ? ` · ${audibleCount()} hörbar` : '');
 }
 
 // ── Legende & Layer ────────────────────────────────────────────────────────
@@ -1093,6 +1121,13 @@ async function boot() {
   initTeam(panelCtx); initAdmin(panelCtx); initServer(panelCtx);
   initSupport(panelCtx); initLexikon(panelCtx);
   initSettings(settingsCtx);
+  initListen({
+    api, toast,
+    can: (c) => can(perms, c),
+    players: () => players,
+    onChange: updateListenUi,
+  });
+  initDinos(panelCtx);
   initEditor(editorCtx);
 
   // Nicht erlaubte Punkte gar nicht erst erzeugen — tote Buttons verrotten.
@@ -1121,6 +1156,29 @@ async function boot() {
     }
     if (cb) cb.onclick = () => openCreateMenu();
     setEditMode(false);
+  }
+
+  // Mithoeren (Admin). Braucht genau EINEN ausgewaehlten Spieler: bei mehreren
+  // Umkreisen koennte man nicht mehr sagen, wem man gerade zuhoert.
+  {
+    const lb = el('cpListen'), lr = el('cpListenR'), lv = el('cpListenVal');
+    if (lb) {
+      lb.hidden = !can(perms, 'voice.listen');
+      lb.onclick = async () => {
+        if (isListening()) { await stopListening(); return; }
+        if (highlight.size !== 1) {
+          toast('Genau einen Spieler auswaehlen — Mithoeren gilt einem Umkreis.', 'error');
+          return;
+        }
+        await startListening([...highlight][0]);
+      };
+    }
+    if (lr) {
+      lr.value = String(listenRadius());
+      lr.oninput = () => { setRadius(lr.value); lv.textContent = lr.value + ' m'; updateListenUi(); };
+      lv.textContent = listenRadius() + ' m';
+    }
+    updateListenUi();
   }
 
   // Spielerliste (Team-only) — dieselbe Bedingung wie die Overwatch-Ansicht.
