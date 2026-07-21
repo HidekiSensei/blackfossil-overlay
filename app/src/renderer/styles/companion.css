@@ -604,3 +604,7 @@ input[type="range"] { accent-color: var(--accent); }
 .cp-navgrp-head:hover { opacity: 1; color: #ddd; }
 .cp-navgrp-caret { width: 11px; text-align: center; flex: none; font-size: 9px; }
 .cp-navgrp-body { display: flex; flex-direction: column; gap: 2px; }
+
+/* Mithör-Regler in der Kartenleiste — nur sichtbar, solange es läuft. */
+.cp-listen-box { display: inline-flex; align-items: center; gap: var(--cp-s2); }
+.cp-listen-box input[type=range] { width: 110px; }

@@ -51,9 +51,16 @@ async function report(steamId, r) {
   return C.api('POST', '/voice/listen', { steamId, radius: r });
 }
 
-// livekit-client wird erst beim ersten Mithoeren geladen. Die Companion ist
-// sonst eine voice-freie App — das Paket (rund 1 MB gebuendelt) soll nicht in
-// jedem Start stecken, nur weil ein Admin es einmal benutzen koennte.
+// livekit-client wird erst beim ersten Mithoeren AUSGEWERTET.
+//
+// Was das dynamische import() NICHT tut: die Bytes einsparen. esbuild baut ein
+// IIFE-Bundle und kann darin nicht aufteilen — das Paket liegt immer bei und
+// laesst companion.js von 147 KB auf 1,3 MB wachsen. Das ginge nur mit
+// ESM-Ausgabe samt Code-Splitting, also einem Umbau des Build-Ziels.
+//
+// Was es sehr wohl tut: esbuild verpackt den Zweig in eine Fabrik, die erst
+// beim Aufruf laeuft. Wer nie mithoert, fuehrt livekits Modulinitialisierung
+// samt WebRTC-Adapter also nie aus.
 async function lk() {
   if (!LK) LK = await import('livekit-client');
   return LK;
