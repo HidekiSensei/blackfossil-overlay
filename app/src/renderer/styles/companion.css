@@ -659,5 +659,12 @@ input[type="range"] { accent-color: var(--accent); }
 
 .cp-lex-locked { color: var(--cp-danger); }
 
-.cp-lex-nav { display: flex; gap: var(--cp-s2); margin-top: var(--cp-s4); }
-.cp-lex-nav .cp-btn { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+/* Detail-Topbar: Nav-Buttons oben, buendig links/rechts mit Luecke in der
+   Mitte (space-between). Die untere Trennlinie spiegelt exakt .cp-tabs der
+   Liste links, damit beide Seiten als Paar wirken. */
+.cp-lex-topbar {
+  display: flex; justify-content: space-between; align-items: center; gap: var(--cp-s2);
+  border-bottom: 1px solid var(--cp-line);
+  margin-bottom: var(--cp-s5); padding-bottom: var(--cp-s2);
+}
+.cp-lex-topbar .cp-btn { flex: none; max-width: 46%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
