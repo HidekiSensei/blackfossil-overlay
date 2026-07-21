@@ -736,6 +736,21 @@ export function drawEncounterEdit(ctx, w, h, scale, enc, activeHandle) {
   }
   // Spawn (Index 0) hervorgehoben — er ist der eigentliche Ort, die uebrigen
   // sind nur Wegpunkte.
+  // Geister-Punkte auf den Streckenmitten — dieselbe Bedienung wie bei Zonen.
+  const mids = encounterMidpoints(enc).map(toPx);
+  const sm = 5 * scale;
+  mids.forEach((p) => {
+    ctx.fillStyle = '#4ade80';
+    ctx.fillRect(p.x - sm, p.y - sm, sm * 2, sm * 2);
+    ctx.lineWidth = 2 * scale; ctx.strokeStyle = '#0b1a0f';
+    ctx.strokeRect(p.x - sm, p.y - sm, sm * 2, sm * 2);
+    ctx.lineWidth = 1.6 * scale;
+    ctx.beginPath();
+    ctx.moveTo(p.x - sm * 0.5, p.y); ctx.lineTo(p.x + sm * 0.5, p.y);
+    ctx.moveTo(p.x, p.y - sm * 0.5); ctx.lineTo(p.x, p.y + sm * 0.5);
+    ctx.stroke();
+  });
+
   drawHandleSquares(ctx, pts, scale, activeHandle, (i) => (i === 0 ? '#ef4444' : '#fff'));
 }
 
@@ -755,6 +770,17 @@ function drawHandleSquares(ctx, pts, scale, activeHandle, colorFor) {
     ctx.lineWidth = 2 * scale; ctx.strokeStyle = '#000';
     ctx.strokeRect(p.x - s0, p.y - s0, s0 * 2, s0 * 2);
   });
+}
+
+// Mittelpunkte der Encounter-Route. Anders als bei Zonen ist der Pfad OFFEN —
+// es gibt also keinen Mittelpunkt zwischen letztem und erstem Punkt.
+export function encounterMidpoints(enc) {
+  const h = encounterHandles(enc);
+  const out = [];
+  for (let i = 0; i + 1 < h.length; i++) {
+    out.push({ x: (h[i].x + h[i + 1].x) / 2, y: (h[i].y + h[i + 1].y) / 2 });
+  }
+  return out;
 }
 
 // Ziehbare Punkte eines Encounters in fester Reihenfolge: erst der Spawn, dann

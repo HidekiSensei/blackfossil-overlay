@@ -12,11 +12,13 @@ import {
   addPlacementPoint, cancelPlacing, editingZone, setZonePoints, closeEditor,
   editingEncounter, setEncounterGeom, editingTeleport, setTeleportPos,
   insertZonePoint, removeZonePoint,
+  insertPatrolPoint, removePatrolPoint, appendPatrolPoint,
+  isDrawingPatrol, stopDrawingPatrol,
 } from './companion/editor.js';
 import {
   loadMapImage, drawFullMap, drawHeatmap, drawAiEncounters, setZones, setCalAffine,
   ZONE_LAYERS, ZONE_META, setZoneLayer, isZoneLayerVisible,
-  normToWorld, worldToNorm, zoneObjectAt, encounterHandles, zoneMidpoints,
+  normToWorld, worldToNorm, zoneObjectAt, encounterHandles, zoneMidpoints, encounterMidpoints,
 } from './map.js';
 import { baseClass, escapeHtml } from './shared/format.js';
 import { initServer, renderServer, stopServer } from './companion/panels/server.js';
@@ -513,6 +515,14 @@ function initMapInteraction() {
           if (ni >= 0) { geomDrag = { index: ni, kind: 'zone' }; dirty = true; e.preventDefault(); return; }
         }
       }
+      if (en) {
+        const mid = handleAt(encounterMidpoints(en), hx, hy);
+        if (mid >= 0) {
+          const w1 = screenToWorld(hx, hy);
+          const ni = insertPatrolPoint(mid, w1.x, w1.y);
+          if (ni >= 0) { geomDrag = { index: ni, kind: 'encounter' }; dirty = true; e.preventDefault(); return; }
+        }
+      }
       // Nur Zonen haben eine Flaeche, die sich als Ganzes greifen laesst.
       if (ez) {
         const w0 = screenToWorld(hx, hy);
@@ -544,6 +554,13 @@ function initMapInteraction() {
     const sx = e.clientX - r.left, sy = e.clientY - r.top;
     // Im Platzierungs-Modus liefert der Klick Koordinaten, statt Spieler
     // auszuwaehlen — sonst waere beides nicht auseinanderzuhalten.
+    // Route eines bestehenden Encounters zeichnen: jeder Klick haengt an.
+    if (isDrawingPatrol()) {
+      const w2 = screenToWorld(sx, sy);
+      appendPatrolPoint(w2.x, w2.y);
+      dirty = true;
+      return;
+    }
     if (isPlacing()) {
       const w = screenToWorld(sx, sy);
       const pts = placingPoints();
@@ -569,12 +586,20 @@ function initMapInteraction() {
     const r = cv.getBoundingClientRect();
     const sx = e.clientX - r.left, sy = e.clientY - r.top;
     // Rechtsklick auf einen Eckpunkt der bearbeiteten Zone entfernt ihn.
-    const ez = editingZone();
+    const ez = editingZone(), en = editingEncounter();
     if (ez) {
       const vi = handleAt(ez.points, sx, sy);
       if (vi >= 0) {
         if (removeZonePoint(vi)) { dirty = true; }
         else toast('Eine Zone braucht mindestens 3 Eckpunkte.', 'error');
+        return;
+      }
+    }
+    if (en) {
+      const vi = handleAt(encounterHandles(en), sx, sy);
+      if (vi >= 0) {
+        if (removePatrolPoint(vi)) dirty = true;
+        else toast('Der Spawn bleibt — er ist der Startpunkt.', 'error');
         return;
       }
     }
@@ -1029,7 +1054,11 @@ async function boot() {
   if (!can(perms, 'map.showAll')) { showAll = false; showHeat = false; }
   restoreZonePrefs();
   renderLegend();
-  window.addEventListener('keydown', (e) => { if (e.key === 'Escape' && isPlacing()) cancelPlacing(); });
+  window.addEventListener('keydown', (e) => {
+    if (e.key !== 'Escape') return;
+    if (isDrawingPatrol()) { stopDrawingPatrol(); dirty = true; return; }
+    if (isPlacing()) cancelPlacing();
+  });
   navTo(localStorage.getItem('bf-cp-view') || 'map');
   initMapInteraction();
   resizeCanvas();
