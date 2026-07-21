@@ -150,7 +150,7 @@ function send(path, body, okMsg) { return sende('POST', path, body, okMsg); }
 // ── Betrieb: Health-Matrix + Versionen. Read-only-Diagnose ohne SSH. ───────
 async function renderOps() {
   const box = el('adBody');
-  box.innerHTML = U.card(U.muted('Lade Betriebszustand…'));
+  box.innerHTML = U.muted('Lade Betriebszustand…');
   let health, versions;
   try {
     // Parallel, aber einzeln fehlertolerant: faellt eine Quelle aus, soll die
@@ -160,12 +160,12 @@ async function renderOps() {
       C.api('GET', '/admin/ops/health').catch((e) => ({ error: e.message, status: e.status })),
       C.api('GET', '/admin/ops/version').catch((e) => ({ error: e.message, status: e.status })),
     ]);
-  } catch (e) { box.innerHTML = U.card(U.muted('Nicht abrufbar: ' + e.message)); return; }
+  } catch (e) { box.innerHTML = U.muted('Nicht abrufbar: ' + e.message); return; }
 
   // 404 = Ops-Interface auf dieser Umgebung nicht deployed (Stand jetzt: nur
   // test/dev, nicht Prod). Das ist kein Ausfall und soll nicht wie einer aussehen.
   if (health && health.status === 404 && versions && versions.status === 404) {
-    box.innerHTML = U.sec('Betrieb') + U.card(U.empty(
+    box.innerHTML = U.sec('Betrieb') + (U.empty(
       'Das Betrieb-Interface ist auf dieser Umgebung nicht verfügbar (/admin/ops nicht deployed).'));
     return;
   }
@@ -194,7 +194,7 @@ async function renderOps() {
     ? U.muted('Versionen nicht abrufbar: ' + versions.error)
     : (vRows.length ? `<div class="cp-list">${vRows.join('')}</div>` : U.empty('Keine Versionsinfos.'));
 
-  box.innerHTML = U.sec('Status') + U.card(healthHtml)
-    + U.sec('Versionen') + U.card(versHtml)
+  box.innerHTML = U.sec('Status') + healthHtml
+    + U.sec('Versionen') + versHtml
     + U.hint(`Umgebung: ${(health && health.env) || '?'} · Stand ${new Date().toLocaleTimeString('de-DE')}`);
 }

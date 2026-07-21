@@ -50,12 +50,12 @@ export function renderSettings(root) {
 // ── Software ───────────────────────────────────────────────────────────────
 function renderSoftware(box) {
   box.innerHTML = U.sec('Version')
-    + U.card(`<div class="cp-item"><div class="cp-item-main">`
+    + `<div class="cp-item"><div class="cp-item-main">`
       + `<div class="cp-item-title">Version <span id="cpVersion">—</span></div>`
       + `<div class="cp-item-sub" id="cpUpdStatus">Bereit</div></div>`
-      + U.btn('cpUpdBtn', 'Nach Updates suchen', { size: 'sm' }) + `</div>`)
+      + U.btn('cpUpdBtn', 'Nach Updates suchen', { size: 'sm' }) + `</div>`
     + U.sec('Was ist neu')
-    + U.card(`<div id="cpNotes" class="cp-scroll">Lade…</div>`);
+    + `<div id="cpNotes" class="cp-scroll">Lade…</div>`;
 
   C.version().then((v) => {
     const n = box.querySelector('#cpVersion');
@@ -168,9 +168,9 @@ function renderUi(box) {
       + `${cur === 'custom' ? 'Aktiv' : 'Verwenden'}</button></div>`;
 
   box.innerHTML = U.sec('Farbschema')
-    + U.card(`<div class="cp-sw-grid">${swatches}</div>`)
+    + `<div class="cp-sw-grid">${swatches}</div>`
     + U.sec('Eigene Farbe')
-    + U.card(custom)
+    + custom
     + U.hint('Die Einstellung gilt nur für die Companion — das Overlay hat ein eigenes Farbschema.');
 
   box.querySelectorAll('.cp-sw').forEach((b) => {
@@ -200,7 +200,7 @@ function renderUi(box) {
 function renderKonto(box) {
   const p = C.perms();
   box.innerHTML = U.sec('Angemeldet als')
-    + U.card(U.item(p.name || '—', p.rank || '', U.btn('cpLogout', 'Abmelden', { size: 'sm' })));
+    + U.item(p.name || '—', p.rank || '', U.btn('cpLogout', 'Abmelden', { size: 'sm' }));
   const b = box.querySelector('#cpLogout');
   if (b) b.onclick = () => C.onLogout();
 }
