@@ -81,7 +81,7 @@ function renderList() {
 function renderDetail() {
   const box = el('lexDetail'); if (!box) return;
   const d = DINO_LEXIKON[sel];
-  if (!d) { box.innerHTML = U.card(U.empty('Keine Art gewählt.')); return; }
+  if (!d) { box.innerHTML = U.empty('Keine Art gewählt.'); return; }
   const lim = limits[sel];
 
   // Blaettern in der aktuellen Filter-Reihenfolge (wie im Overlay).

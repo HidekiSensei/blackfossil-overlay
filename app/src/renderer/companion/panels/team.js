@@ -57,7 +57,7 @@ async function ensureUsers() {
 async function renderSearch() {
   const box = el('tmBody');
   box.innerHTML = `
-    ${U.card(U.row(
+    ${(U.row(
       `<div class="cp-field"><label class="cp-label" for="tmQ">Spieler</label>`
       + `<input id="tmQ" class="cp-input" list="tmList" placeholder="RP-, Steam- oder Discord-Name, SteamID64…" autocomplete="off">`
       + `<datalist id="tmList"></datalist></div>`,
@@ -96,8 +96,8 @@ async function lookup() {
   const v = el('tmQ').value.trim();
   if (!v) return;
   const u = matchUser(v, users);
-  if (!u) { out.innerHTML = U.card(U.empty('Keinen passenden Spieler gefunden.')); return; }
-  out.innerHTML = U.card(U.muted('Lade…'));
+  if (!u) { out.innerHTML = U.empty('Keinen passenden Spieler gefunden.'); return; }
+  out.innerHTML = U.muted('Lade…');
   try {
     // POST mit JSON-Body, NICHT GET mit Query — so erwartet es das Backend.
     const d = await C.api('POST', '/admin/user-info', { steamId: u.steamId });
@@ -109,7 +109,7 @@ async function lookup() {
         + (d.dino.elderReplicationStacks ? ` · Elder ×${d.dino.elderReplicationStacks}` : '')
       : 'Aktuell nicht im Spiel';
     const toks = Object.entries(d.tokens || {}).filter(([, n]) => n > 0).map(([k, n]) => `${k} ×${n}`).join(', ');
-    out.innerHTML = U.card(`
+    out.innerHTML = (`
       ${U.sec('Spieler')}
       ${U.item(userLabel(u), `SteamID ${d.steamId || u.steamId}${u.discordId ? ` · Discord ${u.discordId}` : ''}`,
         d.rank ? U.badge(d.rank) : '')}
@@ -117,7 +117,7 @@ async function lookup() {
       ${d.points != null ? U.item('Punkte', String(d.points)) : ''}
       ${U.item('Token', toks || '—')}
     `);
-  } catch (e) { out.innerHTML = U.card(U.muted('Nicht abrufbar: ' + e.message)); }
+  } catch (e) { out.innerHTML = U.muted('Nicht abrufbar: ' + e.message); }
 }
 
 // Vollwertige Verwarnungen — Formular + Suche, aus dem Overlay uebernommen
