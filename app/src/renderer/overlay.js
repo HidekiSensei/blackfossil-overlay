@@ -708,6 +708,12 @@ let micEnabled = false;
 let settingsOpen = false;
 let deafened = false;                                   // eingehenden Ton stummschalten
 let amDead = false;                                     // tot / kein Dino → Voice komplett aus (weder hören noch senden)
+// Entprellung fuer amDead: der Rohwert kommt aus dem 0,1s-Positions-Poll und kann flattern.
+// Jeder Wechsel republiziert den Mic-Track und reisst die 3D-Plugin-Kette der Sprecher mit —
+// nach ein paar Zyklen bleibt die Voice-Session verbunden, aber tot. Erst DEAD_DEBOUNCE gleiche
+// Polls in Folge schalten wirklich um (~0,3 s; fuer echten Tod/Respawn unerheblich).
+const DEAD_DEBOUNCE = 3;
+let deadStreak = 0;
 let godVoiceId = '';                                    // steamId des aktiven Gottstimme-Sprechers ('' = keine Durchsage) — aus /positions
 let godVoiceMine = false;                               // ob ICH gerade die Gottstimme sende (Admin-Button-Zustand)
 let godVoiceReverbActive = false;                       // Himmels-Hall bei der AKTIVEN Durchsage an? (aus /positions, für alle konsistent)
@@ -1017,9 +1023,12 @@ function startPositionPolling() {
         const gvMine = !!(godVoiceId && me && godVoiceId === me.steamId);
         if (gvMine !== godVoiceMine) { godVoiceMine = gvMine; if (serverOpen && serverTab === 'godvoice') renderGodVoice(); }
         // Tot / kein Dino → Voice komplett aus (weder hören noch senden). Wechsel → Mic umschalten + Hinweis.
-        const wasDead = amDead;
-        amDead = !me || !!me.isDead;
-        if (amDead !== wasDead) {
+        // Entprellt (s. DEAD_DEBOUNCE): ein einzelner Ausreisser im Poll darf die Voice-Kette nicht anfassen.
+        const rawDead = !me || !!me.isDead;
+        if (rawDead === amDead) deadStreak = 0;
+        else if (++deadStreak >= DEAD_DEBOUNCE) {
+          deadStreak = 0;
+          amDead = rawDead;
           if (room) applyMic();                              // sofort aufhören/wieder senden
           if (amDead && voiceConnected) showToast('💀 Tot — Voice ist stumm bis zum Respawn.', 'warn');
           else if (!amDead && voiceConnected) showToast('🎙️ Wieder im Spiel — Voice aktiv.', 'success');
