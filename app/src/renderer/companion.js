@@ -34,6 +34,7 @@ import { initTokens, renderTokens } from './companion/panels/tokens.js';
 import { NAV_GROUPS, NAV_SETTINGS, itemFor, collapsedGroups, saveCollapsed } from './companion/nav.js';
 import { initAnnounce, renderAnnounce } from './companion/panels/announce.js';
 import { initAdmin, renderAdmin } from './companion/panels/admin.js';
+import { initEvents, renderEvents } from './companion/panels/events.js';
 import { initTeam, renderTeam } from './companion/panels/team.js';
 import { initSupport, renderSupport, stopSupport } from './companion/panels/support.js';
 import { initLexikon, renderLexikon } from './companion/panels/lexikon.js';
@@ -879,6 +880,7 @@ const PANELS = {
   paudit: (r) => renderTeam(r, 'paudit'),
   taudit: (r) => renderTeam(r, 'taudit'),
   welt: (r) => renderAdmin(r, 'welt'),
+  events: renderEvents,
   ops: (r) => renderAdmin(r, 'ops'),
   dinos: renderDinos,
   announce: renderAnnounce,
@@ -1146,7 +1148,7 @@ async function boot() {
   // Themes waeren sonst dauerhaft auf Violett zurueckgefallen. Staff bekommt
   // ueber effectiveTier() alles frei (siehe shared/theme.js).
   theme.setFromToken(t);
-  initTeam(panelCtx); initAdmin(panelCtx); initAnnounce(panelCtx);
+  initTeam(panelCtx); initAdmin(panelCtx); initAnnounce(panelCtx); initEvents(panelCtx);
   initSupport(panelCtx); initLexikon(panelCtx); initHandbuch(panelCtx);
   initSettings(settingsCtx);
   // EINMAL registrieren, nicht erst beim Oeffnen des Software-Reiters: der

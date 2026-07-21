@@ -197,7 +197,7 @@ eq(sichtbar(P.supporter).find((g) => g.id === 'administration'), undefined, 'Adm
 // Auch der Moderator nicht: Welt, Betrieb und Team-Audit sind samt und sonders admin.
 eq(grpIds(P.moderator), 'arbeit,wissen,moderation', 'Moderator sieht keine Administration');
 // Gegenprobe: die Gruppe ist nicht etwa generell leer.
-eq(sichtbar(P.admin).find((g) => g.id === 'administration').items.length, 4, 'Admin sieht vier Administrations-Punkte');
+eq(sichtbar(P.admin).find((g) => g.id === 'administration').items.length, 5, 'Admin sieht fuenf Administrations-Punkte');
 // Die Dino-Verwaltung ist ein Werkzeug zum Aendern, kein Nachschlagewerk —
 // auch wenn /dino-limits LESEND fuer jeden offen ist.
 eq(sichtbar(P.fossil).find((g) => g.id === 'wissen').items.map((i) => i.view).join(','), 'lexikon',
