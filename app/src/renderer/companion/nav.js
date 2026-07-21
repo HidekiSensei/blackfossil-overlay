@@ -41,6 +41,7 @@ export const NAV_GROUPS = [
     items: [
       { view: 'spieler', icon: '👥', label: 'Spieler', cap: 'team.users' },
       { view: 'warnings', icon: '⚠️', label: 'Verwarnungen', cap: 'team.warnings' },
+      { view: 'accounts', icon: '🔗', label: 'Accounts', cap: 'team.accounts' },
       { view: 'paudit', icon: '🔍', label: 'Player-Audit', cap: 'team.playerAudit' },
       { view: 'tokens', icon: '🎁', label: 'Tokens', cap: 'token.dino' },
       { view: 'announce', icon: '📢', label: 'Ankündigung', cap: 'server.announce' },

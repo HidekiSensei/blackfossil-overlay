@@ -38,6 +38,7 @@ import { initTeam, renderTeam } from './companion/panels/team.js';
 import { initSupport, renderSupport, stopSupport } from './companion/panels/support.js';
 import { initLexikon, renderLexikon } from './companion/panels/lexikon.js';
 import { initHandbuch, renderHandbuch } from './companion/panels/handbuch.js';
+import { initAccounts, renderAccounts } from './companion/panels/accounts.js';
 
 let config = { tokenBase: '' };
 let sessionToken = null;
@@ -885,6 +886,7 @@ const PANELS = {
   support: renderSupport,
   lexikon: renderLexikon,
   handbuch: renderHandbuch,
+  accounts: renderAccounts,
   settings: renderSettings,
 };
 
@@ -1147,7 +1149,7 @@ async function boot() {
   // ueber effectiveTier() alles frei (siehe shared/theme.js).
   theme.setFromToken(t);
   initTeam(panelCtx); initAdmin(panelCtx); initAnnounce(panelCtx);
-  initSupport(panelCtx); initLexikon(panelCtx); initHandbuch(panelCtx);
+  initSupport(panelCtx); initLexikon(panelCtx); initHandbuch(panelCtx); initAccounts(panelCtx);
   initSettings(settingsCtx);
   // EINMAL registrieren, nicht erst beim Oeffnen des Software-Reiters: der
   // stuendliche Timer im Hauptprozess meldet sich sonst ins Leere, und

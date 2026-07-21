@@ -899,3 +899,12 @@ input[type="range"] { accent-color: var(--accent); }
   border-radius: var(--cp-r-sm); padding: var(--cp-s2) var(--cp-s3); font-size: 12.5px;
 }
 
+/* ── Verwarnungen (Ergebniszeilen) ──────────────────────────────────────── */
+.cp-warn-row { padding: var(--cp-s2) var(--cp-s3); border-bottom: 1px solid var(--cp-line); }
+.cp-warn-row:last-child { border-bottom: none; }
+.cp-warn-head { display: flex; justify-content: space-between; align-items: center; gap: var(--cp-s2); }
+.cp-warn-who { font-weight: 550; }
+.cp-warn-num { font-weight: 700; font-size: 12px; flex: none; }
+.cp-warn1 { color: #f59e0b; } .cp-warn2 { color: #f97316; } .cp-warn3 { color: #ef4444; }
+.cp-warn-line { font-size: 12.5px; margin-top: 3px; }
+.cp-warn-meta { font-size: 10.5px; color: var(--muted); margin-top: 3px; }

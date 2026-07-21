@@ -53,6 +53,7 @@ export const CAPS = {
   // Handbuch: Nachschlagewerk aller Staff-Funktionen — fuer jeden im Team
   // sichtbar (der Inhalt filtert sich je Rang selbst im Panel).
   'team.handbuch':     'staff',
+  'team.accounts':     'admin',   // /admin/accounts/* (find/link/unlink/dups)
 
   // ── Admin / Welt ──────────────────────────────────────────────────────
   'world.read':        'admin',   // GET  /admin/world/*   (WorldRoutes = admin)
