@@ -1039,3 +1039,25 @@ body.bf-noblitz .feature-panel h2, body.bf-noblitz #settings h2, body.bf-noblitz
   *, *::before, *::after { animation-duration: .01ms !important; animation-iteration-count: 1 !important; }
 }
 body.bf-noanim *, body.bf-noanim *::before, body.bf-noanim *::after { animation: none !important; }
+
+/* 🐾 Wandern — Leaderboard + persönliche Wander-Statistik */
+.lb-muted { color: var(--muted); font-size: 12px; }
+.lb-controls { display: flex; align-items: center; gap: 8px; margin-bottom: 10px; flex-wrap: wrap; }
+.lb-tabs { display: flex; gap: 4px; }
+.lb-tab { flex: none; width: auto; padding: 6px 11px; font-size: 12px; font-weight: 600; border-radius: 8px; }
+.lb-input { flex: 1; min-width: 0; padding: 8px 10px; border-radius: 8px; border: 1px solid var(--border); background: var(--input-bg, #160d28); color: #eee; font-size: 13px; }
+.lb-mine { border: 1px solid var(--border); border-radius: 12px; padding: 12px; background: rgba(255,255,255,0.03); }
+.lb-mine-name { margin-bottom: 10px; }
+.lb-mine-stats { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; }
+.lb-stat { border: 1px solid var(--border); border-radius: 9px; padding: 7px 9px; background: rgba(0,0,0,0.18); }
+.lb-stat-l { font-size: 11px; color: var(--muted); }
+.lb-stat-v { font-size: 16px; font-weight: 700; margin-top: 2px; }
+.lb-list { display: flex; flex-direction: column; gap: 4px; }
+.lb-row { display: flex; align-items: center; gap: 10px; padding: 8px 10px; border-radius: 9px; border: 1px solid var(--border); background: rgba(255,255,255,0.02); }
+.lb-row.lb-top { border-color: rgba(var(--accent-rgb),0.55); background: rgba(var(--accent-rgb),0.10); box-shadow: 0 0 14px rgba(var(--accent-rgb),0.18); }
+.lb-medal { width: 30px; text-align: center; font-size: 18px; flex: none; }
+.lb-rank { font-size: 13px; font-weight: 700; color: var(--muted); }
+.lb-who { flex: 1; min-width: 0; }
+.lb-name { font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.lb-dino { font-size: 11px; color: var(--muted); }
+.lb-dist { font-weight: 700; font-size: 14px; color: var(--accent-2); white-space: nowrap; }
