@@ -200,7 +200,16 @@ input[type="range"] { accent-color: var(--accent); }
   width: 196px; flex: none; display: flex; flex-direction: column; gap: 2px;
   padding: var(--cp-s3) var(--cp-s2); box-sizing: border-box;
   background: rgba(0, 0, 0, 0.3); border-right: 1px solid var(--cp-line);
+  /* min-height:0 + overflow:hidden, damit die Kinder SCHRUMPFEN duerfen statt
+     aus der Leiste herauszuwachsen — sonst greift das overflow der Liste nicht. */
+  min-height: 0; overflow: hidden;
 }
+/* Nur die Punkteliste scrollt. Logo oben und Settings/Wer-bin-ich unten bleiben
+   dadurch immer sichtbar — genau die zwei Dinge, die man beim Suchen braucht.
+   flex-grow:0 haelt die Liste bei wenigen Punkten auf Inhaltshoehe (der
+   .cp-nav-spacer schiebt den Fuss nach unten); flex-shrink:1 laesst sie bei
+   vielen Punkten schrumpfen und scrollen, statt die Leiste zu sprengen. */
+#cpNavList { flex: 0 1 auto; min-height: 0; overflow-y: auto; overscroll-behavior: contain; }
 .cp-brand {
   display: flex; align-items: center; gap: var(--cp-s2);
   font-weight: 650; font-size: 13.5px; padding: var(--cp-s2) var(--cp-s2) var(--cp-s4);
@@ -260,12 +269,12 @@ input[type="range"] { accent-color: var(--accent); }
 #cpMapCanvas:active { cursor: grabbing; }
 
 /* ── Scrollbars ───────────────────────────────────────────────────────── */
-.cp-pad::-webkit-scrollbar, .cp-scroll::-webkit-scrollbar, .cp-lex-list::-webkit-scrollbar, .cp-pl-list::-webkit-scrollbar { width: 9px; }
-.cp-pad::-webkit-scrollbar-thumb, .cp-scroll::-webkit-scrollbar-thumb, .cp-lex-list::-webkit-scrollbar-thumb, .cp-pl-list::-webkit-scrollbar-thumb {
+.cp-pad::-webkit-scrollbar, .cp-scroll::-webkit-scrollbar, .cp-lex-list::-webkit-scrollbar, .cp-pl-list::-webkit-scrollbar, #cpNavList::-webkit-scrollbar { width: 9px; }
+.cp-pad::-webkit-scrollbar-thumb, .cp-scroll::-webkit-scrollbar-thumb, .cp-lex-list::-webkit-scrollbar-thumb, .cp-pl-list::-webkit-scrollbar-thumb, #cpNavList::-webkit-scrollbar-thumb {
   background: rgba(255, 255, 255, 0.13); border-radius: 999px;
 }
-.cp-pad::-webkit-scrollbar-thumb:hover, .cp-scroll::-webkit-scrollbar-thumb:hover, .cp-lex-list::-webkit-scrollbar-thumb:hover { background: rgba(255, 255, 255, 0.22); }
-.cp-pad::-webkit-scrollbar-track, .cp-scroll::-webkit-scrollbar-track, .cp-lex-list::-webkit-scrollbar-track { background: transparent; }
+.cp-pad::-webkit-scrollbar-thumb:hover, .cp-scroll::-webkit-scrollbar-thumb:hover, .cp-lex-list::-webkit-scrollbar-thumb:hover, #cpNavList::-webkit-scrollbar-thumb:hover { background: rgba(255, 255, 255, 0.22); }
+.cp-pad::-webkit-scrollbar-track, .cp-scroll::-webkit-scrollbar-track, .cp-lex-list::-webkit-scrollbar-track, #cpNavList::-webkit-scrollbar-track { background: transparent; }
 
 /* ── Zweispaltige Panels (Liste links, Detail rechts) ───────────────────── */
 .cp-split { display: flex; gap: var(--cp-s4); align-items: flex-start; }
