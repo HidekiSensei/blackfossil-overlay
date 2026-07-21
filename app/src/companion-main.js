@@ -25,12 +25,12 @@ const http = require('http');
 // und wuerden sich gegenseitig ausloggen.
 app.setName('BlackFossil Companion Test');
 
-const TOKEN_BASE = 'https://api-test.blackfossil.de';
+const TOKEN_BASE = 'https://api.blackfossil.de';   // TEMPORÄR: LIVE
 const SCHEME = 'blackfossil-companion-test';
 // Eigener Loopback-Port: das Overlay haelt 53117. Wichtig — der Backend-Callback
 // muss dorthin redirecten, sonst landet unser Token in der Session des Overlays
 // (siehe /auth/login?client=companion, backend internal/login/login.go).
-const LOGIN_PORT = 53118;
+const LOGIN_PORT = 53119;   // TEMPORÄR
 const SESSION_FILE = path.join(app.getPath('userData'), 'session.json');
 
 let win = null;
