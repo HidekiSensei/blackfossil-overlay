@@ -3,6 +3,7 @@ import { userLabel, matchUser, warnItemUser } from './users.js';
 import { apiErr, armConfirm } from './core.js';
 import { makePerms, can, CAPS } from './perms.js';
 import { NAV_GROUPS, NAV_SETTINGS, itemFor } from '../companion/nav.js';
+import { clean, canon } from '../companion/panels/dinos.js';
 import { makeTheme, themeFromHex, hexToRgb, effectiveTier, surfacesFromAccent, THEMES, ABO_ORDER } from './theme.js';
 let fail = 0;
 const eq = (a, b, n) => { const ok = a === b; if (!ok) fail++; console.log(`${ok?'ok  ':'FAIL'} ${n}: ${JSON.stringify(a)} ${ok?'==':'!='} ${JSON.stringify(b)}`); };
@@ -195,10 +196,15 @@ eq(sichtbar(P.supporter).find((g) => g.id === 'administration'), undefined, 'Adm
 // Auch der Moderator nicht: Welt, Betrieb und Team-Audit sind samt und sonders admin.
 eq(grpIds(P.moderator), 'arbeit,wissen,moderation', 'Moderator sieht keine Administration');
 // Gegenprobe: die Gruppe ist nicht etwa generell leer.
-eq(sichtbar(P.admin).find((g) => g.id === 'administration').items.length, 3, 'Admin sieht drei Administrations-Punkte');
-// Class-Limits sind Nachschlagewerk, kein Eingriff — auch ein Spieler sieht sie.
-eq(sichtbar(P.fossil).find((g) => g.id === 'wissen').items.map((i) => i.view).join(','), 'lexikon,limits',
-   'Spieler sieht Lexikon und Class-Limits');
+eq(sichtbar(P.admin).find((g) => g.id === 'administration').items.length, 4, 'Admin sieht vier Administrations-Punkte');
+// Die Dino-Verwaltung ist ein Werkzeug zum Aendern, kein Nachschlagewerk —
+// auch wenn /dino-limits LESEND fuer jeden offen ist.
+eq(sichtbar(P.fossil).find((g) => g.id === 'wissen').items.map((i) => i.view).join(','), 'lexikon',
+   'Spieler sieht nur das Lexikon');
+eq(sichtbar(P.moderator).some((g) => g.items.some((i) => i.view === 'dinos')), false,
+   'Moderator sieht keine Dino-Verwaltung');
+eq(sichtbar(P.admin).find((g) => g.id === 'administration').items.some((i) => i.view === 'dinos'), true,
+   'Admin sieht die Dino-Verwaltung');
 
 // Jeder Punkt muss auffindbar sein und eine bekannte Faehigkeit nutzen.
 eq(NAV_GROUPS.flatMap((g) => g.items).every((i) => itemFor(i.view) === i), true, 'itemFor findet jeden Punkt');
@@ -208,6 +214,20 @@ eq(NAV_GROUPS.flatMap((g) => g.items).every((i) => !i.cap || CAPS[i.cap] !== und
 // Doppelte view-Ids wuerden dazu fuehren, dass ein Klick die falsche Ansicht oeffnet.
 const views = [...NAV_GROUPS.flatMap((g) => g.items), NAV_SETTINGS].map((i) => i.view);
 eq(views.length, new Set(views).size, 'keine doppelten Menuepunkt-Ids');
+
+// ── Class-Limits ───────────────────────────────────────────────────────────
+// Der Vergleich "geaendert?" darf NICHT an der Schluesselreihenfolge haengen:
+// der Server liefert die Limits anders sortiert als die Eingabefelder stehen,
+// wodurch das Formular sonst direkt nach dem Laden als geaendert galt.
+eq(canon({ Rex: 4, Allo: 8 }), canon({ Allo: 8, Rex: 4 }), 'Reihenfolge aendert den Vergleich nicht');
+eq(canon({ Rex: 4 }) === canon({ Rex: 5 }), false, 'ein anderer Wert wird erkannt');
+eq(canon({ Rex: 4 }) === canon({ Rex: 4, Allo: 8 }), false, 'eine zusaetzliche Art wird erkannt');
+
+// 0 ist eine Falle: die Datenbank nimmt es an, der Abgleich zum Spielserver
+// ueberspringt es aber — es darf gar nicht erst gesendet werden.
+eq(canon(clean({ Rex: 0, Allo: 8 })), 'Allo=8', 'Nullwerte fallen raus');
+eq(canon(clean({})), '', 'leere Karte bleibt leer');
+eq(canon(clean({ Rex: -1 })), '', 'negative Werte fallen raus');
 
 console.log(fail ? `\n${fail} FEHLGESCHLAGEN` : '\nalle bestanden');
 process.exit(fail ? 1 : 0);
