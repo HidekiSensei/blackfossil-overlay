@@ -748,8 +748,13 @@ input[type="range"] { accent-color: var(--accent); }
 .cp-audit .cp-h1 { margin-bottom: 0; }
 .cp-audit .cp-sub { margin-top: 2px; margin-bottom: 0; }
 
-/* Filterleiste: Felder umbrechen frei; Eingaben kompakt halten. */
-.cp-audit-bar { flex: none; display: flex; flex-wrap: wrap; gap: var(--cp-s2) var(--cp-s3); align-items: flex-end; }
+/* Filterleiste: Felder umbrechen frei; Eingaben kompakt halten.
+   Trennlinie darunter — dieselbe Sprache wie .cp-tabs: Kopfbereich, dann
+   Linie, dann freier Inhalt (hier die Tabelle). */
+.cp-audit-bar {
+  flex: none; display: flex; flex-wrap: wrap; gap: var(--cp-s2) var(--cp-s3); align-items: flex-end;
+  padding-bottom: var(--cp-s3); border-bottom: 1px solid var(--cp-line);
+}
 .cp-audit-bar .cp-field { margin: 0; }
 .cp-audit-bar .cp-input, .cp-audit-bar .cp-select { min-width: 130px; }
 
@@ -760,26 +765,34 @@ input[type="range"] { accent-color: var(--accent); }
 .cp-audit-ranges { display: flex; gap: var(--cp-s2); }
 .cp-audit-actions > .cp-btn:nth-last-child(2) { margin-left: auto; }
 
-.cp-table-wrap {
-  flex: 1 1 auto; min-height: 0; overflow: auto;
-  border: 1px solid var(--cp-line); border-radius: var(--cp-r-md);
-  background: var(--cp-surface);
-}
+/* Tabelle steht FREI — kein Karten-Kasten. Rahmen, Radius und Flaeche
+   erzeugten eine zweite Kante neben der des Panels, ohne etwas abzugrenzen;
+   genau wie die Karten, die in den uebrigen Panels entfallen sind. */
+.cp-table-wrap { flex: 1 1 auto; min-height: 0; overflow: auto; }
 .cp-table { width: 100%; border-collapse: collapse; font-size: 12.5px; }
 .cp-table thead th {
   /* Sticky-Kopf im Scroll-Container. Der Hintergrund MUSS deckend sein, sonst
      scheinen die Zeilen beim Scrollen durch den Kopf durch. */
   position: sticky; top: 0; z-index: 1;
-  background: #191327;
-  text-align: left; font-weight: 600; white-space: nowrap;
-  padding: 8px 10px; border-bottom: 1px solid var(--cp-line);
+  /* Seitenfarbe statt fester #191327: hinter dem Kopf liegt keine Karten-
+     flaeche mehr, und der feste Violettton folgte keinem Farbschema — bei
+     Gold waere der Tabellenkopf violett geblieben. */
+  background: var(--cp-bg, #0d0918);
+  text-align: left; white-space: nowrap;
+  font-size: 11px; font-weight: 650; text-transform: uppercase;
+  letter-spacing: 0.06em; color: var(--muted);
+  padding: 4px 10px 8px; border-bottom: 1px solid var(--cp-line);
 }
 .cp-th-sort { cursor: pointer; user-select: none; }
 .cp-th-sort:hover { color: #fff; }
 .cp-table tbody td {
-  padding: 6px 10px; border-bottom: 1px solid var(--cp-line);
+  padding: 9px 10px; border-bottom: 1px solid var(--cp-line);
   vertical-align: top;
 }
+/* Buendig mit dem uebrigen Seiteninhalt: aussen keine Zellpolsterung, sonst
+   haengt die Tabelle gegenueber Ueberschrift und Filter eingerueckt. */
+.cp-table th:first-child, .cp-table td:first-child { padding-left: 0; }
+.cp-table th:last-child, .cp-table td:last-child { padding-right: 0; }
 .cp-table tbody tr:hover { background: var(--cp-surface-2); }
 .cp-td-mono { font-family: ui-monospace, monospace; font-size: 11.5px; }
 .cp-td-name { font-weight: 550; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
@@ -802,7 +815,9 @@ input[type="range"] { accent-color: var(--accent); }
 .cp-msel-pop {
   position: absolute; top: calc(100% + 4px); left: 0; z-index: 20;
   width: 240px; padding: var(--cp-s2);
-  background: #191327; border: 1px solid var(--cp-line);
+  /* Schwebt ueber dem Inhalt, also die abgesetzte Flaeche — und die folgt
+     dem Farbschema, anders als das fruehere feste #191327. */
+  background: var(--cp-bg-2, #1c1630); border: 1px solid var(--cp-line);
   border-radius: var(--cp-r-md); box-shadow: 0 8px 24px rgba(0, 0, 0, 0.45);
   display: flex; flex-direction: column; gap: var(--cp-s2);
 }
