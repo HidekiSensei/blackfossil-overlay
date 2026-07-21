@@ -661,3 +661,70 @@ input[type="range"] { accent-color: var(--accent); }
 
 .cp-lex-nav { display: flex; gap: var(--cp-s2); margin-top: var(--cp-s4); }
 .cp-lex-nav .cp-btn { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+/* ── Audit-Tabellen (Player-Audit / Team-Audit) ────────────────────────────
+   Vollflaechen-Layout: Kopf + Filterleiste + Fusszeile stehen fest, NUR der
+   Tabellen-Wrapper scrollt (flex:1 + min-height:0 + overflow:auto). Bewusst
+   KEIN cp-pad als Root — dessen overflow-y:auto wuerde die ganze Seite
+   scrollen lassen und cp-pad-narrow die Breite auf 780px kappen. */
+.cp-audit {
+  display: flex; flex-direction: column;
+  height: 100%; min-height: 0;
+  padding: var(--cp-s5) var(--cp-s5) var(--cp-s3);
+  gap: var(--cp-s3);
+}
+.cp-audit .cp-h1 { margin-bottom: 0; }
+.cp-audit .cp-sub { margin-top: 2px; margin-bottom: 0; }
+
+/* Filterleiste: Felder umbrechen frei; Eingaben kompakt halten. */
+.cp-audit-bar { flex: none; display: flex; flex-wrap: wrap; gap: var(--cp-s2) var(--cp-s3); align-items: flex-end; }
+.cp-audit-bar .cp-field { margin: 0; }
+.cp-audit-bar .cp-input, .cp-audit-bar .cp-select { min-width: 130px; }
+
+/* Aktionszeile der Filterleiste: eigene volle Zeile unter den Feldern.
+   Schnellbereiche links, Anwenden/Zuruecksetzen rechts (margin-left:auto). */
+.cp-audit-actions { flex-basis: 100%; display: flex; flex-wrap: wrap; gap: var(--cp-s2); align-items: center; }
+.cp-audit-actions .cp-btn { flex: none; }
+.cp-audit-ranges { display: flex; gap: var(--cp-s2); }
+.cp-audit-actions > .cp-btn:nth-last-child(2) { margin-left: auto; }
+
+.cp-table-wrap {
+  flex: 1 1 auto; min-height: 0; overflow: auto;
+  border: 1px solid var(--cp-line); border-radius: var(--cp-r-md);
+  background: var(--cp-surface);
+}
+.cp-table { width: 100%; border-collapse: collapse; font-size: 12.5px; }
+.cp-table thead th {
+  /* Sticky-Kopf im Scroll-Container. Der Hintergrund MUSS deckend sein, sonst
+     scheinen die Zeilen beim Scrollen durch den Kopf durch. */
+  position: sticky; top: 0; z-index: 1;
+  background: #191327;
+  text-align: left; font-weight: 600; white-space: nowrap;
+  padding: 8px 10px; border-bottom: 1px solid var(--cp-line);
+}
+.cp-th-sort { cursor: pointer; user-select: none; }
+.cp-th-sort:hover { color: #fff; }
+.cp-table tbody td {
+  padding: 6px 10px; border-bottom: 1px solid var(--cp-line);
+  vertical-align: top;
+}
+.cp-table tbody tr:hover { background: var(--cp-surface-2); }
+.cp-td-mono { font-family: ui-monospace, monospace; font-size: 11.5px; }
+.cp-td-details { word-break: break-word; color: var(--muted); }
+.cp-td-empty { text-align: center; color: var(--muted); padding: var(--cp-s5) !important; }
+
+.cp-audit-foot { flex: none; display: flex; align-items: center; gap: var(--cp-s3); }
+
+/* Aktions-Multi-Select: Knopf + Popup (Suchfeld + Checkbox-Liste). */
+.cp-msel { position: relative; }
+.cp-msel-pop {
+  position: absolute; top: calc(100% + 4px); left: 0; z-index: 20;
+  width: 240px; padding: var(--cp-s2);
+  background: #191327; border: 1px solid var(--cp-line);
+  border-radius: var(--cp-r-md); box-shadow: 0 8px 24px rgba(0, 0, 0, 0.45);
+  display: flex; flex-direction: column; gap: var(--cp-s2);
+}
+.cp-msel-q { width: 100%; }
+.cp-msel-list { max-height: 260px; overflow-y: auto; display: flex; flex-direction: column; gap: 2px; }
+.cp-msel-item { padding: 2px 4px; border-radius: var(--cp-r-sm); }
+.cp-msel-item:hover { background: var(--cp-surface-2); }
