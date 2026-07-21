@@ -28,6 +28,33 @@ function fmtDetails(d) {
     .map(([k, v]) => `${k}=${v && typeof v === 'object' ? JSON.stringify(v) : v}`)
     .join(' · ');
 }
+// SteamID in die Zwischenablage. Klick = User-Geste, daher greift die
+// Clipboard-API im Electron-Renderer; Fallback ueber ein verstecktes Textarea.
+function copyId(id) {
+  if (!id) return;
+  const done = () => C.toast('SteamID kopiert: ' + id, 'ok');
+  if (navigator.clipboard && navigator.clipboard.writeText) {
+    navigator.clipboard.writeText(id).then(done).catch(() => fallbackCopy(id, done));
+  } else { fallbackCopy(id, done); }
+}
+function fallbackCopy(text, done) {
+  const ta = document.createElement('textarea');
+  ta.value = text; ta.style.position = 'fixed'; ta.style.opacity = '0';
+  document.body.appendChild(ta); ta.select();
+  try { document.execCommand('copy'); done(); } catch { /* ignore */ }
+  ta.remove();
+}
+// Klickbare, kopierbare SteamID-Zelle.
+function copyIdHtml(id) {
+  return id ? `<span class="cp-copyid" data-id="${U.esc(id)}" title="Klicken zum Kopieren">${U.esc(id)}</span>` : '';
+}
+// Klick-Handler fuer alle .cp-copyid im Container binden.
+function bindCopyIds(wrap) {
+  wrap.querySelectorAll('.cp-copyid').forEach((s) => {
+    s.onclick = (e) => { e.stopPropagation(); copyId(s.dataset.id); };
+  });
+}
+
 // datetime-local → Unix-Millis ('' → null). Der Input liefert lokale Zeit ohne
 // Zone — new Date(value) interpretiert sie lokal, genau richtig fuers Backend (ms).
 function msOf(inputId) {
@@ -41,7 +68,7 @@ function msOf(inputId) {
 //    Wieder-Betreten daraus neu befuellt) ─────────────────────────────────────
 const pa = {
   offset: 0, sort: 'time', order: 'desc',
-  name: '', steamId: '', dino: '', via: '', actions: new Set(),
+  name: '', actor: '', steamId: '', dino: '', via: '', actions: new Set(),
   fromMs: null, toMs: null,
   meta: null,          // { actions:[], via:[] } von /admin/player-audit/actions
 };
@@ -57,8 +84,10 @@ function thead(cols, state, onSort) {
     const sortable = !!c.key;
     const active = sortable && state && state.sort === c.key;
     const arrow = active ? (state.order === 'asc' ? ' ▲' : ' ▼') : '';
+    const tip = c.title || (sortable ? 'Sortieren' : '');
     return `<th${c.w ? ` style="width:${c.w}"` : ''}`
-      + (sortable ? ` class="cp-th-sort" data-sort="${c.key}" title="Sortieren"` : '')
+      + (sortable ? ` class="cp-th-sort" data-sort="${c.key}"` : '')
+      + (tip ? ` title="${U.esc(tip)}"` : '')
       + `>${U.esc(c.label)}${arrow}</th>`;
   }).join('') + `</tr></thead>`;
 }
@@ -112,9 +141,9 @@ function bindRanges(root, fromId, toId, apply) {
 // ── Player-Audit ────────────────────────────────────────────────────────────
 const PA_COLS = [
   { label: 'Zeit', key: 'time', w: '150px' },
-  { label: 'Spieler', key: 'name' },
-  { label: 'SteamID', key: 'steam', w: '150px' },
-  { label: 'Aktion', key: 'action', w: '140px' },
+  { label: 'Akteur', w: '190px', title: 'Wer die Aktion ausgelöst hat — bei Kämpfen der Angreifer/Killer (Täter)' },
+  { label: 'Aktion', key: 'action', w: '130px' },
+  { label: 'Ziel', key: 'name', w: '190px', title: 'Wen die Aktion betrifft — bei Kämpfen das Opfer' },
   { label: 'Dino', key: 'dino', w: '130px' },
   { label: 'Via', w: '90px' },
   { label: 'Details' },
@@ -125,6 +154,7 @@ function paQuery() {
   q.set('limit', String(PAGE)); q.set('offset', String(pa.offset));
   q.set('sort', pa.sort); q.set('order', pa.order);
   if (pa.name) q.set('name', pa.name);
+  if (pa.actor) q.set('actor', pa.actor);
   if (pa.steamId) q.set('steamId', pa.steamId);
   if (pa.dino) q.set('dinoClass', pa.dino);
   if (pa.via) q.set('via', pa.via);
@@ -146,12 +176,20 @@ async function paLoad() {
   }
   const items = d.items || [];
   const w = el('paWrap'); if (!w) return;
+  // Akteur (Taeter): actorName + kopierbare actor_steam. Leer bei Selbstaktionen
+  // (dann tat der Spieler es sich selbst) → dezenter Strich.
+  const actorCell = (it) => it.actorSteam
+    ? `<div class="cp-td-name">${U.esc(it.actorName || it.actorDiscordName || '—')}</div>${copyIdHtml(it.actorSteam)}`
+    : `<span class="cp-muted">—</span>`;
+  // Ziel (Opfer/Subjekt): playerName + kopierbare steam_id.
+  const targetCell = (it) =>
+    `<div class="cp-td-name">${U.esc(it.playerName || it.discordName || '—')}</div>${copyIdHtml(it.steamId)}`;
   w.innerHTML = `<table class="cp-table">${thead(PA_COLS, pa)}<tbody>`
     + (items.length ? items.map((it) => `<tr>`
         + `<td>${fmtWhen(it.createdAtMs)}</td>`
-        + `<td>${U.esc(it.playerName || it.discordName || '—')}</td>`
-        + `<td class="cp-td-mono">${U.esc(it.steamId || '')}</td>`
+        + `<td>${actorCell(it)}</td>`
         + `<td>${U.esc(it.action || '')}</td>`
+        + `<td>${targetCell(it)}</td>`
         + `<td>${U.esc(it.dinoClass || '')}</td>`
         + `<td>${U.badge(it.via || '—')}</td>`
         + `<td class="cp-td-details">${U.esc(fmtDetails(it.details))}</td>`
@@ -159,6 +197,7 @@ async function paLoad() {
       : `<tr><td colspan="${PA_COLS.length}" class="cp-td-empty">Keine Einträge im gewählten Zeitraum/Filter.</td></tr>`)
     + `</tbody></table>`;
   bindSort(w, pa, paLoad);
+  bindCopyIds(w);
   foot('pa', pa, d, paLoad);
 }
 
@@ -221,8 +260,9 @@ export async function renderPlayerAudit(root) {
   const vias = (pa.meta.via || []).map((v) => ({ value: v, label: v }));
   const bar = el('paBar');
   bar.innerHTML =
-    U.field('paName', 'Spieler', { value: pa.name, placeholder: 'Name…' })
-    + U.field('paSteam', 'SteamID', { value: pa.steamId, placeholder: '7656…' })
+    U.field('paName', 'Ziel / Opfer', { value: pa.name, placeholder: 'Name…' })
+    + U.field('paActor', 'Akteur / Täter', { value: pa.actor, placeholder: 'Name oder SteamID…' })
+    + U.field('paSteam', 'SteamID (Ziel)', { value: pa.steamId, placeholder: '7656…' })
     + U.field('paDino', 'Dino', { value: pa.dino, placeholder: 'z. B. Rex' })
     + U.select('paVia', 'Via', [{ value: '', label: 'alle' }, ...vias], pa.via)
     + paMselHtml()
@@ -240,6 +280,7 @@ export async function renderPlayerAudit(root) {
 
   const apply = () => {
     pa.name = el('paName').value.trim();
+    pa.actor = el('paActor').value.trim();
     pa.steamId = el('paSteam').value.trim();
     pa.dino = el('paDino').value.trim();
     pa.via = el('paVia').value;
@@ -249,7 +290,7 @@ export async function renderPlayerAudit(root) {
   };
   el('paApply').onclick = apply;
   el('paReset').onclick = () => {
-    pa.name = pa.steamId = pa.dino = pa.via = '';
+    pa.name = pa.actor = pa.steamId = pa.dino = pa.via = '';
     pa.actions.clear(); pa.fromMs = pa.toMs = null; pa.offset = 0;
     pa.sort = 'time'; pa.order = 'desc';
     renderPlayerAudit(root);

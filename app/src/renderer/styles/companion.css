@@ -710,6 +710,16 @@ input[type="range"] { accent-color: var(--accent); }
 }
 .cp-table tbody tr:hover { background: var(--cp-surface-2); }
 .cp-td-mono { font-family: ui-monospace, monospace; font-size: 11.5px; }
+.cp-td-name { font-weight: 550; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+/* Klickbare, kopierbare SteamID unter Akteur/Ziel. */
+.cp-copyid {
+  display: inline-block; max-width: 100%;
+  font-family: ui-monospace, monospace; font-size: 11px; color: var(--muted);
+  cursor: pointer; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  vertical-align: bottom;
+}
+.cp-copyid::before { content: '⧉ '; opacity: .55; }
+.cp-copyid:hover { color: #fff; text-decoration: underline; }
 .cp-td-details { word-break: break-word; color: var(--muted); }
 .cp-td-empty { text-align: center; color: var(--muted); padding: var(--cp-s5) !important; }
 
