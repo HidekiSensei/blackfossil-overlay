@@ -4217,14 +4217,13 @@ async function lbLoadMine() {
   const cur = live[lbState.cat] || {};
   const rec = recs[lbState.cat];
   const meta = LB_CATS.find((c) => c.key === lbState.cat) || LB_CATS[0];
+  const activeName = d.dinoName ? `🏷️ ${escapeHtml(d.dinoName)}` : '<span class="lb-muted">unbenannt</span>';
   box.innerHTML = `
     <div class="lb-mine">
       <div class="lb-mine-name">
-        <div class="lb-muted" style="margin-bottom:4px">🦖 Name deines aktiven Dinos</div>
-        <div style="display:flex;gap:6px">
-          <input id="lbName" class="lb-input" maxlength="24" placeholder="unbenannt" value="${escapeHtml(d.dinoName || '')}">
-          <button id="lbNameSave" style="flex:none;width:auto;padding:7px 13px">💾</button>
-        </div>
+        <div class="lb-muted" style="margin-bottom:4px">🦖 Aktiver Dino</div>
+        <div style="font-weight:600">${activeName}</div>
+        <div class="lb-muted" style="margin-top:4px">Namen vergibst du in der <b>Garage</b> — sie sind an den jeweiligen Dino gebunden.</div>
       </div>
       <div class="lb-mine-stats">
         <div class="lb-stat"><div class="lb-stat-l">${meta.icon} Diese Woche</div><div class="lb-stat-v">${lbFmtDist(cur.weeklyM)}</div></div>
@@ -4232,11 +4231,6 @@ async function lbLoadMine() {
         <div class="lb-stat"><div class="lb-stat-l">🏆 Rekord</div><div class="lb-stat-v">${rec ? lbFmtDist(rec.distanceM) : '—'}</div></div>
       </div>
     </div>`;
-  const save = el('lbNameSave'), inp = el('lbName');
-  if (save && inp) save.onclick = async () => {
-    try { await svApi('POST', '/me/dino/name', { name: inp.value.trim() }); showToast('🦖 Dino-Name gespeichert', 'success'); lbLoadBoard(); }
-    catch (e) { showToast(e.message, 'error'); }
-  };
 }
 
 async function lbLoadBoard() {
@@ -5906,7 +5900,12 @@ function dinoPreview(card, cls) {
 
 function dinoCardEl(card, onClick) {
   const d = document.createElement('div'); d.className = 'dino-card';
-  d.innerHTML = dinoPreview(card) + `<div class="body"><div class="nm">${card.dino}${card.isElder ? ' 👑' : ''}</div><div class="mt">${card.gender || ''} · ${fmtGrow(card.grow || 0)}</div></div>` + paletteHTML(card.colors);
+  // Custom-Name (Garage): als Titel, Spezies+Wachstum als Untertitel. Sonst wie bisher Spezies-Titel.
+  const title = card._name ? `🏷️ ${escapeHtml(card._name)}` : `${escapeHtml(card.dino || '')}${card.isElder ? ' 👑' : ''}`;
+  const sub = card._name
+    ? `${escapeHtml(card.dino || '')}${card.isElder ? ' 👑' : ''} · ${fmtGrow(card.grow || 0)}`
+    : `${card.gender || ''} · ${fmtGrow(card.grow || 0)}`;
+  d.innerHTML = dinoPreview(card) + `<div class="body"><div class="nm">${title}</div><div class="mt">${sub}</div></div>` + paletteHTML(card.colors);
   d.onclick = onClick; return d;
 }
 // Garage/Markt-Dino-Info: gespeicherte Dino-Karten → Vitals als Prozent (kein Cur/Max-Kontext).
@@ -5994,7 +5993,12 @@ function showDinoDetail(card, ctx) {
     const swapBtn = swapCd > 0
       ? `<button id="ddSwap" class="secondary" style="width:100%;opacity:.55;cursor:not-allowed" disabled title="Swap noch im Cooldown">🔄 Swapen — noch ${fmtCd(swapCd)}</button>`
       : `<button id="ddSwap" class="secondary" style="width:100%">🔄 Swapen (Dino tauschen)</button>`;
-    action = unparkBtn + swapBtn
+    // Dino-gebundener Custom-Name (an DIESEN Garagen-Dino gebunden, im Leaderboard genutzt).
+    const nameRow = `<div style="display:flex;gap:6px;align-items:center;margin-bottom:4px">
+      <input id="ddName" class="lb-input" maxlength="24" placeholder="🏷️ Dino benennen…" value="${escapeHtml(card._name || '')}" style="flex:1">
+      <button id="ddNameSave" class="secondary" style="flex:none;width:auto;padding:8px 12px">Speichern</button>
+    </div>`;
+    action = nameRow + unparkBtn + swapBtn
       + sellBtn
       + `<button id="ddDelete" class="secondary" style="width:100%;color:#fca5a5;border-color:#7f1d1d">🗑️ Aus Garage löschen</button>`;
   }
@@ -6019,6 +6023,11 @@ function showDinoDetail(card, ctx) {
     <div id="ddActions" style="margin-top:16px;display:flex;flex-direction:column;gap:8px">${action}<button class="secondary" id="ddClose">Schließen</button></div>`;
   el('dinoDetail').style.display = 'flex';
   box.querySelector('#ddClose').onclick = closeDinoDetail;
+  { const ni = box.querySelector('#ddNameSave'), nf = box.querySelector('#ddName');
+    if (ni && nf) ni.onclick = async () => {
+      try { const r = await svApi('POST', `/me/garage/${card.id}/name`, { name: nf.value.trim() }); card._name = r.name || ''; garageNames[card.id] = card._name; showToast('🏷️ Dino-Name gespeichert', 'success'); loadGarage(); }
+      catch (e) { showToast(e.message, 'error'); }
+    }; }
   const u = box.querySelector('#ddUnpark'); if (u) u.onclick = () => { closeDinoDetail(); unparkById(card.id); };
   const sw = box.querySelector('#ddSwap'); if (sw && !sw.disabled) sw.onclick = () => { closeDinoDetail(); apiAction('/garage/swap', { slotId: card.id }, '🔄 Gswapt zu {dino}', loadGarage); };
   const b = box.querySelector('#ddBuy'); if (b) b.onclick = () => { closeDinoDetail(); buyOfferId(card.id); };
@@ -6049,6 +6058,7 @@ const buyOfferId = (id) => apiAction('/market/buy', { offerId: id }, '🦖 {dino
 
 // ── Garage (Karten-Grid) ─────────────────────────────────────────────────────
 let garageCooldowns = {}; // zuletzt geladene Cooldowns (park/unpark/swap) — für die Swap-Sperre im Dino-Detail (B-7)
+let garageNames = {};     // slotId → Custom-Dino-Name (dino-gebunden an den geparkten Dino)
 async function renderGarage() {
   el('garage').classList.add('gr-wide');
   el('garage').innerHTML = `<h2>🚗 Garage <span id="garageCount" style="font-size:13px;color:var(--muted);font-weight:400"></span></h2>
@@ -6093,8 +6103,10 @@ async function loadGarage() {
       parkBtn.disabled = cd.park > 0 || full;
       parkBtn.style.opacity = parkBtn.disabled ? '0.5' : '1';
     }
+    // Dino-gebundene Custom-Namen (pro Slot) fürs Anzeigen auf der Karte laden.
+    try { const nm = await svApi('GET', '/me/garage/names'); garageNames = nm.names || {}; } catch { garageNames = {}; }
     grid.innerHTML = slots.length ? '' : '<div style="color:var(--muted);font-size:13px">Garage leer.</div>';
-    for (const s of slots) grid.appendChild(dinoCardEl(s, () => showDinoDetail(s, { mode: 'garage' })));
+    for (const s of slots) { s._name = garageNames[s.id] || ''; grid.appendChild(dinoCardEl(s, () => showDinoDetail(s, { mode: 'garage' }))); }
   } catch { grid.innerHTML = '<div style="color:#ef4444;font-size:13px">Garage konnte nicht geladen werden.</div>'; }
 }
 
