@@ -232,20 +232,28 @@
       box-shadow: none; transform: none; filter: none; transition: color .12s, background .12s, border-color .12s; }
     #settingsTabs button:hover { color: #f0edff; background: rgba(255,255,255,0.04); transform: none; box-shadow: none; filter: none; }
     #settingsTabs button:not(.secondary) { color: var(--accent-2); border-bottom-color: var(--accent); background: rgba(var(--accent-rgb),0.10); }
-    /* Gleiche Reiter-Optik im Team-Panel (#adminTabs) und Admin-Panel (#serverTabs). */
-    #adminTabs, #serverTabs { gap: 2px; margin: 10px -26px 18px; padding: 0 22px; border-bottom: 1px solid var(--border); flex-wrap: wrap; }
-    #adminTabs button, #serverTabs button { flex: none; background: transparent; border: 0; border-bottom: 2px solid transparent;
+    /* Gleiche Reiter-Optik im Team-Panel (#adminTabs), Admin-Panel (#serverTabs) und Server-Panel (#srvTabs). */
+    #adminTabs, #serverTabs, #srvTabs { gap: 2px; margin: 10px -26px 18px; padding: 0 22px; border-bottom: 1px solid var(--border); flex-wrap: wrap; }
+    #adminTabs button, #serverTabs button, #srvTabs button { flex: none; background: transparent; border: 0; border-bottom: 2px solid transparent;
       border-radius: 8px 8px 0 0; color: var(--muted); padding: 9px 14px; margin-bottom: -1px; font-weight: 600;
       box-shadow: none; transform: none; filter: none; transition: color .12s, background .12s, border-color .12s; }
-    #adminTabs button::before, #serverTabs button::before { content: none; }
-    #adminTabs button:hover, #serverTabs button:hover { color: #f0edff; background: rgba(255,255,255,0.04); transform: none; box-shadow: none; filter: none; }
-    #adminTabs button:not(.secondary), #serverTabs button:not(.secondary) { color: var(--accent-2); border-bottom-color: var(--accent); background: rgba(var(--accent-rgb),0.10); }
+    #adminTabs button::before, #serverTabs button::before, #srvTabs button::before { content: none; }
+    #adminTabs button:hover, #serverTabs button:hover, #srvTabs button:hover { color: #f0edff; background: rgba(255,255,255,0.04); transform: none; box-shadow: none; filter: none; }
+    #adminTabs button:not(.secondary), #serverTabs button:not(.secondary), #srvTabs button:not(.secondary) { color: var(--accent-2); border-bottom-color: var(--accent); background: rgba(var(--accent-rgb),0.10); }
+    /* Last-/Kennzahl-Kacheln im Server-Übersichts-Tab */
+    #srvTiles.srv-tiles { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 8px; }
+    .srv-tile { border: 1px solid var(--border); border-left-width: 3px; border-radius: 10px; padding: 9px 11px; background: rgba(255,255,255,0.03); }
+    .srv-tile-h { font-size: 11px; color: var(--muted); display: flex; align-items: center; gap: 5px; }
+    .srv-tile-v { font-size: 19px; font-weight: 700; margin-top: 2px; line-height: 1.15; }
+    .srv-tile-s { font-size: 11px; color: var(--muted); margin-top: 3px; }
+    .srv-bar { height: 6px; border-radius: 999px; background: rgba(255,255,255,0.12); margin-top: 7px; overflow: hidden; }
+    .srv-bar > i { display: block; height: 100%; border-radius: 999px; transition: width .3s; }
     /* Feste Panel-Höhe: der Tab-Inhalt scrollt, das Fenster springt beim Tab-Wechsel NICHT. */
     /* Alle drei Dialoge (Settings / Team / Admin) EXAKT gleich groß: feste Höhe, Pane füllt den Rest —
        unabhängig davon, ob die Tab-Leiste ein- oder zweizeilig ist. */
     #settings, #adminPanel, #serverPanel, #srvPanel { flex-direction: column; height: min(80vh, 860px); }
-    #settings > h2, #adminPanel > h2, #serverPanel > h2,
-    #settingsTabs, #adminTabs, #serverTabs, #settings .btnrow { flex: none; }
+    #settings > h2, #adminPanel > h2, #serverPanel > h2, #srvPanel > h2,
+    #settingsTabs, #adminTabs, #serverTabs, #srvTabs, #settings .btnrow { flex: none; }
     .settings-panes, .admin-panes { flex: 1 1 auto; min-height: 0; display: flex; flex-direction: column; }
     /* Multi-Select-Popup (Player-Audit „Aktion" u. a.): durchsuchbare Checkbox-Liste statt frickeligem <select multiple>. */
     .pa-msel { position: relative; }
@@ -374,6 +382,7 @@
     body.bf-solid-dialogs #settings,
     body.bf-solid-dialogs #adminPanel,
     body.bf-solid-dialogs #serverPanel,
+    body.bf-solid-dialogs #srvPanel,
     body.bf-solid-dialogs #bigMap {
       background: linear-gradient(var(--panel), var(--panel)), var(--solid-base);
       backdrop-filter: none; -webkit-backdrop-filter: none;
@@ -1590,32 +1599,57 @@
   <div id="srvPanel">
     <button id="srvCloseBtn" class="secondary" style="position:absolute;top:16px;right:18px;flex:none;width:auto;padding:6px 12px">✕</button>
     <h2>🖥️ Server <span style="font-weight:400;font-size:12px;color:var(--muted)">— Steuerung &amp; Live-Status</span></h2>
-    <div class="admin-pane">
-      <div id="srvStatus" style="margin-bottom:16px"><div class="dt-muted">Lade Status…</div></div>
+    <div class="admin-tabs" id="srvTabs">
+      <button data-srvt="overview">📊 Übersicht</button>
+      <button data-srvt="players" class="secondary">👥 Spieler</button>
+      <button data-srvt="limits" class="secondary">🦖 Limits</button>
+      <button data-srvt="control" class="secondary">⚙️ Steuerung</button>
+    </div>
+    <div class="admin-panes">
 
-      <div class="dt-sec">📢 Ansage (ingame)</div>
-      <div class="dt-form" style="margin-bottom:16px">
-        <input id="srvMsg" class="tm-input" placeholder="z.B. Event startet in 10 Min!">
-        <button id="srvAnnounce" style="width:100%;margin-top:8px">📢 Ansage senden</button>
+      <!-- 📊 Übersicht: Status + Last-Kacheln + Auslastungs-Kurve + Subsystem-Matrix -->
+      <div class="admin-pane" data-srvp="overview">
+        <div id="srvStatus" style="margin-bottom:14px"><div class="dt-muted">Lade Status…</div></div>
+        <div id="srvTiles" class="srv-tiles" style="margin-bottom:16px"><div class="dt-muted">Lade Kennzahlen…</div></div>
+        <div class="dt-sec">📈 Auslastung — Spieler (24 h)</div>
+        <canvas id="srvSpark" width="560" height="90" style="width:100%;height:90px;background:rgba(0,0,0,0.25);border:1px solid var(--border);border-radius:8px;margin:6px 0 16px"></canvas>
+        <div class="dt-sec">🩺 Subsysteme</div>
+        <div id="srvHealth" style="margin:6px 0 4px"><div class="dt-muted">Lade…</div></div>
+        <div id="srvHealthMeta" style="font-size:10px;color:var(--muted);margin-bottom:8px"></div>
       </div>
 
-      <div class="dt-sec">👥 Spieler online (<span id="srvPlayerCount">–</span>)</div>
-      <div id="srvPlayers" style="max-height:200px;overflow:auto;margin:6px 0 16px;font-size:12px"></div>
+      <!-- 👥 Spieler online (Live aus dem Positions-Poll) -->
+      <div class="admin-pane" data-srvp="players" hidden>
+        <div class="dt-sec">👥 Spieler online (<span id="srvPlayerCount">–</span>)</div>
+        <input id="srvPlayerSearch" class="tm-input" placeholder="🔎 Spieler oder Dino suchen…" style="width:100%;box-sizing:border-box;margin:6px 0 8px">
+        <div id="srvPlayers" style="max-height:440px;overflow:auto;font-size:12px"></div>
+      </div>
 
-      <div class="dt-sec">🦖 Class-Limits</div>
-      <div id="svClassBody" style="margin:6px 0 16px"></div>
+      <!-- 🦖 Class-Limits -->
+      <div class="admin-pane" data-srvp="limits" hidden>
+        <div id="svClassBody"><div class="dt-muted">Lade…</div></div>
+      </div>
 
-      <div class="dt-sec">🧹 Wartung</div>
-      <div class="dt-form" style="margin-bottom:16px"><button id="srvWipe" class="secondary" style="width:100%">🧹 Kadaver leeren (wipecorpses)</button></div>
-
-      <div class="dt-sec" style="color:#f87171">⚙️ Server-Steuerung (gefährlich)</div>
-      <div class="dt-form">
-        <div class="dt-row" style="display:flex;gap:6px">
-          <button id="srvStart" style="flex:1;background:#16a34a">▶️ Start</button>
-          <button id="srvRestart" class="secondary" style="flex:1">🔁 Restart</button>
-          <button id="srvStop" style="flex:1;background:#b91c1c">⏹️ Stop</button>
+      <!-- ⚙️ Steuerung: Ansage / Wartung / Start-Stop -->
+      <div class="admin-pane" data-srvp="control" hidden>
+        <div class="dt-sec">📢 Ansage (ingame)</div>
+        <div class="dt-form" style="margin-bottom:18px">
+          <input id="srvMsg" class="tm-input" placeholder="z.B. Event startet in 10 Min!">
+          <button id="srvAnnounce" style="width:100%;margin-top:8px">📢 Ansage senden</button>
         </div>
-        <div class="dt-muted" style="margin-top:4px">Stop/Restart trennt ALLE Spieler!</div>
+
+        <div class="dt-sec">🧹 Wartung</div>
+        <div class="dt-form" style="margin-bottom:18px"><button id="srvWipe" class="secondary" style="width:100%">🧹 Kadaver leeren (wipecorpses)</button></div>
+
+        <div class="dt-sec" style="color:#f87171">⚙️ Server-Steuerung (gefährlich)</div>
+        <div class="dt-form">
+          <div class="dt-row" style="display:flex;gap:6px">
+            <button id="srvStart" style="flex:1;background:#16a34a">▶️ Start</button>
+            <button id="srvRestart" class="secondary" style="flex:1">🔁 Restart</button>
+            <button id="srvStop" style="flex:1;background:#b91c1c">⏹️ Stop</button>
+          </div>
+          <div class="dt-muted" style="margin-top:4px">Stop/Restart trennt ALLE Spieler!</div>
+        </div>
       </div>
     </div>
   </div>

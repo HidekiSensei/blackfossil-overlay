@@ -2821,65 +2821,170 @@ function closeServerPanel() {
 }
 
 // ── 🖥️ Server-Steuerung: eigenständiger Dock-Bereich (aus dem Admin-Untermenü herausgelöst) ──
+// Aufgeteilt in Tabs: 📊 Übersicht (Status + Last-Kacheln + 24h-Auslastungskurve + Subsystem-Matrix),
+// 👥 Spieler, 🦖 Limits, ⚙️ Steuerung. Alle Daten kommen aus vorhandenen Endpunkten
+// (/admin/server/status, /admin/ops/health, /admin/ops/metrics/players, /public/status).
 let srvOpen = false;
+let srvTab = 'overview';
 function openSrvPanel() {
   if (!isAdmin) { showToast('Nur für Admins', 'error'); return; }
   srvOpen = true;
   el('srvPanel').style.display = 'flex';
   updateInteractive();
   renderSrv();
-  // Live-Status alle 5 s aktualisieren, nur solange offen (Selbstabschaltung).
+  // Aktiven Tab alle 8 s aktualisieren, nur solange offen (Selbstabschaltung).
   if (!openSrvPanel._t) openSrvPanel._t = setInterval(() => {
     if (!srvOpen) { clearInterval(openSrvPanel._t); openSrvPanel._t = null; return; }
-    srvLoadStatus(); renderSrvPlayers();
-  }, 5000);
+    srvRefreshTab();
+  }, 8000);
 }
 function closeSrvPanel() {
   srvOpen = false;
   el('srvPanel').style.display = 'none';
   updateInteractive();
 }
-// Baut den Server-Bereich einmal auf (Status + Class-Limits laden, Spielerliste rendern).
+// Verdrahtet Tab-Buttons + Steuer-Aktionen (einmalig) und zeigt den aktiven Tab.
 function renderSrv() {
-  srvLoadStatus();
-  renderSrvPlayers();
-  svRenderClassLimits(); // schreibt weiter in #svClassBody (jetzt im Server-Panel)
+  if (!renderSrv._wired) {
+    renderSrv._wired = 1;
+    document.querySelectorAll('#srvTabs [data-srvt]').forEach((b) => { b.onclick = () => srvShowTab(b.dataset.srvt); });
+    const s = el('srvPlayerSearch'); if (s) s.oninput = () => renderSrvPlayers();
+  }
   { const b = el('srvAnnounce'); if (b && !b._w) { b._w = 1; b.onclick = () => { const m = el('srvMsg').value.trim(); if (!m) { showToast('Nachricht eingeben', 'error'); return; } apiAction('/admin/server/announce', { message: m }, '📢 Ansage gesendet', () => { el('srvMsg').value = ''; }); }; } }
   { const b = el('srvWipe'); if (b && !b._w) { b._w = 1; b.onclick = () => svArmConfirm(b, 'Sicher? Kadaver leeren', () => apiAction('/admin/server/wipecorpses', {}, '🧹 Kadaver geleert', null)); } }
   { const b = el('srvStart'); if (b && !b._w) { b._w = 1; b.onclick = () => apiAction('/admin/server/control', { action: 'start' }, '▶️ Server-Start ausgelöst', srvLoadStatus); } }
   { const b = el('srvRestart'); if (b && !b._w) { b._w = 1; b.onclick = () => svArmConfirm(b, 'Sicher? Restart', () => apiAction('/admin/server/control', { action: 'restart' }, '🔁 Restart ausgelöst', srvLoadStatus)); } }
   { const b = el('srvStop'); if (b && !b._w) { b._w = 1; b.onclick = () => svArmConfirm(b, 'Sicher? Stop', () => apiAction('/admin/server/control', { action: 'stop' }, '⏹️ Stop ausgelöst', srvLoadStatus)); } }
+  srvShowTab(srvTab || 'overview');
 }
-// Live-Status: Prozess-Zustand + (falls erreichbar) Ops-Health für Game-Box-Details.
+function srvShowTab(t) {
+  srvTab = t;
+  document.querySelectorAll('#srvTabs [data-srvt]').forEach((b) => b.classList.toggle('secondary', b.dataset.srvt !== t));
+  document.querySelectorAll('#srvPanel .admin-pane[data-srvp]').forEach((p) => { p.hidden = p.dataset.srvp !== t; });
+  // Voll-Render beim Wechsel (inkl. Limits — die werden EINMAL geladen, nicht im Poll).
+  if (t === 'overview') srvRenderOverview();
+  else if (t === 'players') renderSrvPlayers();
+  else if (t === 'limits') svRenderClassLimits();
+  bfScheduleFrameSync && bfScheduleFrameSync();
+}
+// 8s-Poll: nur Live-Tabs auffrischen. Limits/Steuerung bleiben stehen (kein Überschreiben von Eingaben).
+function srvRefreshTab() {
+  if (srvTab === 'overview') srvRenderOverview();
+  else if (srvTab === 'players') renderSrvPlayers();
+}
+
+// ── 📊 Übersicht: Status + Last-Kacheln + Auslastungskurve + Subsystem-Matrix ──
+async function srvRenderOverview() {
+  srvLoadStatus();
+  let health = null, pub = null;
+  try { health = await svApi('GET', '/admin/ops/health'); } catch {}
+  try { pub = await svApi('GET', '/public/status'); } catch {}
+  srvRenderTiles(health, pub);
+  srvRenderHealth(health);
+  srvRenderSpark();
+}
+function srvChk(health, id) { return ((health && health.checks) || []).find((c) => c.id === id) || null; }
+// Farbe für eine Health-Prüfung: rot (down) / gelb (warn) / grün (ok).
+function srvDotColor(c) { return !c ? 'var(--muted)' : (!c.ok ? '#f87171' : (c.warn ? '#fbbf24' : '#4ade80')); }
+function srvRenderTiles(health, pub) {
+  const box = el('srvTiles'); if (!box) return;
+  const gp = srvChk(health, 'game_process'), cs = srvChk(health, 'control_server');
+  const db = srvChk(health, 'db'), mod = srvChk(health, 'mod_api'), lk = srvChk(health, 'livekit');
+  const online = (pub && typeof pub.online === 'number') ? pub.online : (players || []).filter((p) => p.steamId).length;
+  const max = (pub && pub.max) ? pub.max : null;
+  const pct = max ? Math.min(100, Math.round((online / max) * 100)) : null;
+  const loadCol = pct == null ? 'var(--accent)' : (pct >= 90 ? '#f87171' : pct >= 70 ? '#fbbf24' : '#4ade80');
+  const diskGB = (cs && cs.detail && (cs.detail.match(/([\d.]+)\s*GB/) || [])[1]) || null;
+  const tile = (accent, icon, label, val, sub) =>
+    `<div class="srv-tile" style="border-left-color:${accent}"><div class="srv-tile-h">${icon} ${escapeHtml(label)}</div>` +
+    `<div class="srv-tile-v">${val}</div>${sub ? `<div class="srv-tile-s">${sub}</div>` : ''}</div>`;
+  const tiles = [];
+  // Spieler-Auslastung (der Kern von „Server-Last")
+  tiles.push(tile(loadCol, '👥', 'Spieler online',
+    `${online}${max ? ` <span style="font-size:12px;color:var(--muted)">/ ${max}</span>` : ''}`,
+    pct == null ? 'Auslastung unbekannt'
+      : `<div class="srv-bar"><i style="width:${pct}%;background:${loadCol}"></i></div><span>${pct}% ausgelastet</span>`));
+  // Disk der Game-Box
+  tiles.push(tile(srvDotColor(cs), '💾', 'Speicher (Game-Box)',
+    diskGB != null ? `${diskGB} <span style="font-size:12px;color:var(--muted)">GB frei</span>` : '—',
+    cs && cs.warn ? '⚠️ wenig frei' : (cs && !cs.ok ? 'control-server offline' : 'ok')));
+  // DB-Latenz
+  tiles.push(tile(srvDotColor(db), '🗄️', 'Datenbank',
+    db ? `${db.latencyMs} <span style="font-size:12px;color:var(--muted)">ms</span>` : '—',
+    db && !db.ok ? 'Fehler' : 'Ping'));
+  // Mod-Poller-Frische
+  tiles.push(tile(srvDotColor(mod), '📡', 'Mod-Poller',
+    mod ? (mod.ok ? (mod.warn ? 'träge' : 'frisch') : 'stockt') : '—',
+    mod && mod.detail ? escapeHtml(mod.detail) : ''));
+  // Voice
+  tiles.push(tile(srvDotColor(lk), '🎧', 'Voice (LiveKit)',
+    lk ? (lk.ok ? 'online' : 'offline') : '—', lk ? `${lk.latencyMs} ms` : 'kein Check'));
+  box.innerHTML = tiles.join('');
+}
+// Subsystem-Matrix (identische Quelle wie der Betrieb-Tab: /admin/ops/health).
+function srvRenderHealth(health) {
+  const box = el('srvHealth'); if (!box) return;
+  if (!health) { box.innerHTML = '<span style="color:#f87171">Health nicht ladbar.</span>'; return; }
+  const dot = (c) => (c.ok ? (c.warn ? '🟡' : '🟢') : '🔴');
+  const label = { db: 'Datenbank', mod_api: 'Mod-API (Poller)', game_process: 'Game-Server', control_server: 'Game-Box (control)', livekit: 'Voice (LiveKit)', peer_backend: 'Peer-Backend' };
+  box.innerHTML = `<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(215px,1fr));gap:6px">` +
+    (health.checks || []).map((c) =>
+      `<div style="border:1px solid var(--border);border-radius:8px;padding:7px 9px;font-size:12px">${dot(c)} <b>${escapeHtml(label[c.id] || c.id)}</b>` +
+      `<span style="color:var(--muted)"> ${c.latencyMs} ms</span>` +
+      (c.detail ? `<div style="color:var(--muted);font-size:11px;margin-top:2px">${escapeHtml(c.detail)}</div>` : '') + `</div>`
+    ).join('') + `</div>`;
+  const meta = el('srvHealthMeta'); if (meta) meta.textContent = `Umgebung: ${health.env || '?'} · ${new Date().toLocaleTimeString()}`;
+}
+// 24h-Auslastungskurve (Spielerzahl) — gleiche Metrik wie der Betrieb-Tab.
+async function srvRenderSpark() {
+  const cv = el('srvSpark'); if (!cv) return;
+  try {
+    const d = await svApi('GET', '/admin/ops/metrics/players?hours=24');
+    const pts = d.points || [];
+    const ctx = cv.getContext('2d'); ctx.clearRect(0, 0, cv.width, cv.height);
+    if (!pts.length) { ctx.fillStyle = 'rgba(255,255,255,0.35)'; ctx.font = '12px sans-serif'; ctx.fillText('Noch keine Daten', 10, cv.height / 2); return; }
+    const maxN = Math.max(5, ...pts.map((p) => p.n));
+    const t0 = new Date(pts[0].t).getTime(), t1 = new Date(pts[pts.length - 1].t).getTime() || t0 + 1;
+    const px = (p) => ((new Date(p.t).getTime() - t0) / Math.max(1, t1 - t0)) * (cv.width - 8) + 4;
+    const py = (p) => cv.height - 8 - (p.n / maxN) * (cv.height - 22);
+    // Flächenfüllung unter der Kurve
+    ctx.beginPath(); ctx.moveTo(px(pts[0]), cv.height);
+    pts.forEach((p) => ctx.lineTo(px(p), py(p)));
+    ctx.lineTo(px(pts[pts.length - 1]), cv.height); ctx.closePath();
+    ctx.fillStyle = 'rgba(125,211,252,0.12)'; ctx.fill();
+    ctx.strokeStyle = '#7dd3fc'; ctx.lineWidth = 1.5; ctx.beginPath();
+    pts.forEach((p, i) => { i ? ctx.lineTo(px(p), py(p)) : ctx.moveTo(px(p), py(p)); });
+    ctx.stroke();
+    ctx.fillStyle = 'rgba(255,255,255,0.5)'; ctx.font = '10px sans-serif';
+    ctx.fillText(`max ${maxN}`, 6, 12);
+    ctx.fillText(`aktuell ${pts[pts.length - 1].n}`, cv.width - 72, 12);
+  } catch {}
+}
+// Live-Status-Banner: Prozess-Zustand (läuft/AUS/unbekannt).
 async function srvLoadStatus() {
   const box = el('srvStatus'); if (!box) return;
   let running = null, detail = '';
   try { const d = await svApi('GET', '/admin/server/status'); running = !!d.running; } catch { detail = ' · Status nicht abrufbar'; }
-  // Optional: Game-Box-Disk + Spielerzahl aus der Ops-Health (nur wenn Betrieb-Backend erreichbar).
-  let extra = '';
-  try {
-    const h = await svApi('GET', '/admin/ops/health');
-    const gc = (h.checks || []).find((c) => c.id === 'control_server');
-    const gp = (h.checks || []).find((c) => c.id === 'game_process');
-    if (gp && gp.detail) extra += ` · ${escapeHtml(gp.detail)}`;
-    if (gc && gc.detail) extra += ` · 💾 ${escapeHtml(gc.detail)}`;
-  } catch {}
   const dot = running === null ? '⚪' : (running ? '🟢' : '🔴');
   const txt = running === null ? 'unbekannt' : (running ? 'läuft' : 'AUS');
-  box.innerHTML = `<div style="font-size:14px">${dot} <b>Server ${txt}</b><span style="color:var(--muted);font-size:12px">${extra}${detail}</span></div>`;
+  const col = running ? 'rgba(74,222,128,0.10)' : (running === false ? 'rgba(248,113,113,0.10)' : 'rgba(255,255,255,0.04)');
+  box.innerHTML = `<div style="font-size:14px;padding:9px 12px;border:1px solid var(--border);border-radius:10px;background:${col}">${dot} <b>Server ${txt}</b><span style="color:var(--muted);font-size:12px">${detail}</span></div>`;
 }
-// Online-Spieler aus dem laufenden Positions-Poll (read-only Liste; Kick gibt es serverseitig (noch) nicht).
+// Online-Spieler aus dem laufenden Positions-Poll (read-only Liste + Suche).
 function renderSrvPlayers() {
   const box = el('srvPlayers'), cnt = el('srvPlayerCount'); if (!box) return;
   const list = (players || []).filter((p) => p.steamId);
   if (cnt) cnt.textContent = String(list.length);
   if (!list.length) { box.innerHTML = '<div class="dt-muted">Keine Spieler online (oder Game-Server nicht erreichbar).</div>'; return; }
-  box.innerHTML = list.slice().sort((a, b) => (a.name || a.playerName || '').localeCompare(b.name || b.playerName || ''))
-    .map((p) => {
-      const nm = p.name || p.playerName || p.steamId;
-      const dino = p.dino ? ` <span style="color:var(--muted)">· ${escapeHtml(p.dino)}</span>` : '';
-      return `<div style="padding:3px 0;border-bottom:1px solid rgba(255,255,255,0.06)">👤 ${escapeHtml(nm)}${dino}${p.isDead ? ' <span style="color:#f87171">†</span>' : ''}</div>`;
-    }).join('');
+  const q = ((el('srvPlayerSearch') && el('srvPlayerSearch').value) || '').trim().toLowerCase();
+  let rows = list.slice().sort((a, b) => (a.name || a.playerName || '').localeCompare(b.name || b.playerName || ''));
+  if (q) rows = rows.filter((p) => `${p.name || p.playerName || p.steamId} ${p.dino || ''}`.toLowerCase().includes(q));
+  if (!rows.length) { box.innerHTML = '<div class="dt-muted">Kein Treffer.</div>'; return; }
+  box.innerHTML = rows.map((p) => {
+    const nm = p.name || p.playerName || p.steamId;
+    const dino = p.dino ? ` <span style="color:var(--muted)">· ${escapeHtml(p.dino)}</span>` : '';
+    return `<div style="padding:3px 0;border-bottom:1px solid rgba(255,255,255,0.06)">👤 ${escapeHtml(nm)}${dino}${p.isDead ? ' <span style="color:#f87171">†</span>' : ''}</div>`;
+  }).join('');
 }
 let serverTab = 'welt';
 function showServerTab(t) {
