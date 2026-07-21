@@ -16,14 +16,19 @@ export function makePerms(token, opts = {}) {
   // Overlay-Semantik: Admin impliziert beides (overlay.js loadRoleUI).
   const ingame = !!token.ingame || admin;
   const team = !!token.team || admin;
+  // tech = die zwei Raenge ueber "normalem" Admin (Developer, Owner). Das
+  // Backend kennt diese Stufe NICHT (requireRank geht nur bis "admin"); sie
+  // existiert allein als Companion-Anzeige-Schranke fuer die Server-Gruppe.
+  const rank = token.rank || '';
+  const tech = rank === 'Developer' || rank === 'Owner';
   return {
-    admin, ingame, team,
+    admin, ingame, team, tech,
     staff: ingame || team,
     // online = der eigene Dino ist gerade auf dem Server (isYou in /positions).
     // Spieler sehen ihre Daten nur dann; Staff-Werkzeuge hängen NICHT daran.
     online: !!opts.online,
     name: token.name || '',
-    rank: token.rank || '',
+    rank,
     // Eigene SteamID. /token nennt sie `identity` (es ist die LiveKit-Identity,
     // die dort gleich der SteamID ist) — deshalb der abweichende Feldname.
     // Gebraucht ueberall dort, wo man eine Aktion auf sich selbst richtet.
@@ -37,6 +42,8 @@ const LEVEL = {
   staff: (p) => p.staff,
   ingame: (p) => p.ingame,
   admin: (p) => p.admin,
+  // Nur Anzeige (siehe makePerms): kein Backend-Pendant in requireRank.
+  tech: (p) => p.tech,
 };
 
 // Fähigkeiten → benötigte Stufe. Jeder Eintrag nennt den Endpunkt, aus dem die
@@ -53,6 +60,7 @@ export const CAPS = {
   // Handbuch: Nachschlagewerk aller Staff-Funktionen — fuer jeden im Team
   // sichtbar (der Inhalt filtert sich je Rang selbst im Panel).
   'team.handbuch':     'staff',
+  'team.accounts':     'admin',   // /admin/accounts/* (find/link/unlink/dups)
 
   // ── Admin / Welt ──────────────────────────────────────────────────────
   'world.read':        'admin',   // GET  /admin/world/*   (WorldRoutes = admin)
@@ -75,6 +83,11 @@ export const CAPS = {
   'server.announce':   'staff',   // POST /admin/server/announce
   'server.wipe':       'ingame',  // POST /admin/server/wipecorpses
   'server.control':    'admin',   // POST /admin/server/control
+  // Server-Gruppe (Betrieb, Steuerung, Evrima): bewusst STRENGER als das
+  // Backend. control/ops sind dort admin, /evrima-versions sogar fuer jeden
+  // Authentifizierten lesbar — hier auf Developer/Owner begrenzt, weil diese
+  // Etage selbst fuer normale Admins zu tief ist. Reine Anzeige-Schranke.
+  'server.tech':       'tech',    // Companion-Nav-Gate der Gruppe "Server"
 
   // ── Support ───────────────────────────────────────────────────────────
   // Tickets liegen unter /me/* — jeder sieht seine eigenen. Die Bearbeitung

@@ -67,7 +67,30 @@ export function updateText(u) {
     case 'verfuegbar': return `Version ${u.version} verfügbar.`;
     case 'laedt': return `Lädt… ${u.progress}%`;
     case 'bereit': return `Version ${u.version} bereit.`;
-    case 'fehler': return 'Update fehlgeschlagen: ' + u.message;
+    case 'fehler': return 'Update fehlgeschlagen: ' + kurzFehler(u.message);
     default: return 'Bereit';
   }
+}
+
+// electron-updater haengt an seine Fehlermeldung den kompletten Stacktrace samt
+// Dateipfaden aus dem entpackten Paket — vierzig Zeilen, die in einer
+// Statuszeile landen und dort nichts erklaeren.
+//
+// Der haeufigste Fall hat ausserdem eine praezise Ursache, die die Rohmeldung
+// nicht nennt: 404 heisst, dass es fuer DIESE Umgebung und DIESEN Kanal keinen
+// Feed gibt — etwa weil die App gegen Produktion zeigt, wo nie ein Companion-
+// Release hochgeladen wurde.
+export function kurzFehler(m) {
+  const roh = String(m == null ? '' : m);
+  if (/\b404\b/.test(roh)) {
+    return 'kein Update-Feed auf dieser Umgebung (404) — dort wurde vermutlich nie ein Build veröffentlicht.';
+  }
+  // Vor dem ersten Zeilenumbruch abschneiden. Der Text traegt beide Formen:
+  // echte Umbrueche und als "\n" ausgeschriebene.
+  let s = roh.split('\n')[0].split('\\n')[0];
+  // Stack-Rahmen beginnen mit " at " — alles ab da ist fuer den Nutzer wertlos.
+  const at = s.indexOf(' at ');
+  if (at > 20) s = s.slice(0, at);
+  s = s.trim().replace(/[\s:]+$/, '');
+  return s.length > 160 ? s.slice(0, 157) + '…' : s;
 }

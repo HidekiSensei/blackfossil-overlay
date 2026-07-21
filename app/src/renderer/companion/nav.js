@@ -35,12 +35,13 @@ export const NAV_GROUPS = [
   {
     id: 'moderation',
     label: 'Moderation',
-    // Alles hier faengt bei staff/ingame an. Server gehoert dazu, weil sein
-    // Einstieg (Status, Ansage) staff ist — die harten Eingriffe darin
-    // (Neustart, Steuerung) sind admin und blenden sich im Panel selbst aus.
+    // Alles hier faengt bei staff/ingame an. Die Ankuendigung (Server-Broadcast)
+    // gehoert dazu, weil sie staff ist; die harten Server-Eingriffe (Neustart,
+    // Betrieb, Build-Infos) liegen eine Etage hoeher in der Gruppe "Server".
     items: [
       { view: 'spieler', icon: '👥', label: 'Spieler', cap: 'team.users' },
       { view: 'warnings', icon: '⚠️', label: 'Verwarnungen', cap: 'team.warnings' },
+      { view: 'accounts', icon: '🔗', label: 'Accounts', cap: 'team.accounts' },
       { view: 'paudit', icon: '🔍', label: 'Player-Audit', cap: 'team.playerAudit' },
       { view: 'tokens', icon: '🎁', label: 'Tokens', cap: 'token.dino' },
       { view: 'announce', icon: '📢', label: 'Ankündigung', cap: 'server.announce' },
@@ -65,8 +66,22 @@ export const NAV_GROUPS = [
       // ab Staff erlaubt — die Seite als Ganzes ist aber Administration.
       { view: 'events', icon: '🎉', label: 'Events', cap: 'world.read' },
       { view: 'dinos', icon: '🦖', label: 'Dino-Verwaltung', cap: 'limits.write' },
-      { view: 'ops', icon: '📊', label: 'Betrieb', cap: 'ops.read' },
       { view: 'taudit', icon: '📜', label: 'Team-Audit', cap: 'team.staffAudit' },
+    ],
+  },
+  {
+    id: 'server',
+    label: 'Server',
+    // Die technischste Etage: Betrieb (Dienste-Zustand), Steuerung (Neustart)
+    // und die Evrima-Build-Infos. Bewusst NICHT admin, sondern `server.tech`
+    // (Developer/Owner) — das sind Eingriffe und Diagnosen, die selbst fuer
+    // einen normalen Admin zu tief liegen. Reine Anzeige-Schranke: das Backend
+    // gated die Endpunkte weiterhin auf admin (bzw. laesst /evrima-versions fuer
+    // jeden Authentifizierten zu), hier wird nur strenger AUSGEBLENDET.
+    items: [
+      { view: 'ops', icon: '📊', label: 'Betrieb', cap: 'server.tech' },
+      { view: 'control', icon: '⚙️', label: 'Steuerung', cap: 'server.tech' },
+      { view: 'evrima', icon: '🏷️', label: 'Evrima', cap: 'server.tech' },
     ],
   },
 ];

@@ -708,6 +708,12 @@ let micEnabled = false;
 let settingsOpen = false;
 let deafened = false;                                   // eingehenden Ton stummschalten
 let amDead = false;                                     // tot / kein Dino → Voice komplett aus (weder hören noch senden)
+// Entprellung fuer amDead: der Rohwert kommt aus dem 0,1s-Positions-Poll und kann flattern.
+// Jeder Wechsel republiziert den Mic-Track und reisst die 3D-Plugin-Kette der Sprecher mit —
+// nach ein paar Zyklen bleibt die Voice-Session verbunden, aber tot. Erst DEAD_DEBOUNCE gleiche
+// Polls in Folge schalten wirklich um (~0,3 s; fuer echten Tod/Respawn unerheblich).
+const DEAD_DEBOUNCE = 3;
+let deadStreak = 0;
 let godVoiceId = '';                                    // steamId des aktiven Gottstimme-Sprechers ('' = keine Durchsage) — aus /positions
 let godVoiceMine = false;                               // ob ICH gerade die Gottstimme sende (Admin-Button-Zustand)
 let godVoiceReverbActive = false;                       // Himmels-Hall bei der AKTIVEN Durchsage an? (aus /positions, für alle konsistent)
@@ -1017,9 +1023,12 @@ function startPositionPolling() {
         const gvMine = !!(godVoiceId && me && godVoiceId === me.steamId);
         if (gvMine !== godVoiceMine) { godVoiceMine = gvMine; if (serverOpen && serverTab === 'godvoice') renderGodVoice(); }
         // Tot / kein Dino → Voice komplett aus (weder hören noch senden). Wechsel → Mic umschalten + Hinweis.
-        const wasDead = amDead;
-        amDead = !me || !!me.isDead;
-        if (amDead !== wasDead) {
+        // Entprellt (s. DEAD_DEBOUNCE): ein einzelner Ausreisser im Poll darf die Voice-Kette nicht anfassen.
+        const rawDead = !me || !!me.isDead;
+        if (rawDead === amDead) deadStreak = 0;
+        else if (++deadStreak >= DEAD_DEBOUNCE) {
+          deadStreak = 0;
+          amDead = rawDead;
           if (room) applyMic();                              // sofort aufhören/wieder senden
           if (amDead && voiceConnected) showToast('💀 Tot — Voice ist stumm bis zum Respawn.', 'warn');
           else if (!amDead && voiceConnected) showToast('🎙️ Wieder im Spiel — Voice aktiv.', 'success');
@@ -2626,65 +2635,171 @@ function closeServerPanel() {
 }
 
 // ── 🖥️ Server-Steuerung: eigenständiger Dock-Bereich (aus dem Admin-Untermenü herausgelöst) ──
+// Aufgeteilt in Tabs: 📊 Übersicht (Status + Last-Kacheln + 24h-Auslastungskurve + Subsystem-Matrix),
+// 👥 Spieler, 🦖 Limits, ⚙️ Steuerung. Alle Daten kommen aus vorhandenen Endpunkten
+// (/admin/server/status, /admin/ops/health, /admin/ops/metrics/players, /public/status).
 let srvOpen = false;
+let srvTab = 'overview';
 function openSrvPanel() {
   if (!isAdmin) { showToast('Nur für Admins', 'error'); return; }
   srvOpen = true;
   el('srvPanel').style.display = 'flex';
   updateInteractive();
   renderSrv();
-  // Live-Status alle 5 s aktualisieren, nur solange offen (Selbstabschaltung).
+  // Aktiven Tab alle 8 s aktualisieren, nur solange offen (Selbstabschaltung).
   if (!openSrvPanel._t) openSrvPanel._t = setInterval(() => {
     if (!srvOpen) { clearInterval(openSrvPanel._t); openSrvPanel._t = null; return; }
-    srvLoadStatus(); renderSrvPlayers();
-  }, 5000);
+    srvRefreshTab();
+  }, 8000);
 }
 function closeSrvPanel() {
   srvOpen = false;
   el('srvPanel').style.display = 'none';
   updateInteractive();
 }
-// Baut den Server-Bereich einmal auf (Status + Class-Limits laden, Spielerliste rendern).
+// Verdrahtet Tab-Buttons + Steuer-Aktionen (einmalig) und zeigt den aktiven Tab.
 function renderSrv() {
-  srvLoadStatus();
-  renderSrvPlayers();
-  svRenderClassLimits(); // schreibt weiter in #svClassBody (jetzt im Server-Panel)
+  if (!renderSrv._wired) {
+    renderSrv._wired = 1;
+    document.querySelectorAll('#srvTabs [data-srvt]').forEach((b) => { b.onclick = () => srvShowTab(b.dataset.srvt); });
+    const s = el('srvPlayerSearch'); if (s) s.oninput = () => renderSrvPlayers();
+  }
   { const b = el('srvAnnounce'); if (b && !b._w) { b._w = 1; b.onclick = () => { const m = el('srvMsg').value.trim(); if (!m) { showToast('Nachricht eingeben', 'error'); return; } apiAction('/admin/server/announce', { message: m }, '📢 Ansage gesendet', () => { el('srvMsg').value = ''; }); }; } }
   { const b = el('srvWipe'); if (b && !b._w) { b._w = 1; b.onclick = () => svArmConfirm(b, 'Sicher? Kadaver leeren', () => apiAction('/admin/server/wipecorpses', {}, '🧹 Kadaver geleert', null)); } }
   { const b = el('srvStart'); if (b && !b._w) { b._w = 1; b.onclick = () => apiAction('/admin/server/control', { action: 'start' }, '▶️ Server-Start ausgelöst', srvLoadStatus); } }
   { const b = el('srvRestart'); if (b && !b._w) { b._w = 1; b.onclick = () => svArmConfirm(b, 'Sicher? Restart', () => apiAction('/admin/server/control', { action: 'restart' }, '🔁 Restart ausgelöst', srvLoadStatus)); } }
   { const b = el('srvStop'); if (b && !b._w) { b._w = 1; b.onclick = () => svArmConfirm(b, 'Sicher? Stop', () => apiAction('/admin/server/control', { action: 'stop' }, '⏹️ Stop ausgelöst', srvLoadStatus)); } }
+  srvShowTab(srvTab || 'overview');
 }
-// Live-Status: Prozess-Zustand + (falls erreichbar) Ops-Health für Game-Box-Details.
+function srvShowTab(t) {
+  srvTab = t;
+  document.querySelectorAll('#srvTabs [data-srvt]').forEach((b) => b.classList.toggle('secondary', b.dataset.srvt !== t));
+  document.querySelectorAll('#srvPanel .admin-pane[data-srvp]').forEach((p) => { p.hidden = p.dataset.srvp !== t; });
+  // Voll-Render beim Wechsel (inkl. Limits/Betrieb — die werden EINMAL geladen, nicht im Poll).
+  if (t === 'overview') srvRenderOverview();
+  else if (t === 'players') renderSrvPlayers();
+  else if (t === 'limits') svRenderClassLimits();
+  else if (t === 'betrieb') srvRenderBetrieb();
+  bfScheduleFrameSync && bfScheduleFrameSync();
+}
+// 8s-Poll: nur Live-Tabs auffrischen. Limits/Steuerung bleiben stehen (kein Überschreiben von Eingaben).
+function srvRefreshTab() {
+  if (srvTab === 'overview') srvRenderOverview();
+  else if (srvTab === 'players') renderSrvPlayers();
+}
+
+// ── 📊 Übersicht: Status + Last-Kacheln + Auslastungskurve + Subsystem-Matrix ──
+async function srvRenderOverview() {
+  srvLoadStatus();
+  let health = null, pub = null;
+  try { health = await svApi('GET', '/admin/ops/health'); } catch {}
+  try { pub = await svApi('GET', '/public/status'); } catch {}
+  srvRenderTiles(health, pub);
+  srvRenderHealth(health);
+  srvRenderSpark();
+}
+function srvChk(health, id) { return ((health && health.checks) || []).find((c) => c.id === id) || null; }
+// Farbe für eine Health-Prüfung: rot (down) / gelb (warn) / grün (ok).
+function srvDotColor(c) { return !c ? 'var(--muted)' : (!c.ok ? '#f87171' : (c.warn ? '#fbbf24' : '#4ade80')); }
+function srvRenderTiles(health, pub) {
+  const box = el('srvTiles'); if (!box) return;
+  const gp = srvChk(health, 'game_process'), cs = srvChk(health, 'control_server');
+  const db = srvChk(health, 'db'), mod = srvChk(health, 'mod_api'), lk = srvChk(health, 'livekit');
+  const online = (pub && typeof pub.online === 'number') ? pub.online : (players || []).filter((p) => p.steamId).length;
+  const max = (pub && pub.max) ? pub.max : null;
+  const pct = max ? Math.min(100, Math.round((online / max) * 100)) : null;
+  const loadCol = pct == null ? 'var(--accent)' : (pct >= 90 ? '#f87171' : pct >= 70 ? '#fbbf24' : '#4ade80');
+  const diskGB = (cs && cs.detail && (cs.detail.match(/([\d.]+)\s*GB/) || [])[1]) || null;
+  const tile = (accent, icon, label, val, sub) =>
+    `<div class="srv-tile" style="border-left-color:${accent}"><div class="srv-tile-h">${icon} ${escapeHtml(label)}</div>` +
+    `<div class="srv-tile-v">${val}</div>${sub ? `<div class="srv-tile-s">${sub}</div>` : ''}</div>`;
+  const tiles = [];
+  // Spieler-Auslastung (der Kern von „Server-Last")
+  tiles.push(tile(loadCol, '👥', 'Spieler online',
+    `${online}${max ? ` <span style="font-size:12px;color:var(--muted)">/ ${max}</span>` : ''}`,
+    pct == null ? 'Auslastung unbekannt'
+      : `<div class="srv-bar"><i style="width:${pct}%;background:${loadCol}"></i></div><span>${pct}% ausgelastet</span>`));
+  // Disk der Game-Box
+  tiles.push(tile(srvDotColor(cs), '💾', 'Speicher (Game-Box)',
+    diskGB != null ? `${diskGB} <span style="font-size:12px;color:var(--muted)">GB frei</span>` : '—',
+    cs && cs.warn ? '⚠️ wenig frei' : (cs && !cs.ok ? 'control-server offline' : 'ok')));
+  // DB-Latenz
+  tiles.push(tile(srvDotColor(db), '🗄️', 'Datenbank',
+    db ? `${db.latencyMs} <span style="font-size:12px;color:var(--muted)">ms</span>` : '—',
+    db && !db.ok ? 'Fehler' : 'Ping'));
+  // Mod-Poller-Frische
+  tiles.push(tile(srvDotColor(mod), '📡', 'Mod-Poller',
+    mod ? (mod.ok ? (mod.warn ? 'träge' : 'frisch') : 'stockt') : '—',
+    mod && mod.detail ? escapeHtml(mod.detail) : ''));
+  // Voice
+  tiles.push(tile(srvDotColor(lk), '🎧', 'Voice (LiveKit)',
+    lk ? (lk.ok ? 'online' : 'offline') : '—', lk ? `${lk.latencyMs} ms` : 'kein Check'));
+  box.innerHTML = tiles.join('');
+}
+// Subsystem-Matrix (identische Quelle wie der Betrieb-Tab: /admin/ops/health).
+function srvRenderHealth(health) {
+  const box = el('srvHealth'); if (!box) return;
+  if (!health) { box.innerHTML = '<span style="color:#f87171">Health nicht ladbar.</span>'; return; }
+  const dot = (c) => (c.ok ? (c.warn ? '🟡' : '🟢') : '🔴');
+  const label = { db: 'Datenbank', mod_api: 'Mod-API (Poller)', game_process: 'Game-Server', control_server: 'Game-Box (control)', livekit: 'Voice (LiveKit)', peer_backend: 'Peer-Backend' };
+  box.innerHTML = `<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(215px,1fr));gap:6px">` +
+    (health.checks || []).map((c) =>
+      `<div style="border:1px solid var(--border);border-radius:8px;padding:7px 9px;font-size:12px">${dot(c)} <b>${escapeHtml(label[c.id] || c.id)}</b>` +
+      `<span style="color:var(--muted)"> ${c.latencyMs} ms</span>` +
+      (c.detail ? `<div style="color:var(--muted);font-size:11px;margin-top:2px">${escapeHtml(c.detail)}</div>` : '') + `</div>`
+    ).join('') + `</div>`;
+  const meta = el('srvHealthMeta'); if (meta) meta.textContent = `Umgebung: ${health.env || '?'} · ${new Date().toLocaleTimeString()}`;
+}
+// 24h-Auslastungskurve (Spielerzahl) — gleiche Metrik wie der Betrieb-Tab.
+async function srvRenderSpark() {
+  const cv = el('srvSpark'); if (!cv) return;
+  try {
+    const d = await svApi('GET', '/admin/ops/metrics/players?hours=24');
+    const pts = d.points || [];
+    const ctx = cv.getContext('2d'); ctx.clearRect(0, 0, cv.width, cv.height);
+    if (!pts.length) { ctx.fillStyle = 'rgba(255,255,255,0.35)'; ctx.font = '12px sans-serif'; ctx.fillText('Noch keine Daten', 10, cv.height / 2); return; }
+    const maxN = Math.max(5, ...pts.map((p) => p.n));
+    const t0 = new Date(pts[0].t).getTime(), t1 = new Date(pts[pts.length - 1].t).getTime() || t0 + 1;
+    const px = (p) => ((new Date(p.t).getTime() - t0) / Math.max(1, t1 - t0)) * (cv.width - 8) + 4;
+    const py = (p) => cv.height - 8 - (p.n / maxN) * (cv.height - 22);
+    // Flächenfüllung unter der Kurve
+    ctx.beginPath(); ctx.moveTo(px(pts[0]), cv.height);
+    pts.forEach((p) => ctx.lineTo(px(p), py(p)));
+    ctx.lineTo(px(pts[pts.length - 1]), cv.height); ctx.closePath();
+    ctx.fillStyle = 'rgba(125,211,252,0.12)'; ctx.fill();
+    ctx.strokeStyle = '#7dd3fc'; ctx.lineWidth = 1.5; ctx.beginPath();
+    pts.forEach((p, i) => { i ? ctx.lineTo(px(p), py(p)) : ctx.moveTo(px(p), py(p)); });
+    ctx.stroke();
+    ctx.fillStyle = 'rgba(255,255,255,0.5)'; ctx.font = '10px sans-serif';
+    ctx.fillText(`max ${maxN}`, 6, 12);
+    ctx.fillText(`aktuell ${pts[pts.length - 1].n}`, cv.width - 72, 12);
+  } catch {}
+}
+// Live-Status-Banner: Prozess-Zustand (läuft/AUS/unbekannt).
 async function srvLoadStatus() {
   const box = el('srvStatus'); if (!box) return;
   let running = null, detail = '';
   try { const d = await svApi('GET', '/admin/server/status'); running = !!d.running; } catch { detail = ' · Status nicht abrufbar'; }
-  // Optional: Game-Box-Disk + Spielerzahl aus der Ops-Health (nur wenn Betrieb-Backend erreichbar).
-  let extra = '';
-  try {
-    const h = await svApi('GET', '/admin/ops/health');
-    const gc = (h.checks || []).find((c) => c.id === 'control_server');
-    const gp = (h.checks || []).find((c) => c.id === 'game_process');
-    if (gp && gp.detail) extra += ` · ${escapeHtml(gp.detail)}`;
-    if (gc && gc.detail) extra += ` · 💾 ${escapeHtml(gc.detail)}`;
-  } catch {}
   const dot = running === null ? '⚪' : (running ? '🟢' : '🔴');
   const txt = running === null ? 'unbekannt' : (running ? 'läuft' : 'AUS');
-  box.innerHTML = `<div style="font-size:14px">${dot} <b>Server ${txt}</b><span style="color:var(--muted);font-size:12px">${extra}${detail}</span></div>`;
+  const col = running ? 'rgba(74,222,128,0.10)' : (running === false ? 'rgba(248,113,113,0.10)' : 'rgba(255,255,255,0.04)');
+  box.innerHTML = `<div style="font-size:14px;padding:9px 12px;border:1px solid var(--border);border-radius:10px;background:${col}">${dot} <b>Server ${txt}</b><span style="color:var(--muted);font-size:12px">${detail}</span></div>`;
 }
-// Online-Spieler aus dem laufenden Positions-Poll (read-only Liste; Kick gibt es serverseitig (noch) nicht).
+// Online-Spieler aus dem laufenden Positions-Poll (read-only Liste + Suche).
 function renderSrvPlayers() {
   const box = el('srvPlayers'), cnt = el('srvPlayerCount'); if (!box) return;
   const list = (players || []).filter((p) => p.steamId);
   if (cnt) cnt.textContent = String(list.length);
   if (!list.length) { box.innerHTML = '<div class="dt-muted">Keine Spieler online (oder Game-Server nicht erreichbar).</div>'; return; }
-  box.innerHTML = list.slice().sort((a, b) => (a.name || a.playerName || '').localeCompare(b.name || b.playerName || ''))
-    .map((p) => {
-      const nm = p.name || p.playerName || p.steamId;
-      const dino = p.dino ? ` <span style="color:var(--muted)">· ${escapeHtml(p.dino)}</span>` : '';
-      return `<div style="padding:3px 0;border-bottom:1px solid rgba(255,255,255,0.06)">👤 ${escapeHtml(nm)}${dino}${p.isDead ? ' <span style="color:#f87171">†</span>' : ''}</div>`;
-    }).join('');
+  const q = ((el('srvPlayerSearch') && el('srvPlayerSearch').value) || '').trim().toLowerCase();
+  let rows = list.slice().sort((a, b) => (a.name || a.playerName || '').localeCompare(b.name || b.playerName || ''));
+  if (q) rows = rows.filter((p) => `${p.name || p.playerName || p.steamId} ${p.dino || ''}`.toLowerCase().includes(q));
+  if (!rows.length) { box.innerHTML = '<div class="dt-muted">Kein Treffer.</div>'; return; }
+  box.innerHTML = rows.map((p) => {
+    const nm = p.name || p.playerName || p.steamId;
+    const dino = p.dino ? ` <span style="color:var(--muted)">· ${escapeHtml(p.dino)}</span>` : '';
+    return `<div style="padding:3px 0;border-bottom:1px solid rgba(255,255,255,0.06)">👤 ${escapeHtml(nm)}${dino}${p.isDead ? ' <span style="color:#f87171">†</span>' : ''}</div>`;
+  }).join('');
 }
 let serverTab = 'welt';
 function showServerTab(t) {
@@ -2699,71 +2814,28 @@ function showServerTab(t) {
   else if (t === 'godvoice') renderGodVoice();
   else if (t === 'teamaudit') renderTeamAudit();
   else if (t === 'evrima') renderEvrima();
-  else if (t === 'ops') renderOps();
   bfScheduleFrameSync && bfScheduleFrameSync();
 }
 
-// ── 🛠️ Betrieb (Ops-Interface): Status-Matrix + Versionen/Branches + Log-Viewer ──────────────
-// Read-only-Diagnose ohne SSH: Backend /admin/ops/* (admin-gated). Polling läuft NUR solange
-// der Tab offen ist (Guard in den Intervallen — Tab-/Panel-Wechsel stoppt von selbst).
+// ── 🛠️ Betrieb (Ops-Interface): Versionen/Branches + Log-Viewer ─────────────────────────────
+// Read-only-Diagnose ohne SSH: Backend /admin/ops/* (admin-gated). Sitzt jetzt als Tab im
+// Server-Panel (Status-Matrix + Auslastung stehen im Übersichts-Tab). Der Log-Follow-Poll läuft
+// nur, solange der Betrieb-Tab offen ist (Guard schaltet sich selbst ab).
 let opsLogState = { name: '', nextByte: null, lines: [] }; // Follow-Zustand je gewähltem Log
 const OPS_LOG_MAX_LINES = 4000;
 
-function opsActive() { return serverOpen && serverTab === 'ops'; }
+function srvBetriebActive() { return srvOpen && srvTab === 'betrieb'; }
 
-function renderOps() {
-  renderOpsHealth(); renderOpsSpark(); renderOpsVersions(); opsInitLogs();
-  // 10s-Health-Poll, nur solange der Tab offen ist (Selbstabschaltung über Guard).
-  if (!renderOps._timer) {
-    renderOps._timer = setInterval(() => {
-      if (!opsActive()) { clearInterval(renderOps._timer); renderOps._timer = null; return; }
-      renderOpsHealth();
-    }, 10000);
-  }
-  if (!renderOps._logTimer) {
-    renderOps._logTimer = setInterval(() => {
-      if (!opsActive()) { clearInterval(renderOps._logTimer); renderOps._logTimer = null; return; }
+function srvRenderBetrieb() {
+  renderOpsVersions(); opsInitLogs();
+  // Log-Follow-Poll (2s), nur solange der Betrieb-Tab offen ist (Selbstabschaltung über Guard).
+  if (!srvRenderBetrieb._logTimer) {
+    srvRenderBetrieb._logTimer = setInterval(() => {
+      if (!srvBetriebActive()) { clearInterval(srvRenderBetrieb._logTimer); srvRenderBetrieb._logTimer = null; return; }
       const f = el('opsLogFollow');
       if (f && f.checked) opsLoadLog(false); // inkrementell (fromByte)
     }, 2000);
   }
-}
-
-async function renderOpsHealth() {
-  const box = el('opsHealth'); if (!box) return;
-  try {
-    const d = await svApi('GET', '/admin/ops/health');
-    const dot = (c) => (c.ok ? (c.warn ? '🟡' : '🟢') : '🔴');
-    const label = { db: 'Datenbank', mod_api: 'Mod-API (Poller)', game_process: 'Game-Server', control_server: 'Game-Box (control)', livekit: 'Voice (LiveKit)', peer_backend: 'Peer-Backend' };
-    box.innerHTML = `<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(215px,1fr));gap:6px">` +
-      (d.checks || []).map((c) =>
-        `<div style="border:1px solid var(--border);border-radius:8px;padding:7px 9px;font-size:12px">${dot(c)} <b>${escapeHtml(label[c.id] || c.id)}</b>` +
-        `<span style="color:var(--muted)"> ${c.latencyMs} ms</span>` +
-        (c.detail ? `<div style="color:var(--muted);font-size:11px;margin-top:2px">${escapeHtml(c.detail)}</div>` : '') + `</div>`
-      ).join('') + `</div><div style="font-size:10px;color:var(--muted);margin-top:4px">Umgebung: ${escapeHtml(d.env || '?')} · ${new Date().toLocaleTimeString()}</div>`;
-  } catch (e) { box.innerHTML = `<span style="color:#f87171">Health nicht ladbar: ${escapeHtml(e.message || '?')}</span>`; }
-}
-
-async function renderOpsSpark() {
-  const cv = el('opsSpark'); if (!cv) return;
-  try {
-    const d = await svApi('GET', '/admin/ops/metrics/players?hours=24');
-    const pts = d.points || [];
-    const ctx = cv.getContext('2d'); ctx.clearRect(0, 0, cv.width, cv.height);
-    if (!pts.length) { ctx.fillStyle = 'rgba(255,255,255,0.35)'; ctx.font = '12px sans-serif'; ctx.fillText('Noch keine Daten', 10, 40); return; }
-    const maxN = Math.max(5, ...pts.map((p) => p.n));
-    const t0 = new Date(pts[0].t).getTime(), t1 = new Date(pts[pts.length - 1].t).getTime() || t0 + 1;
-    ctx.strokeStyle = '#7dd3fc'; ctx.lineWidth = 1.5; ctx.beginPath();
-    pts.forEach((p, i) => {
-      const x = ((new Date(p.t).getTime() - t0) / Math.max(1, t1 - t0)) * (cv.width - 8) + 4;
-      const y = cv.height - 6 - (p.n / maxN) * (cv.height - 16);
-      i ? ctx.lineTo(x, y) : ctx.moveTo(x, y);
-    });
-    ctx.stroke();
-    ctx.fillStyle = 'rgba(255,255,255,0.45)'; ctx.font = '10px sans-serif';
-    ctx.fillText(`max ${maxN}`, 6, 12);
-    ctx.fillText(`aktuell ${pts[pts.length - 1].n}`, cv.width - 70, 12);
-  } catch {}
 }
 
 async function renderOpsVersions() {
@@ -4064,6 +4136,7 @@ function toggleFeature(id) {
   else if (id === 'lootbox') renderLootbox();
   else if (id === 'support') { renderSupport(); startSupportPoll(); }
   else if (id === 'notifications') renderNotifications();
+  else if (id === 'leaderboard') renderLeaderboard();
   el(id).style.display = 'block';
   updateInteractive();
 }
@@ -4073,13 +4146,102 @@ function closeAllFeatures(skipInteractive) {
     revertSkinPreview();
     showToast('🎨 Vorschau verworfen — Skin zurückgesetzt', '');
   }
-  ['dinoInfo', 'skinEditor', 'garage', 'market', 'group', 'profile', 'lexikon', 'quests', 'lootbox', 'support', 'notifications'].forEach((id) => { el(id).style.display = 'none'; });
+  ['dinoInfo', 'skinEditor', 'garage', 'market', 'group', 'profile', 'lexikon', 'quests', 'leaderboard', 'lootbox', 'support', 'notifications'].forEach((id) => { el(id).style.display = 'none'; });
   const tc = el('ticketChat'); if (tc) tc.style.display = 'none';   // Ticket-Chat mit schließen
   stopQuestPoll();
   stopSupportPoll();
   if (featureOpen === 'dinoInfo') stopDinoInfo();
   featureOpen = null;
   if (!skipInteractive) updateInteractive();
+}
+
+// ── 🐾 Wandern: persönliche Wander-Statistik + Custom-Name + Leaderboard ──────
+// Frisch-bereiste Distanz je Kategorie (Backend: /leaderboard/migration, /me/migration,
+// /me/dino/name). Top-3 hervorgehoben; Kategorie- + Woche/Gesamt-Umschalter.
+const LB_CATS = [
+  { key: 'walk', icon: '🏃', label: 'Laufen' },
+  { key: 'flight', icon: '🦅', label: 'Fliegen' },
+  { key: 'swim', icon: '🌊', label: 'Schwimmen' },
+];
+let lbState = { cat: 'walk', scope: 'weekly' };
+
+function lbFmtDist(m) {
+  m = m || 0;
+  return m >= 1000 ? `${(m / 1000).toFixed(2)} km` : `${Math.round(m)} m`;
+}
+
+function renderLeaderboard() {
+  const panel = el('leaderboard');
+  panel.classList.remove('pf-wide');
+  const catBtns = LB_CATS.map((c) => `<button class="lb-tab${c.key === lbState.cat ? '' : ' secondary'}" data-lbcat="${c.key}">${c.icon} ${c.label}</button>`).join('');
+  panel.innerHTML = `<h2>🐾 Wandern <span style="font-weight:400;font-size:12px;color:var(--muted)">— frisch bereiste Distanz</span></h2>
+    <div id="lbMine" style="margin-bottom:14px"><div class="lb-muted">Lädt…</div></div>
+    <div class="lb-controls">
+      <div class="lb-tabs" id="lbCatTabs">${catBtns}</div>
+      <div style="flex:1"></div>
+      <div class="lb-tabs">
+        <button class="lb-tab${lbState.scope === 'weekly' ? '' : ' secondary'}" data-lbscope="weekly">📅 Woche</button>
+        <button class="lb-tab${lbState.scope === 'total' ? '' : ' secondary'}" data-lbscope="total">🏆 Gesamt</button>
+      </div>
+    </div>
+    <div id="lbBoard"><div class="lb-muted">Lädt…</div></div>
+    <button class="closeFeature secondary" style="margin-top:12px">Schließen</button>`;
+  const cb = panel.querySelector('.closeFeature'); if (cb) cb.onclick = () => closeAllFeatures();
+  panel.querySelectorAll('[data-lbcat]').forEach((b) => { b.onclick = () => { lbState.cat = b.dataset.lbcat; renderLeaderboard(); }; });
+  panel.querySelectorAll('[data-lbscope]').forEach((b) => { b.onclick = () => { lbState.scope = b.dataset.lbscope; renderLeaderboard(); }; });
+  lbLoadMine();
+  lbLoadBoard();
+}
+
+async function lbLoadMine() {
+  const box = el('lbMine'); if (!box) return;
+  let d;
+  try { d = await svApi('GET', '/me/migration'); }
+  catch (e) { box.innerHTML = `<div class="lb-muted">Meine Wanderung nicht ladbar (${escapeHtml(e.message)}).</div>`; return; }
+  const live = (d.live || []).reduce((m, c) => { m[c.category] = c; return m; }, {});
+  const recs = (d.records || []).reduce((m, r) => { m[r.category] = r; return m; }, {});
+  const cur = live[lbState.cat] || {};
+  const rec = recs[lbState.cat];
+  const meta = LB_CATS.find((c) => c.key === lbState.cat) || LB_CATS[0];
+  box.innerHTML = `
+    <div class="lb-mine">
+      <div class="lb-mine-name">
+        <div class="lb-muted" style="margin-bottom:4px">🦖 Name deines aktiven Dinos</div>
+        <div style="display:flex;gap:6px">
+          <input id="lbName" class="lb-input" maxlength="24" placeholder="unbenannt" value="${escapeHtml(d.dinoName || '')}">
+          <button id="lbNameSave" style="flex:none;width:auto;padding:7px 13px">💾</button>
+        </div>
+      </div>
+      <div class="lb-mine-stats">
+        <div class="lb-stat"><div class="lb-stat-l">${meta.icon} Diese Woche</div><div class="lb-stat-v">${lbFmtDist(cur.weeklyM)}</div></div>
+        <div class="lb-stat"><div class="lb-stat-l">Σ Gesamt (Dino)</div><div class="lb-stat-v">${lbFmtDist(cur.totalM)}</div></div>
+        <div class="lb-stat"><div class="lb-stat-l">🏆 Rekord</div><div class="lb-stat-v">${rec ? lbFmtDist(rec.distanceM) : '—'}</div></div>
+      </div>
+    </div>`;
+  const save = el('lbNameSave'), inp = el('lbName');
+  if (save && inp) save.onclick = async () => {
+    try { await svApi('POST', '/me/dino/name', { name: inp.value.trim() }); showToast('🦖 Dino-Name gespeichert', 'success'); lbLoadBoard(); }
+    catch (e) { showToast(e.message, 'error'); }
+  };
+}
+
+async function lbLoadBoard() {
+  const box = el('lbBoard'); if (!box) return;
+  let d;
+  try { d = await svApi('GET', `/leaderboard/migration?scope=${lbState.scope}&category=${lbState.cat}`); }
+  catch (e) { box.innerHTML = `<div class="lb-muted">Leaderboard nicht ladbar (${escapeHtml(e.message)}).</div>`; return; }
+  const rows = d.rows || [];
+  if (!rows.length) { box.innerHTML = '<div class="lb-muted">Noch keine Einträge — geh wandern! 🐾</div>'; return; }
+  const medal = (r) => r === 1 ? '🥇' : r === 2 ? '🥈' : r === 3 ? '🥉' : `<span class="lb-rank">${r}</span>`;
+  box.innerHTML = `<div class="lb-list">${rows.map((r) => {
+    const nm = r.discordName || r.dinoName || r.steamId;
+    const dn = r.dinoName ? `<span class="lb-dino">🦖 ${escapeHtml(r.dinoName)}</span>` : '';
+    return `<div class="lb-row${r.rank <= 3 ? ' lb-top' : ''}">
+      <div class="lb-medal">${medal(r.rank)}</div>
+      <div class="lb-who"><div class="lb-name">${escapeHtml(nm)}</div>${dn}</div>
+      <div class="lb-dist">${lbFmtDist(r.distanceM)}</div>
+    </div>`;
+  }).join('')}</div>`;
 }
 
 // ── Gruppen-Ansicht (Mitglieder mit gleicher groupId, Partner + Distanz) ─────
@@ -7180,6 +7342,7 @@ const DOCK_ICONS = {
   server:   dockSvg('<rect x="2" y="3" width="20" height="6" rx="1"/><rect x="2" y="12" width="20" height="6" rx="1"/><path d="M6 6h.01M6 15h.01"/>'),
   srvctl:   dockSvg('<rect x="2" y="3" width="20" height="14" rx="2"/><path d="M8 21h8M12 17v4"/>'),
   quests:   dockSvg('<path d="M4 22V4a1 1 0 0 1 1-1h12l-2 4 2 4H6"/><line x1="4" y1="22" x2="4" y2="15"/>'),
+  leaderboard: dockSvg('<circle cx="6" cy="19" r="3"/><path d="M9 19h8.5a3.5 3.5 0 0 0 0-7h-11a3.5 3.5 0 0 1 0-7H15"/><circle cx="18" cy="5" r="3"/>'),
   notifications: dockSvg('<path d="M6 8a6 6 0 0 1 12 0c0 7 3 9 3 9H3s3-2 3-9"/><path d="M10.3 21a1.94 1.94 0 0 0 3.4 0"/>'),
   close:    dockSvg('<line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/>'),
 };
