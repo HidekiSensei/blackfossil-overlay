@@ -32,7 +32,7 @@ import { initDinos, renderDinos } from './companion/panels/dinos.js';
 import { initPlayers, renderPlayers } from './companion/panels/players.js';
 import { initTokens, renderTokens } from './companion/panels/tokens.js';
 import { NAV_GROUPS, NAV_SETTINGS, itemFor, collapsedGroups, saveCollapsed } from './companion/nav.js';
-import { initServer, renderServer, stopServer } from './companion/panels/server.js';
+import { initAnnounce, renderAnnounce } from './companion/panels/announce.js';
 import { initAdmin, renderAdmin } from './companion/panels/admin.js';
 import { initTeam, renderTeam } from './companion/panels/team.js';
 import { initSupport, renderSupport, stopSupport } from './companion/panels/support.js';
@@ -881,7 +881,7 @@ const PANELS = {
   welt: (r) => renderAdmin(r, 'welt'),
   ops: (r) => renderAdmin(r, 'ops'),
   dinos: renderDinos,
-  server: renderServer,
+  announce: renderAnnounce,
   support: renderSupport,
   lexikon: renderLexikon,
   handbuch: renderHandbuch,
@@ -1082,7 +1082,6 @@ function restoreZonePrefs() {
 // ── Navigation ─────────────────────────────────────────────────────────────
 function navTo(view) {
   // Polls haengen am offenen Panel — beim Wegnavigieren abstellen.
-  if (view !== 'server') stopServer();
   if (view !== 'support') stopSupport();
   currentView = view;
   document.querySelectorAll('.cp-nav-btn').forEach((b) => b.classList.toggle('active', b.dataset.view === view));
@@ -1147,7 +1146,7 @@ async function boot() {
   // Themes waeren sonst dauerhaft auf Violett zurueckgefallen. Staff bekommt
   // ueber effectiveTier() alles frei (siehe shared/theme.js).
   theme.setFromToken(t);
-  initTeam(panelCtx); initAdmin(panelCtx); initServer(panelCtx);
+  initTeam(panelCtx); initAdmin(panelCtx); initAnnounce(panelCtx);
   initSupport(panelCtx); initLexikon(panelCtx); initHandbuch(panelCtx);
   initSettings(settingsCtx);
   // EINMAL registrieren, nicht erst beim Oeffnen des Software-Reiters: der
