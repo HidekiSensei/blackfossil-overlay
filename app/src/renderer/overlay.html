@@ -1529,7 +1529,6 @@
       <button data-stab="godvoice" class="secondary">📣 Gottstimme</button>
       <button data-stab="teamaudit" class="secondary">🛡️ Team-Audit</button>
       <button data-stab="evrima" class="secondary">🏷️ Evrima</button>
-      <button data-stab="ops" class="secondary">🛠️ Betrieb</button>
     </div>
     <div class="admin-panes">
       <div class="admin-pane" data-pane="welt"><div id="svWeltBody"><div class="dt-muted">Lade…</div></div></div>
@@ -1557,27 +1556,6 @@
         </div>
       </div>
       <div class="admin-pane" data-pane="evrima" hidden><div id="evrimaBody"><div class="dt-muted">Lade…</div></div></div>
-      <div class="admin-pane" data-pane="ops" hidden>
-        <div class="sec-title">🚦 Status-Matrix</div>
-        <div id="opsHealth" class="dt-muted" style="margin:8px 0 4px">Lade…</div>
-        <div style="margin:4px 0 14px">
-          <div style="font-size:11px;color:var(--muted);margin-bottom:3px">👥 Spieler (24 h)</div>
-          <canvas id="opsSpark" width="640" height="70" style="width:100%;height:70px;background:rgba(0,0,0,0.25);border:1px solid var(--border);border-radius:8px"></canvas>
-        </div>
-        <div class="sec-title">🏷️ Versionen &amp; Branches</div>
-        <div id="opsVersions" class="dt-muted" style="margin:8px 0 14px">Lade…</div>
-        <div class="sec-title">📜 Logs</div>
-        <div style="display:flex;gap:6px;align-items:center;margin:8px 0 6px;flex-wrap:wrap">
-          <select id="opsLogSel" class="bf-select" style="flex:0 0 190px"></select>
-          <input id="opsLogFilter" placeholder="🔍 Filter…" class="bf-select" style="cursor:text;flex:1;min-width:120px">
-          <label style="display:flex;align-items:center;gap:5px;font-size:12px;cursor:pointer;user-select:none">
-            <input id="opsLogFollow" type="checkbox" style="width:auto;cursor:pointer"> Folgen
-          </label>
-          <button id="opsLogReload" class="secondary" style="flex:none;width:auto;padding:6px 10px">🔄</button>
-          <button id="opsLogCopy" class="secondary" style="flex:none;width:auto;padding:6px 10px">📋</button>
-        </div>
-        <pre id="opsLogBox" style="max-height:300px;overflow:auto;background:rgba(0,0,0,0.35);border:1px solid var(--border);border-radius:8px;padding:8px;font-size:11px;line-height:1.35;white-space:pre-wrap;word-break:break-all;margin:0"></pre>
-      </div>
       <div class="admin-pane" data-pane="godvoice" hidden>
         <div class="sec-title">📣 Gottstimme — server-weite Durchsage</div>
         <div class="set-block" style="margin-top:8px">
@@ -1603,6 +1581,7 @@
       <button data-srvt="overview">📊 Übersicht</button>
       <button data-srvt="players" class="secondary">👥 Spieler</button>
       <button data-srvt="limits" class="secondary">🦖 Limits</button>
+      <button data-srvt="betrieb" class="secondary">🛠️ Betrieb</button>
       <button data-srvt="control" class="secondary">⚙️ Steuerung</button>
     </div>
     <div class="admin-panes">
@@ -1628,6 +1607,23 @@
       <!-- 🦖 Class-Limits -->
       <div class="admin-pane" data-srvp="limits" hidden>
         <div id="svClassBody"><div class="dt-muted">Lade…</div></div>
+      </div>
+
+      <!-- 🛠️ Betrieb: Versionen & Branches + Log-Viewer (Status-Matrix/Auslastung stehen im Übersichts-Tab) -->
+      <div class="admin-pane" data-srvp="betrieb" hidden>
+        <div class="sec-title">🏷️ Versionen &amp; Branches</div>
+        <div id="opsVersions" class="dt-muted" style="margin:8px 0 14px">Lade…</div>
+        <div class="sec-title">📜 Logs</div>
+        <div style="display:flex;gap:6px;align-items:center;margin:8px 0 6px;flex-wrap:wrap">
+          <select id="opsLogSel" class="bf-select" style="flex:0 0 190px"></select>
+          <input id="opsLogFilter" placeholder="🔍 Filter…" class="bf-select" style="cursor:text;flex:1;min-width:120px">
+          <label style="display:flex;align-items:center;gap:5px;font-size:12px;cursor:pointer;user-select:none">
+            <input id="opsLogFollow" type="checkbox" style="width:auto;cursor:pointer"> Folgen
+          </label>
+          <button id="opsLogReload" class="secondary" style="flex:none;width:auto;padding:6px 10px">🔄</button>
+          <button id="opsLogCopy" class="secondary" style="flex:none;width:auto;padding:6px 10px">📋</button>
+        </div>
+        <pre id="opsLogBox" style="max-height:340px;overflow:auto;background:rgba(0,0,0,0.35);border:1px solid var(--border);border-radius:8px;padding:8px;font-size:11px;line-height:1.35;white-space:pre-wrap;word-break:break-all;margin:0"></pre>
       </div>
 
       <!-- ⚙️ Steuerung: Ansage / Wartung / Start-Stop -->

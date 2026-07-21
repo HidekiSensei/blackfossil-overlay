@@ -2861,10 +2861,11 @@ function srvShowTab(t) {
   srvTab = t;
   document.querySelectorAll('#srvTabs [data-srvt]').forEach((b) => b.classList.toggle('secondary', b.dataset.srvt !== t));
   document.querySelectorAll('#srvPanel .admin-pane[data-srvp]').forEach((p) => { p.hidden = p.dataset.srvp !== t; });
-  // Voll-Render beim Wechsel (inkl. Limits — die werden EINMAL geladen, nicht im Poll).
+  // Voll-Render beim Wechsel (inkl. Limits/Betrieb — die werden EINMAL geladen, nicht im Poll).
   if (t === 'overview') srvRenderOverview();
   else if (t === 'players') renderSrvPlayers();
   else if (t === 'limits') svRenderClassLimits();
+  else if (t === 'betrieb') srvRenderBetrieb();
   bfScheduleFrameSync && bfScheduleFrameSync();
 }
 // 8s-Poll: nur Live-Tabs auffrischen. Limits/Steuerung bleiben stehen (kein Überschreiben von Eingaben).
@@ -2999,71 +3000,28 @@ function showServerTab(t) {
   else if (t === 'godvoice') renderGodVoice();
   else if (t === 'teamaudit') renderTeamAudit();
   else if (t === 'evrima') renderEvrima();
-  else if (t === 'ops') renderOps();
   bfScheduleFrameSync && bfScheduleFrameSync();
 }
 
-// ── 🛠️ Betrieb (Ops-Interface): Status-Matrix + Versionen/Branches + Log-Viewer ──────────────
-// Read-only-Diagnose ohne SSH: Backend /admin/ops/* (admin-gated). Polling läuft NUR solange
-// der Tab offen ist (Guard in den Intervallen — Tab-/Panel-Wechsel stoppt von selbst).
+// ── 🛠️ Betrieb (Ops-Interface): Versionen/Branches + Log-Viewer ─────────────────────────────
+// Read-only-Diagnose ohne SSH: Backend /admin/ops/* (admin-gated). Sitzt jetzt als Tab im
+// Server-Panel (Status-Matrix + Auslastung stehen im Übersichts-Tab). Der Log-Follow-Poll läuft
+// nur, solange der Betrieb-Tab offen ist (Guard schaltet sich selbst ab).
 let opsLogState = { name: '', nextByte: null, lines: [] }; // Follow-Zustand je gewähltem Log
 const OPS_LOG_MAX_LINES = 4000;
 
-function opsActive() { return serverOpen && serverTab === 'ops'; }
+function srvBetriebActive() { return srvOpen && srvTab === 'betrieb'; }
 
-function renderOps() {
-  renderOpsHealth(); renderOpsSpark(); renderOpsVersions(); opsInitLogs();
-  // 10s-Health-Poll, nur solange der Tab offen ist (Selbstabschaltung über Guard).
-  if (!renderOps._timer) {
-    renderOps._timer = setInterval(() => {
-      if (!opsActive()) { clearInterval(renderOps._timer); renderOps._timer = null; return; }
-      renderOpsHealth();
-    }, 10000);
-  }
-  if (!renderOps._logTimer) {
-    renderOps._logTimer = setInterval(() => {
-      if (!opsActive()) { clearInterval(renderOps._logTimer); renderOps._logTimer = null; return; }
+function srvRenderBetrieb() {
+  renderOpsVersions(); opsInitLogs();
+  // Log-Follow-Poll (2s), nur solange der Betrieb-Tab offen ist (Selbstabschaltung über Guard).
+  if (!srvRenderBetrieb._logTimer) {
+    srvRenderBetrieb._logTimer = setInterval(() => {
+      if (!srvBetriebActive()) { clearInterval(srvRenderBetrieb._logTimer); srvRenderBetrieb._logTimer = null; return; }
       const f = el('opsLogFollow');
       if (f && f.checked) opsLoadLog(false); // inkrementell (fromByte)
     }, 2000);
   }
-}
-
-async function renderOpsHealth() {
-  const box = el('opsHealth'); if (!box) return;
-  try {
-    const d = await svApi('GET', '/admin/ops/health');
-    const dot = (c) => (c.ok ? (c.warn ? '🟡' : '🟢') : '🔴');
-    const label = { db: 'Datenbank', mod_api: 'Mod-API (Poller)', game_process: 'Game-Server', control_server: 'Game-Box (control)', livekit: 'Voice (LiveKit)', peer_backend: 'Peer-Backend' };
-    box.innerHTML = `<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(215px,1fr));gap:6px">` +
-      (d.checks || []).map((c) =>
-        `<div style="border:1px solid var(--border);border-radius:8px;padding:7px 9px;font-size:12px">${dot(c)} <b>${escapeHtml(label[c.id] || c.id)}</b>` +
-        `<span style="color:var(--muted)"> ${c.latencyMs} ms</span>` +
-        (c.detail ? `<div style="color:var(--muted);font-size:11px;margin-top:2px">${escapeHtml(c.detail)}</div>` : '') + `</div>`
-      ).join('') + `</div><div style="font-size:10px;color:var(--muted);margin-top:4px">Umgebung: ${escapeHtml(d.env || '?')} · ${new Date().toLocaleTimeString()}</div>`;
-  } catch (e) { box.innerHTML = `<span style="color:#f87171">Health nicht ladbar: ${escapeHtml(e.message || '?')}</span>`; }
-}
-
-async function renderOpsSpark() {
-  const cv = el('opsSpark'); if (!cv) return;
-  try {
-    const d = await svApi('GET', '/admin/ops/metrics/players?hours=24');
-    const pts = d.points || [];
-    const ctx = cv.getContext('2d'); ctx.clearRect(0, 0, cv.width, cv.height);
-    if (!pts.length) { ctx.fillStyle = 'rgba(255,255,255,0.35)'; ctx.font = '12px sans-serif'; ctx.fillText('Noch keine Daten', 10, 40); return; }
-    const maxN = Math.max(5, ...pts.map((p) => p.n));
-    const t0 = new Date(pts[0].t).getTime(), t1 = new Date(pts[pts.length - 1].t).getTime() || t0 + 1;
-    ctx.strokeStyle = '#7dd3fc'; ctx.lineWidth = 1.5; ctx.beginPath();
-    pts.forEach((p, i) => {
-      const x = ((new Date(p.t).getTime() - t0) / Math.max(1, t1 - t0)) * (cv.width - 8) + 4;
-      const y = cv.height - 6 - (p.n / maxN) * (cv.height - 16);
-      i ? ctx.lineTo(x, y) : ctx.moveTo(x, y);
-    });
-    ctx.stroke();
-    ctx.fillStyle = 'rgba(255,255,255,0.45)'; ctx.font = '10px sans-serif';
-    ctx.fillText(`max ${maxN}`, 6, 12);
-    ctx.fillText(`aktuell ${pts[pts.length - 1].n}`, cv.width - 70, 12);
-  } catch {}
 }
 
 async function renderOpsVersions() {
