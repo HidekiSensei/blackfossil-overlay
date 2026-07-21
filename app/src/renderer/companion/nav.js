@@ -43,6 +43,9 @@ export const NAV_GROUPS = [
       { view: 'warnings', icon: '⚠️', label: 'Verwarnungen', cap: 'team.warnings' },
       { view: 'paudit', icon: '🔍', label: 'Player-Audit', cap: 'team.playerAudit' },
       { view: 'server', icon: '📢', label: 'Server', cap: 'server.status' },
+      // Handbuch: Nachschlagewerk aller Staff-Funktionen. Fuer jeden im Team
+      // sichtbar (Inhalt filtert sich je Rang selbst) → cap: null.
+      { view: 'handbuch', icon: '📖', label: 'Handbuch', cap: null },
     ],
   },
   {
