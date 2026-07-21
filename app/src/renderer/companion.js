@@ -28,6 +28,8 @@ import {
   isListening, listenTarget, listenRadius, applyVolumes, audibleCount,
 } from './companion/listen.js';
 import { initDinos, renderDinos } from './companion/panels/dinos.js';
+import { initPlayers, renderPlayers } from './companion/panels/players.js';
+import { initTokens, renderTokens } from './companion/panels/tokens.js';
 import { NAV_GROUPS, NAV_SETTINGS, itemFor, collapsedGroups, saveCollapsed } from './companion/nav.js';
 import { initServer, renderServer, stopServer } from './companion/panels/server.js';
 import { initAdmin, renderAdmin } from './companion/panels/admin.js';
@@ -869,7 +871,8 @@ const panelCtx = {
 // Menuepunkt -> Renderer. Team und Admin bedienen mehrere Punkte, deshalb
 // bekommen sie den Punkt als zweiten Parameter (frueher waren das ihre Reiter).
 const PANELS = {
-  spieler: (r) => renderTeam(r, 'spieler'),
+  spieler: renderPlayers,
+  tokens: renderTokens,
   warnings: (r) => renderTeam(r, 'warnings'),
   paudit: (r) => renderTeam(r, 'paudit'),
   taudit: (r) => renderTeam(r, 'taudit'),
@@ -1128,6 +1131,8 @@ async function boot() {
     onChange: updateListenUi,
   });
   initDinos(panelCtx);
+  initPlayers(panelCtx);
+  initTokens(panelCtx);
   initEditor(editorCtx);
 
   // Nicht erlaubte Punkte gar nicht erst erzeugen — tote Buttons verrotten.
