@@ -655,6 +655,20 @@ function drawTrails(ctx, w, h, scale, trails, highlight) {
 // Die gerade bearbeitete Zone: gefuellt, mit quadratischen Anfassern an den
 // Eckpunkten. Bewusst deutlich auffaelliger als die uebrigen Zonen — beim
 // Bearbeiten muss unmissverstaendlich sein, welche gemeint ist.
+// Mittelpunkte der Kanten — daraus entstehen beim Ziehen neue Eckpunkte.
+// Reihenfolge: Mittelpunkt i liegt zwischen Eckpunkt i und i+1 (letzter zum
+// ersten, das Polygon ist geschlossen).
+export function zoneMidpoints(points) {
+  const out = [];
+  const n = (points || []).length;
+  if (n < 2) return out;
+  for (let i = 0; i < n; i++) {
+    const a = points[i], b = points[(i + 1) % n];
+    out.push({ x: (a.x + b.x) / 2, y: (a.y + b.y) / 2 });
+  }
+  return out;
+}
+
 export function drawZoneEdit(ctx, w, h, scale, zone, activeHandle) {
   const pts = (zone.points || []).map((p) => {
     const n = worldToNorm(p.x, p.y);
@@ -672,6 +686,21 @@ export function drawZoneEdit(ctx, w, h, scale, zone, activeHandle) {
 
   // Anfasser als Quadrate — von den runden Spieler- und Teleport-Markern
   // dadurch auf einen Blick zu unterscheiden.
+  // Geister-Punkte auf den Kantenmitten: kleiner und halbtransparent, damit
+  // sofort erkennbar ist, dass sie noch keine echten Eckpunkte sind. Ziehen
+  // macht einen daraus.
+  const mids = zoneMidpoints(zone.points || []).map((p) => {
+    const n = worldToNorm(p.x, p.y);
+    return { x: n.nx * w, y: n.ny * h };
+  });
+  const sm = 4 * scale;
+  mids.forEach((p) => {
+    ctx.fillStyle = 'rgba(255,255,255,0.45)';
+    ctx.fillRect(p.x - sm, p.y - sm, sm * 2, sm * 2);
+    ctx.lineWidth = 1.5 * scale; ctx.strokeStyle = 'rgba(0,0,0,0.6)';
+    ctx.strokeRect(p.x - sm, p.y - sm, sm * 2, sm * 2);
+  });
+
   const s0 = 6 * scale;
   pts.forEach((p, i) => {
     const on = i === activeHandle;

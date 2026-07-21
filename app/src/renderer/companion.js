@@ -11,11 +11,12 @@ import {
   initEditor, openCreateMenu, openEdit, isPlacing, placingKind, placingPoints,
   addPlacementPoint, cancelPlacing, editingZone, setZonePoints, closeEditor,
   editingEncounter, setEncounterGeom, editingTeleport, setTeleportPos,
+  insertZonePoint, removeZonePoint,
 } from './companion/editor.js';
 import {
   loadMapImage, drawFullMap, drawHeatmap, drawAiEncounters, setZones, setCalAffine,
   ZONE_LAYERS, ZONE_META, setZoneLayer, isZoneLayerVisible,
-  normToWorld, worldToNorm, zoneObjectAt, encounterHandles,
+  normToWorld, worldToNorm, zoneObjectAt, encounterHandles, zoneMidpoints,
 } from './map.js';
 import { baseClass, escapeHtml } from './shared/format.js';
 import { initServer, renderServer, stopServer } from './companion/panels/server.js';
@@ -213,6 +214,20 @@ function drawPlacement(ctx, scale) {
     const n = worldToNorm(p.x, p.y);
     return { x: n.nx * MAP_SIZE, y: n.ny * MAP_SIZE };
   });
+  // Gummiband zum Zeiger — zeigt die Kante, die der naechste Klick erzeugt.
+  const cur = placeCursor && placingKind() === 'zone' ? (() => {
+    const n = worldToNorm(placeCursor.x, placeCursor.y);
+    return { x: n.nx * MAP_SIZE, y: n.ny * MAP_SIZE };
+  })() : null;
+  if (cur && p2.length) {
+    ctx.beginPath();
+    ctx.moveTo(p2[p2.length - 1].x, p2[p2.length - 1].y);
+    ctx.lineTo(cur.x, cur.y);
+    if (p2.length >= 2) ctx.lineTo(p2[0].x, p2[0].y);
+    ctx.setLineDash([4 * scale, 4 * scale]);
+    ctx.lineWidth = 1.5 * scale; ctx.strokeStyle = 'rgba(245,158,11,0.55)'; ctx.stroke();
+    ctx.setLineDash([]);
+  }
   if (p2.length > 1) {
     ctx.beginPath();
     p2.forEach((p, i) => (i ? ctx.lineTo(p.x, p.y) : ctx.moveTo(p.x, p.y)));
@@ -289,6 +304,7 @@ function pointInZone(zone, wx, wy) {
 
 // ── Rechteck-Auswahl (Strg + Ziehen) ───────────────────────────────────────
 let marquee = null;   // { x0,y0,x1,y1 } in Bildschirm-Pixeln des Karten-Wrappers
+let placeCursor = null;   // Weltkoordinate unter dem Zeiger waehrend des Zeichnens
 
 function drawMarquee() {
   const box = el('cpMarquee');
@@ -338,6 +354,19 @@ function selectFromMap(ids, add) {
   }
   if (plList) plList.refresh();
   dirty = true;
+}
+
+// Karten-Objekte nachladen, damit Aenderungen anderer Admins (Companion ODER
+// Overlay) hier ankommen.
+//
+// Waehrend eines eigenen Bearbeitens wird NICHT nachgeladen — sonst zoege der
+// Server einem die Punkte unter der Maus weg.
+function refreshMapObjects() {
+  if (currentView !== 'map') return;
+  if (isPlacing() || editingZone() || editingEncounter() || editingTeleport()) return;
+  loadZones();
+  if (can(perms, 'map.teleports')) loadTeleports();
+  if (can(perms, 'map.encounters')) loadEncounters();
 }
 
 function setEditMode(on) {
@@ -472,6 +501,18 @@ function initMapInteraction() {
         e.preventDefault();
         return;
       }
+      // Geister-Punkt auf einer Kantenmitte: wird beim Anfassen zu einem echten
+      // Eckpunkt, den man in derselben Bewegung weiterzieht. Einfuegen und
+      // Positionieren in EINEM Zug — das ist der Grund fuer diese Loesung statt
+      // eines "Punkt hinzufuegen"-Menuepunkts.
+      if (ez) {
+        const mid = handleAt(zoneMidpoints(ez.points), hx, hy);
+        if (mid >= 0) {
+          const w1 = screenToWorld(hx, hy);
+          const ni = insertZonePoint(mid, w1.x, w1.y);
+          if (ni >= 0) { geomDrag = { index: ni, kind: 'zone' }; dirty = true; e.preventDefault(); return; }
+        }
+      }
       // Nur Zonen haben eine Flaeche, die sich als Ganzes greifen laesst.
       if (ez) {
         const w0 = screenToWorld(hx, hy);
@@ -503,7 +544,19 @@ function initMapInteraction() {
     const sx = e.clientX - r.left, sy = e.clientY - r.top;
     // Im Platzierungs-Modus liefert der Klick Koordinaten, statt Spieler
     // auszuwaehlen — sonst waere beides nicht auseinanderzuhalten.
-    if (isPlacing()) { const w = screenToWorld(sx, sy); addPlacementPoint(w.x, w.y); return; }
+    if (isPlacing()) {
+      const w = screenToWorld(sx, sy);
+      const pts = placingPoints();
+      // Klick auf den Startpunkt schliesst das Polygon, statt einen Punkt
+      // uebereinander zu setzen.
+      if (placingKind() === 'zone' && pts.length >= 3 && handleAt([pts[0]], sx, sy) === 0) {
+        const b = el('zSave');
+        if (b && !b.disabled) b.click();
+        return;
+      }
+      addPlacementPoint(w.x, w.y);
+      return;
+    }
     const c = hitAt(sx, sy);
     if (!c) return;
     selectFromMap(c.items.map((it) => it.p.steamId), e.shiftKey);
@@ -514,13 +567,31 @@ function initMapInteraction() {
     e.preventDefault();
     if (!editMode || !can(perms, 'world.write')) return;
     const r = cv.getBoundingClientRect();
-    const hit = objectAt(e.clientX - r.left, e.clientY - r.top);
+    const sx = e.clientX - r.left, sy = e.clientY - r.top;
+    // Rechtsklick auf einen Eckpunkt der bearbeiteten Zone entfernt ihn.
+    const ez = editingZone();
+    if (ez) {
+      const vi = handleAt(ez.points, sx, sy);
+      if (vi >= 0) {
+        if (removeZonePoint(vi)) { dirty = true; }
+        else toast('Eine Zone braucht mindestens 3 Eckpunkte.', 'error');
+        return;
+      }
+    }
+    const hit = objectAt(sx, sy);
     if (hit) openEdit(hit.kind, hit.obj);
   });
   cv.addEventListener('mouseleave', () => { hideTip(); if (hoverIds.size) { hoverIds = new Set(); dirty = true; } });
   cv.addEventListener('mousemove', (e) => {
     if (dragging) return;
     const r = cv.getBoundingClientRect();
+    // Gummiband: beim Zeichnen die Linie vom letzten Punkt zum Zeiger zeigen,
+    // damit man sieht, wohin der naechste Klick setzt.
+    if (isPlacing()) {
+      placeCursor = screenToWorld(e.clientX - r.left, e.clientY - r.top);
+      dirty = true;
+      return;
+    }
     const c = hitAt(e.clientX - r.left, e.clientY - r.top);
     if (c) showTip(c, e.clientX - r.left, e.clientY - r.top); else hideTip();
     // Nur neu zeichnen, wenn sich die Menge wirklich geaendert hat — sonst
@@ -853,7 +924,9 @@ function navTo(view) {
   currentView = view;
   document.querySelectorAll('.cp-nav-btn').forEach((b) => b.classList.toggle('active', b.dataset.view === view));
   document.querySelectorAll('.cp-view').forEach((s) => { s.hidden = s.dataset.view !== view; });
-  if (view === 'map') dirty = true;
+  // Beim Betreten der Karte sofort nachladen, statt bis zum naechsten
+  // Intervall zu warten.
+  if (view === 'map') { dirty = true; refreshMapObjects(); }
   const render = PANELS[view];
   if (render) {
     try { render(document.querySelector(`.cp-view[data-view="${view}"]`)); }
@@ -972,19 +1045,7 @@ async function boot() {
   await pollPositions();
   setInterval(pollPositions, 1000);
 
-  // Karten-Objekte regelmaessig nachladen, damit Aenderungen anderer Admins
-  // (Companion ODER Overlay) hier ankommen. 30 s reicht: Zonen, Teleports und
-  // Encounter aendern sich selten, und jede Abfrage ist ein voller Satz.
-  //
-  // Waehrend eines eigenen Bearbeitens wird NICHT nachgeladen — sonst zoege der
-  // Server einem die Punkte unter der Maus weg.
-  setInterval(() => {
-    if (currentView !== 'map') return;
-    if (isPlacing() || editingZone() || editingEncounter() || editingTeleport()) return;
-    loadZones();
-    if (can(perms, 'map.teleports')) loadTeleports();
-    if (can(perms, 'map.encounters')) loadEncounters();
-  }, 30000);
+  setInterval(refreshMapObjects, 15000);
   setInterval(loadUserDir, 5 * 60 * 1000);
   requestAnimationFrame(frame);
 }

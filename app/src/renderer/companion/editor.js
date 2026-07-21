@@ -25,6 +25,33 @@ let editTp = null;
 
 export function editingZone() { return editZone; }
 export function setZonePoints(points) { if (editZone) editZone.points = points; }
+
+// Die Eckpunktzahl im offenen Formular nachziehen. Ohne das behauptet das
+// Panel weiter den Stand von vor dem Einfuegen — man sieht die Aenderung auf
+// der Karte, aber die Zahl daneben luegt.
+function refreshZoneCount() {
+  const box = document.getElementById('zeCount');
+  if (box && editZone) box.textContent = `${editZone.points.length} Eckpunkte`;
+}
+
+// Neuen Eckpunkt an Position `index` einfuegen (aus einem Geister-Punkt) und
+// seinen Index zurueckgeben, damit der Aufrufer sofort weiterziehen kann.
+export function insertZonePoint(index, x, y) {
+  if (!editZone) return -1;
+  const pts = editZone.points.slice();
+  pts.splice(index + 1, 0, { x, y });
+  editZone.points = pts;
+  refreshZoneCount();
+  return index + 1;
+}
+
+// Eckpunkt entfernen. Unter 3 Punkten waere es kein Polygon mehr.
+export function removeZonePoint(index) {
+  if (!editZone || editZone.points.length <= 3) return false;
+  editZone.points = editZone.points.filter((_, i) => i !== index);
+  refreshZoneCount();
+  return true;
+}
 export function editingTeleport() { return editTp; }
 export function setTeleportPos(x, y) { if (editTp) { editTp.x = x; editTp.y = y; } }
 export function editingEncounter() { return editEnc; }
@@ -284,8 +311,10 @@ export function openEdit(kind, obj) {
       + `<div style="height:var(--cp-s2)"></div>`
       + U.field('zeName', 'Name', { value: obj.name || '' })
       + `<div style="height:var(--cp-s2)"></div>`
-      + `<div class="cp-muted">${(obj.points || []).length} Eckpunkte</div>`
-      + U.hint('Eckpunkte lassen sich auf der Karte ziehen; Ziehen innerhalb der Fläche verschiebt die ganze Zone.')
+      + `<div class="cp-muted" id="zeCount">${(obj.points || []).length} Eckpunkte</div>`
+      + U.hint('Eckpunkte ziehen verschiebt sie. Die halbtransparenten Punkte auf den '
+             + 'Kanten werden beim Ziehen zu neuen Eckpunkten. Rechtsklick auf einen '
+             + 'Eckpunkt entfernt ihn. Ziehen innerhalb der Fläche verschiebt die ganze Zone.')
       + `<div style="height:var(--cp-s3)"></div>`
       + U.btnRow(U.btn('fmSave', 'Speichern', { variant: 'primary', size: 'sm' }),
                  U.btn('fmDel', 'Löschen', { variant: 'danger', size: 'sm' }))
