@@ -1,4 +1,8 @@
-// Dino-Verwaltung (Admin): Class-Limits, Kadaver entfernen, Polymorph.
+// Dino-Verwaltung (Admin): Class-Limits und Polymorph.
+//
+// Kadaver entfernen sass frueher hier und liegt jetzt unter Welt — es ist ein
+// Eingriff in die WELT, kein Dino-Werkzeug, und stand hier nur, weil es die
+// erste Stelle war, an der es hinpasste.
 //
 // Drei Reiter statt drei Menuepunkte: das sind Teilfunktionen EINER Aufgabe
 // ("was laeuft auf dem Server herum"), keine eigenstaendigen Bereiche. Die
@@ -17,7 +21,6 @@ let saved = {};
 
 const TABS = [
   { id: 'limits', label: 'Class-Limits', cap: 'limits.write' },
-  { id: 'corpses', label: 'Kadaver entfernen', cap: 'server.wipe' },
   { id: 'poly', label: 'Polymorph', cap: 'dino.polymorph' },
 ];
 
@@ -37,7 +40,6 @@ export function renderDinos(root) {
     b.onclick = () => { tab = b.dataset.tab; renderDinos(root); };
   });
   if (tab === 'limits') renderLimits();
-  else if (tab === 'corpses') renderCorpses();
   else if (tab === 'poly') renderPoly();
 }
 
@@ -147,48 +149,6 @@ export function canon(m) {
     .map(([k, v]) => `${k}=${v}`).join('|');
 }
 
-// ── Kadaver entfernen ──────────────────────────────────────────────────────
-function renderCorpses() {
-  const box = el('dnBody');
-  box.innerHTML = U.item('Alle Kadaver entfernen',
-      'Räumt herumliegende Leichen und KI-Dinos ab. Wirkt serverweit und lässt sich '
-      + 'nicht rückgängig machen. Zum Bestätigen zweimal klicken.',
-      U.btn('dnWipe', 'Kadaver entfernen', { variant: 'danger' }));
-
-  const btn = el('dnWipe');
-  btn.onclick = () => {
-    // Zwei-Klick-Bestaetigung wie im Overlay (armConfirm): der erste Klick
-    // beschriftet um, der zweite loest aus. Fuer eine serverweite, nicht
-    // umkehrbare Aktion ist ein Fehlklick sonst zu billig.
-    if (btn.dataset.armed) {
-      delete btn.dataset.armed;
-      wipe(btn);
-      return;
-    }
-    btn.dataset.armed = '1';
-    const t = btn.textContent;
-    btn.textContent = 'Sicher? Kadaver leeren';
-    setTimeout(() => {
-      if (!btn.dataset.armed) return;
-      delete btn.dataset.armed;
-      btn.textContent = t;
-    }, 2500);
-  };
-}
-
-async function wipe(btn) {
-  btn.disabled = true;
-  btn.textContent = 'Räume auf…';
-  try {
-    await C.api('POST', '/admin/server/wipecorpses', {});
-    C.toast('Kadaver geleert.', 'success');
-  } catch (e) {
-    C.toast('Fehlgeschlagen: ' + e.message, 'error');
-  } finally {
-    btn.disabled = false;
-    btn.textContent = 'Kadaver entfernen';
-  }
-}
 
 // ── Polymorph ──────────────────────────────────────────────────────────────
 //

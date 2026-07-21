@@ -50,7 +50,14 @@ async function renderWelt() {
   catch (e) { box.innerHTML = U.card(U.muted('Welt-Zustand nicht abrufbar: ' + e.message)); return; }
 
   const tod = Number(d.time ?? d.timeOfDay ?? 12);
+  const darfWipen = C.can('server.wipe');
+
+  // Alles auf einer Seite statt in Reitern: es sind drei kurze Bloecke, und
+  // beim Einstellen einer Welt will man Uhrzeit, Wetter und Wachstum
+  // nebeneinander sehen, nicht nacheinander aufrufen. Uebertitel und
+  // Trennlinien gliedern, ohne etwas zu verstecken.
   box.innerHTML = `
+    ${U.gruppe('Umwelt', 'Tageszeit und Wetter des laufenden Servers.')}
     ${U.sec('Tageszeit')}
     ${U.card(`
       <div class="cp-row">
@@ -67,9 +74,21 @@ async function renderWelt() {
     ${U.sec('Wetter')}
     ${U.card(U.chips(...WEATHER.map((w) => U.btn(`adW_${w}`, w))))}
 
-    ${U.sec('Wachstum')}
-    ${U.card(U.check('adGrowStop', 'Grow-Stop — Wachstum aller Dinos einfrieren', !!d.growthStopped)
-      + U.hint('Betrifft alle Spieler sofort.'))}
+    ${U.gruppe('Wachstum', 'Betrifft alle Spieler sofort.')}
+    ${U.card(U.check('adGrowStop', 'Grow-Stop — Wachstum aller Dinos einfrieren', !!d.growthStopped))}
+
+    ${U.gruppe('Kadaver', 'Herumliegende Leichen und KI-Dinos abräumen.')}
+    ${darfWipen
+      ? U.card(U.item('Alle Kadaver entfernen',
+          'Wirkt serverweit und lässt sich nicht rückgängig machen. Zum Bestätigen zweimal klicken.',
+          U.btn('adWipe', 'Kadaver entfernen', { variant: 'danger' })), 'cp-card-danger')
+        // Ehrlich bleiben statt eine Zahl erfinden: die Mod liefert in ihrer
+        // Statusantwort ein fest verdrahtetes "corpseCount": 0 — es gibt keinen
+        // Weg, die tatsaechliche Anzahl zu erfahren. Eine Uebersicht wuerde
+        // dauerhaft null anzeigen und waere schlimmer als keine.
+        + U.hint('Wie viele Kadaver gerade liegen, meldet der Server nicht — die Mod gibt '
+          + 'dort immer 0 zurück. Deshalb steht hier keine Anzahl.')
+      : U.hint('Kadaver entfernen ist Moderatoren und Admins vorbehalten.')}
   `;
 
   const slider = el('adTod');
@@ -78,6 +97,28 @@ async function renderWelt() {
   el('adFreeze').onchange = (e) => send('/admin/world/time', { frozen: e.target.checked }, e.target.checked ? 'Zeit eingefroren' : 'Zeit läuft wieder');
   el('adGrowStop').onchange = (e) => send('/admin/world/growth-stop', { enabled: e.target.checked }, e.target.checked ? 'Wachstum gestoppt' : 'Wachstum läuft wieder');
   for (const w of WEATHER) el(`adW_${w}`).onclick = () => send('/admin/world/weather', { weather: w }, `Wetter: ${w}`);
+
+  const wipe = el('adWipe');
+  if (wipe) wipe.onclick = () => {
+    // Zwei Klicks: serverweit und nicht umkehrbar.
+    if (wipe.dataset.armed) {
+      delete wipe.dataset.armed;
+      wipe.disabled = true;
+      wipe.textContent = 'Räume auf…';
+      C.api('POST', '/admin/server/wipecorpses', {})
+        .then(() => C.toast('Kadaver geleert.', 'success'))
+        .catch((e) => C.toast('Fehlgeschlagen: ' + e.message, 'error'))
+        .finally(() => { wipe.disabled = false; wipe.textContent = 'Kadaver entfernen'; });
+      return;
+    }
+    wipe.dataset.armed = '1';
+    wipe.textContent = 'Sicher? Kadaver leeren';
+    setTimeout(() => {
+      if (!wipe.dataset.armed) return;
+      delete wipe.dataset.armed;
+      wipe.textContent = 'Kadaver entfernen';
+    }, 2500);
+  };
 }
 
 

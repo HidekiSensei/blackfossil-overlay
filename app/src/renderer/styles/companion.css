@@ -898,3 +898,11 @@ input[type="range"] { accent-color: var(--accent); }
   border-left: 3px solid #f59e0b; background: rgba(245, 158, 11, 0.08);
   border-radius: var(--cp-r-sm); padding: var(--cp-s2) var(--cp-s3); font-size: 12.5px;
 }
+
+/* Gruppen-Ueberschrift auf einer langen Seite. Die Linie sitzt OBEN, damit die
+   Ueberschrift zum folgenden Block gehoert und nicht zum vorigen — sonst liest
+   man sie als Abschluss statt als Anfang. Die erste bekommt keine Linie. */
+.cp-gruppe { margin: var(--cp-s6) 0 var(--cp-s4); padding-top: var(--cp-s5); border-top: 1px solid var(--cp-line); }
+.cp-gruppe:first-child { margin-top: 0; padding-top: 0; border-top: 0; }
+.cp-gruppe-t { font-size: 14.5px; font-weight: 650; }
+.cp-gruppe-s { font-size: 11.5px; color: var(--muted); margin-top: 2px; }

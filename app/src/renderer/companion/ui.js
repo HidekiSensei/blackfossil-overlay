@@ -10,6 +10,14 @@ export const esc = escapeHtml;
 
 export function card(inner, mod = '') { return `<div class="cp-card ${mod}">${inner}</div>`; }
 export function sec(title) { return `<div class="cp-sec">${esc(title)}</div>`; }
+
+// Gruppen-Ueberschrift mit Trennlinie darueber. Gliedert eine lange Seite in
+// Bloecke, ohne etwas hinter Reitern zu verstecken — man sieht weiter alles
+// und findet sich trotzdem zurecht. `sec` bleibt die feinere Stufe darunter.
+export function gruppe(title, sub) {
+  return `<div class="cp-gruppe"><div class="cp-gruppe-t">${esc(title)}</div>`
+    + (sub ? `<div class="cp-gruppe-s">${esc(sub)}</div>` : '') + `</div>`;
+}
 export function hint(t) { return `<div class="cp-hint">${esc(t)}</div>`; }
 export function muted(t) { return `<div class="cp-muted">${esc(t)}</div>`; }
 export function empty(t) { return `<div class="cp-empty">${esc(t)}</div>`; }
