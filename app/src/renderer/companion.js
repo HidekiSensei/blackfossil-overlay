@@ -19,7 +19,6 @@ import {
   loadMapImage, drawFullMap, drawHeatmap, drawAiEncounters, setZones, setCalAffine,
   ZONE_LAYERS, ZONE_META, setZoneLayer, isZoneLayerVisible,
   normToWorld, worldToNorm, zoneObjectAt, encounterHandles, zoneMidpoints, encounterMidpoints,
-  setAccent,
 } from './map.js';
 import { baseClass, escapeHtml } from './shared/format.js';
 import { makeTheme } from './shared/theme.js';
@@ -87,7 +86,9 @@ let dirty = true;             // Dirty-Flag: neu zeichnen nur bei Poll oder Pan/
 const theme = makeTheme({
   storageKey: 'bf-cp-theme',
   customKey: 'bf-cp-custom',
-  onApply: (t) => { setAccent(t); dirty = true; },   // Canvas kennt keine CSS-Variablen
+  // Nur neu zeichnen: die Markerfarben der Karte sind bewusst theme-fest
+  // (siehe map.js), aber der Rahmen drumherum haengt am Akzent.
+  onApply: () => { dirty = true; },
 });
 theme.apply(theme.current());
 // Aus der localStorage wiederhergestellt, aber nach dem Login gegen die Rechte

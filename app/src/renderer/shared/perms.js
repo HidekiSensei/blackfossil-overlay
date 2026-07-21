@@ -53,6 +53,7 @@ export const CAPS = {
   'limits.read':       'any',     // GET  /dino-limits     (jeder Angemeldete)
   'limits.write':      'admin',   // POST /admin/dino-limits
   'ops.read':          'admin',   // GET  /admin/ops/*     (h.require "admin")
+  'voice.listen':      'admin',   // POST /voice/listen    (voiceIsAdmin + Audit)
 
   // ── Server ────────────────────────────────────────────────────────────
   'server.status':     'staff',   // GET  /admin/server/status
