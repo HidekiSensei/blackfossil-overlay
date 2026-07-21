@@ -4,12 +4,10 @@
 // ("was laeuft auf dem Server herum"), keine eigenstaendigen Bereiche. Die
 // Navigation trennt Bereiche, Reiter trennen Handgriffe darin.
 import { el } from '../../shared/core.js';
-import { userLabel, matchUser, usersFrom } from '../../shared/users.js';
 import * as U from '../ui.js';
 
 let C = null;
 let tab = 'limits';
-let users = [];
 
 // Bekannte Arten und aktuelle Limits, wie sie zuletzt vom Server kamen.
 // `saved` ist die Vergleichsbasis fuers Zuruecksetzen und dafuer, ob es
@@ -199,22 +197,76 @@ async function wipe(btn) {
 // stehen deshalb in keiner der Artenlisten, und die Mod loest den Namen erst
 // zur Laufzeit gegen die Blueprint-Liste auf. Ein Dropdown waere eine
 // erfundene Auswahl.
+// Die Mod fuehrt keine abrufbare Artenliste — sie loest den Namen erst zur
+// Laufzeit gegen die Blueprint-Liste auf. Diese 14 stehen als einzige
+// Aufzaehlung in ihrer OpenAPI-Spec (Polymorph-Abschnitt) und sind deshalb
+// hier fest hinterlegt.
+//
+// Weil die Quelle nur ein Dokumentations-Kommentar ist und nicht der Code,
+// bleibt "Andere…" als Ausweg: fehlt ein Tier in der Liste, ist es damit
+// trotzdem erreichbar, statt dass die Auswahl zur Sackgasse wird.
+const TIERE = [
+  'Boar', 'Boar_Baby', 'Bullfrog', 'Chicken', 'Crab', 'Deer', 'Deer_Baby',
+  'Goat', 'Goat_Baby', 'Rabbit', 'Seaturtle',
+  'Psittacosaurus_Highlands', 'Psittacosaurus_Plains', 'Psittacosaurus_Coastal',
+];
+const ANDERE = '__andere';
+
+// Anzeigename eines Spielers aus /positions. label1 setzt decoratePositions
+// ("RP (Steam, Discord)"); ohne Verzeichnis bleibt der reine Spielname.
+const spielerName = (p) => p.label1 || p.name || p.steamId;
+
+// Zielauswahl.
+//
+// NUR Spieler im Spiel: Polymorph auf einen Offline-Spieler bewirkt nichts,
+// eine Auswahl voller Abwesender waere also nur eine Fehlerquelle.
+//
+// Vorbelegt ist man selbst. Der haeufigste Fall ist der Versuch am eigenen
+// Charakter, und eine leere Auswahl waere genau dafuer ein zusaetzlicher
+// Handgriff. Wer jemand anderen treffen will, waehlt aktiv aus — das ist die
+// unbequemere Richtung, und das ist hier die richtige Reihenfolge.
+//
+// Sonderfall: bin ich selbst nicht im Spiel, stehe ich TROTZDEM an erster
+// Stelle, mit dem Zusatz "nicht im Spiel". Still zu verschwinden waere
+// verwirrender als der Hinweis — man sucht sich sonst tot.
+function ziele() {
+  const me = C.perms();
+  const online = (C.players() || []).filter((p) => p.steamId && !p.isDead);
+  const ich = online.find((p) => p.steamId === me.steamId);
+  const andere = online
+    .filter((p) => p.steamId !== me.steamId)
+    .sort((a, b) => spielerName(a).localeCompare(spielerName(b), 'de'));
+
+  const out = [];
+  if (me.steamId) {
+    out.push(ich
+      ? { value: me.steamId, label: `${spielerName(ich)} (ich)` }
+      : { value: me.steamId, label: `${me.name || 'Ich'} (ich) — nicht im Spiel` });
+  }
+  for (const p of andere) out.push({ value: p.steamId, label: spielerName(p) });
+  return out;
+}
+
+function nameVon(steamId) {
+  const t = ziele().find((z) => z.value === steamId);
+  return t ? t.label : steamId;
+}
+
 const PRESETS = [
   { label: '🐔 Kampf-Huhn', cls: 'Chicken', scale: 1, hp: 10000 },
   { label: '🐗 Panzer-Boar', cls: 'Boar', scale: 1, hp: 2000 },
   { label: '🐇 Mini-Hase', cls: 'Rabbit', scale: 0.3, hp: 0 },
 ];
 
-async function renderPoly() {
+// Kein Laden noetig: die Zielauswahl kommt aus den bereits laufenden
+// Positionsabfragen, nicht aus /admin/users.
+function renderPoly() {
   const box = el('dnBody');
-  box.innerHTML = U.muted('Lade Spielerliste…');
-  if (!users.length) {
-    try { users = usersFrom(await C.api('GET', '/admin/users')); } catch { users = []; }
-  }
-  box.innerHTML = `<div class="cp-field"><label class="cp-label" for="dnPolyUser">Spieler</label>`
-    + `<input id="dnPolyUser" class="cp-input" list="dnPolyList" placeholder="RP-, Steam- oder Discord-Name…" autocomplete="off">`
-    + `<datalist id="dnPolyList"></datalist></div>`
-    + U.field('dnPolyClass', 'Ziel-Tier', { placeholder: 'Chicken, Boar, Deer, Rabbit …' })
+  box.innerHTML = U.select('dnPolyUser', 'Spieler', ziele(), C.perms().steamId)
+    + U.select('dnPolySel', 'Ziel-Tier', [...TIERE, { value: ANDERE, label: 'Andere…' }], 'Chicken')
+    + `<div id="dnPolyFreiBox" hidden>`
+      + U.field('dnPolyClass', 'Name des Tieres', { placeholder: 'Blueprint- oder Kurzname' })
+      + `</div>`
     + U.row(
       U.field('dnPolyScale', 'Größe', { type: 'number', value: '1' }),
       U.field('dnPolyHp', 'Max. Leben (optional)', { type: 'number', placeholder: '—' }))
@@ -222,33 +274,34 @@ async function renderPoly() {
     + U.chips(...PRESETS.map((p, i) => U.btn('dnPre' + i, p.label, { size: 'sm' })))
     + `<div class="cp-btn-row cp-btn-row-left">`
       + U.btn('dnPolyGo', 'Polymorph anwenden', { variant: 'primary' }) + `</div>`
-    + U.hint('Ziele sind NPC-Tiere, keine spielbaren Dinos — der Name wird vom '
-      + 'Spielserver aufgelöst. Größer als 1 ist laut Overlay noch nicht funktional. '
-      + 'Der Spieler wird dabei neu gesetzt und startet mit vollem Leben.');
+    + U.hint('Ziele sind NPC-Tiere, keine spielbaren Dinos. Größer als 1 ist laut '
+      + 'Overlay noch nicht funktional. Der Spieler wird dabei neu gesetzt und '
+      + 'startet mit vollem Leben.');
 
-  const inp = el('dnPolyUser');
-  inp.oninput = () => {
-    const q = inp.value.trim().toLowerCase();
-    const dl = el('dnPolyList');
-    if (q.length < 2) { dl.innerHTML = ''; return; }
-    dl.innerHTML = users
-      .filter((u) => userLabel(u).toLowerCase().includes(q) || (u.steamId || '').includes(q))
-      .slice(0, 40)
-      .map((u) => `<option value="${U.esc(userLabel(u))}"></option>`).join('');
+  // Auswahl "Andere…" blendet das Freitextfeld ein.
+  const sel = el('dnPolySel');
+  const frei = el('dnPolyFreiBox');
+  const zielTier = () => (sel.value === ANDERE ? el('dnPolyClass').value.trim() : sel.value);
+  sel.onchange = () => {
+    frei.hidden = sel.value !== ANDERE;
+    if (!frei.hidden) el('dnPolyClass').focus();
   };
 
   PRESETS.forEach((p, i) => {
     el('dnPre' + i).onclick = () => {
-      el('dnPolyClass').value = p.cls;
+      // Vorlagen zeigen auf Tiere aus der Liste — Auswahl setzen, Freitext zu.
+      sel.value = TIERE.includes(p.cls) ? p.cls : ANDERE;
+      frei.hidden = sel.value !== ANDERE;
+      if (!frei.hidden) el('dnPolyClass').value = p.cls;
       el('dnPolyScale').value = String(p.scale);
       el('dnPolyHp').value = p.hp ? String(p.hp) : '';
     };
   });
 
   el('dnPolyGo').onclick = async () => {
-    const u = matchUser(el('dnPolyUser').value.trim(), users);
-    if (!u) { C.toast('Spieler aus der Liste wählen.', 'error'); return; }
-    const cls = el('dnPolyClass').value.trim();
+    const steamId = el('dnPolyUser').value;
+    if (!steamId) { C.toast('Keinen Spieler gewählt.', 'error'); return; }
+    const cls = zielTier();
     if (!cls) { C.toast('Ziel-Tier angeben.', 'error'); return; }
     const body = { dinoClass: cls };
     const sc = Number(el('dnPolyScale').value);
@@ -258,8 +311,8 @@ async function renderPoly() {
     const btn = el('dnPolyGo');
     btn.disabled = true;
     try {
-      await C.api('POST', `/admin/players/${encodeURIComponent(u.steamId)}/polymorph`, body);
-      C.toast(`${userLabel(u)} → ${cls}`, 'success');
+      await C.api('POST', `/admin/players/${encodeURIComponent(steamId)}/polymorph`, body);
+      C.toast(`${nameVon(steamId)} → ${cls}`, 'success');
     } catch (e) {
       C.toast('Polymorph fehlgeschlagen: ' + e.message, 'error');
     } finally {

@@ -643,3 +643,10 @@ input[type="range"] { accent-color: var(--accent); }
 /* Gesetztes Limit hervorheben — auf einen Blick sichtbar, welche Arten
    ueberhaupt begrenzt sind, ohne jedes Feld einzeln zu lesen. */
 .cp-dl-in:not(:placeholder-shown) { border-color: rgba(var(--accent-rgb), .45); color: #fff; }
+
+/* Eingabefeld mit angehaengtem Knopf ("Mich"). Der Knopf behaelt seine
+   natuerliche Breite, das Feld nimmt den Rest — sonst teilen sich beide die
+   Zeile haelftig und das Suchfeld wird unbrauchbar schmal. */
+.cp-row-tight { display: flex; gap: var(--cp-s2); align-items: center; }
+.cp-row-tight > .cp-input { flex: 1 1 auto; min-width: 0; }
+.cp-row-tight > .cp-btn { flex: 0 0 auto; }
