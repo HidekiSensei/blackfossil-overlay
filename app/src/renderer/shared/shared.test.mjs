@@ -2,6 +2,7 @@ import { baseClass, fmtGrow, escapeHtml, fmtTod } from './format.js';
 import { userLabel, matchUser, warnItemUser } from './users.js';
 import { apiErr, armConfirm } from './core.js';
 import { makePerms, can, CAPS } from './perms.js';
+import { NAV_GROUPS, NAV_SETTINGS, itemFor } from '../companion/nav.js';
 import { makeTheme, themeFromHex, hexToRgb, effectiveTier, surfacesFromAccent, THEMES, ABO_ORDER } from './theme.js';
 let fail = 0;
 const eq = (a, b, n) => { const ok = a === b; if (!ok) fail++; console.log(`${ok?'ok  ':'FAIL'} ${n}: ${JSON.stringify(a)} ${ok?'==':'!='} ${JSON.stringify(b)}`); };
@@ -174,6 +175,39 @@ eq(Object.values(THEMES).every((t) => {
 const FELDER = ['name', 'min', 'accent', 'accent2', 'accentD', 'border', 'rgb', 'panel', 'inputBg'];
 eq(Object.values(THEMES).every((t) => FELDER.every((f) => t[f] !== undefined)), true, 'jedes Theme hat alle Felder');
 eq(Object.values(THEMES).every((t) => ABO_ORDER[t.min] !== undefined), true, 'jedes min zeigt auf einen echten Rang');
+
+
+// ── Navigation ─────────────────────────────────────────────────────────────
+// Eine Gruppe, aus der jemand keinen einzigen Punkt sehen darf, muss GANZ
+// verschwinden — sonst behauptet eine leere Ueberschrift etwas, das es fuer
+// diesen Nutzer nicht gibt.
+const sichtbar = (p) => NAV_GROUPS
+  .map((g) => ({ id: g.id, items: g.items.filter((i) => !i.cap || can(p, i.cap)) }))
+  .filter((g) => g.items.length);
+
+const grpIds = (p) => sichtbar(p).map((g) => g.id).join(',');
+
+eq(grpIds(P.admin), 'arbeit,wissen,moderation,administration', 'Admin sieht alle Gruppen');
+eq(grpIds(P.fossil), 'arbeit,wissen', 'Spieler sieht nur Arbeitsmittel und Wissen');
+// Supporter (Team, aber weder ingame noch admin): darf suchen, aber nichts am Server.
+eq(grpIds(P.supporter), 'arbeit,wissen,moderation', 'Supporter sieht keine Administration');
+eq(sichtbar(P.supporter).find((g) => g.id === 'administration'), undefined, 'Administration ist fuer Supporter komplett weg');
+// Auch der Moderator nicht: Welt, Betrieb und Team-Audit sind samt und sonders admin.
+eq(grpIds(P.moderator), 'arbeit,wissen,moderation', 'Moderator sieht keine Administration');
+// Gegenprobe: die Gruppe ist nicht etwa generell leer.
+eq(sichtbar(P.admin).find((g) => g.id === 'administration').items.length, 3, 'Admin sieht drei Administrations-Punkte');
+// Class-Limits sind Nachschlagewerk, kein Eingriff — auch ein Spieler sieht sie.
+eq(sichtbar(P.fossil).find((g) => g.id === 'wissen').items.map((i) => i.view).join(','), 'lexikon,limits',
+   'Spieler sieht Lexikon und Class-Limits');
+
+// Jeder Punkt muss auffindbar sein und eine bekannte Faehigkeit nutzen.
+eq(NAV_GROUPS.flatMap((g) => g.items).every((i) => itemFor(i.view) === i), true, 'itemFor findet jeden Punkt');
+eq(itemFor(NAV_SETTINGS.view) === NAV_SETTINGS, true, 'itemFor findet Settings');
+eq(NAV_GROUPS.flatMap((g) => g.items).every((i) => !i.cap || CAPS[i.cap] !== undefined), true,
+   'jeder Menuepunkt nutzt eine bekannte Faehigkeit');
+// Doppelte view-Ids wuerden dazu fuehren, dass ein Klick die falsche Ansicht oeffnet.
+const views = [...NAV_GROUPS.flatMap((g) => g.items), NAV_SETTINGS].map((i) => i.view);
+eq(views.length, new Set(views).size, 'keine doppelten Menuepunkt-Ids');
 
 console.log(fail ? `\n${fail} FEHLGESCHLAGEN` : '\nalle bestanden');
 process.exit(fail ? 1 : 0);

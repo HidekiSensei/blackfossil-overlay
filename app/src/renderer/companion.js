@@ -24,6 +24,7 @@ import {
 import { baseClass, escapeHtml } from './shared/format.js';
 import { makeTheme } from './shared/theme.js';
 import { initSettings, renderSettings } from './companion/panels/settings.js';
+import { NAV_GROUPS, NAV_SETTINGS, itemFor, collapsedGroups, saveCollapsed } from './companion/nav.js';
 import { initServer, renderServer, stopServer } from './companion/panels/server.js';
 import { initAdmin, renderAdmin } from './companion/panels/admin.js';
 import { initTeam, renderTeam } from './companion/panels/team.js';
@@ -848,9 +849,16 @@ const panelCtx = {
   players: () => players,
   isActive: (v) => currentView === v,
 };
+// Menuepunkt -> Renderer. Team und Admin bedienen mehrere Punkte, deshalb
+// bekommen sie den Punkt als zweiten Parameter (frueher waren das ihre Reiter).
 const PANELS = {
-  team: renderTeam,
-  admin: renderAdmin,
+  spieler: (r) => renderTeam(r, 'spieler'),
+  warnings: (r) => renderTeam(r, 'warnings'),
+  paudit: (r) => renderTeam(r, 'paudit'),
+  taudit: (r) => renderTeam(r, 'taudit'),
+  welt: (r) => renderAdmin(r, 'welt'),
+  limits: (r) => renderAdmin(r, 'limits'),
+  ops: (r) => renderAdmin(r, 'ops'),
   server: renderServer,
   support: renderSupport,
   lexikon: renderLexikon,
@@ -877,28 +885,66 @@ const settingsCtx = {
   },
 };
 
-// Sichtbarkeit der Navigationspunkte. `cap` ist die schwaechste Faehigkeit, die
-// im Panel ueberhaupt etwas zeigt — die Feinheiten (einzelne Tabs, Buttons)
-// entscheiden die Panels selbst ueber dieselbe can()-Pruefung.
-// `needsOnline` markiert Ansichten, die ohne eigenen Dino auf dem Server leer
-// waeren; Staff-Werkzeuge haengen bewusst NICHT daran.
-const NAV = {
-  map:      { cap: null,            needsOnline: false },
-  team:     { cap: 'team.users',    needsOnline: false },
-  admin:    { cap: 'world.read',    needsOnline: false },
-  server:   { cap: 'server.status', needsOnline: false },
-  support:  { cap: 'support.read',  needsOnline: false },
-  lexikon:  { cap: null,            needsOnline: false },
-  settings: { cap: null,            needsOnline: false },
-};
 
+// Darf der aktuelle Nutzer diesen Punkt sehen? `needsOnline` markiert
+// Ansichten, die ohne eigenen Dino auf dem Server leer waeren — Staff-Werkzeuge
+// haengen bewusst NICHT daran.
+function navAllowed(item) {
+  return (!item.cap || can(perms, item.cap)) && (!item.needsOnline || perms.online);
+}
+
+// Seitenleiste aus companion/nav.js aufbauen.
+//
+// Es wird nur erzeugt, was erlaubt ist — eine Gruppe ohne einen einzigen
+// sichtbaren Punkt erscheint gar nicht erst. Sonst staende bei einem Supporter
+// eine leere Ueberschrift "Administration" da und behauptete etwas, das es
+// fuer ihn nicht gibt.
+function renderNav() {
+  const box = el('cpNavList');
+  if (!box) return;
+  const zu = collapsedGroups();
+
+  box.innerHTML = NAV_GROUPS.map((g) => {
+    const items = g.items.filter(navAllowed);
+    if (!items.length) return '';
+    const offen = !zu.has(g.id);
+    return `<div class="cp-navgrp" data-grp="${g.id}">`
+      + `<button type="button" class="cp-navgrp-head" data-grp-toggle="${g.id}" aria-expanded="${offen}">`
+      + `<span class="cp-navgrp-caret">${offen ? '▾' : '▸'}</span><span>${escapeHtml(g.label)}</span></button>`
+      + `<div class="cp-navgrp-body"${offen ? '' : ' hidden'}>`
+      + items.map((i) => navBtn(i)).join('')
+      + `</div></div>`;
+  }).join('');
+
+  const sBox = el('cpNavSettings');
+  if (sBox) sBox.innerHTML = navBtn(NAV_SETTINGS);
+
+  document.querySelectorAll('.cp-nav-btn').forEach((b) => {
+    b.onclick = () => navTo(b.dataset.view);
+    b.classList.toggle('active', b.dataset.view === currentView);
+  });
+  box.querySelectorAll('[data-grp-toggle]').forEach((b) => {
+    b.onclick = () => {
+      const id = b.dataset.grpToggle;
+      const set = collapsedGroups();
+      if (set.has(id)) set.delete(id); else set.add(id);
+      saveCollapsed(set);
+      renderNav();
+    };
+  });
+}
+
+function navBtn(i) {
+  return `<button class="cp-nav-btn" data-view="${i.view}">`
+    + `<span class="cp-nav-ico">${i.icon}</span> ${escapeHtml(i.label)}</button>`;
+}
+
+// Nach einer Rechte-Aenderung (z. B. eigener Dino kam online) neu aufbauen.
 function applyNavPermissions() {
-  for (const [view, def] of Object.entries(NAV)) {
-    const btn = document.querySelector(`.cp-nav-btn[data-view="${view}"]`);
-    if (!btn) continue;
-    const allowed = (!def.cap || can(perms, def.cap)) && (!def.needsOnline || perms.online);
-    btn.hidden = !allowed;
-  }
+  renderNav();
+  // Steht man auf einer Ansicht, die man nicht mehr sehen darf, zurueck zur Karte.
+  const cur = itemFor(currentView);
+  if (cur && !navAllowed(cur)) navTo('map');
 }
 
 // ── Legende & Layer ────────────────────────────────────────────────────────
@@ -985,7 +1031,11 @@ function navTo(view) {
   if (view !== 'support') stopSupport();
   currentView = view;
   document.querySelectorAll('.cp-nav-btn').forEach((b) => b.classList.toggle('active', b.dataset.view === view));
-  document.querySelectorAll('.cp-view').forEach((s) => { s.hidden = s.dataset.view !== view; });
+  // Die Karte hat eigenes statisches Markup, alles andere teilt sich einen
+  // Container und wird bei jedem Aufruf frisch gerendert.
+  const isMap = view === 'map';
+  document.querySelector('.cp-view[data-view="map"]').hidden = !isMap;
+  el('cpPanelView').hidden = isMap;
   // Beim Betreten der Karte sofort nachladen, statt bis zum naechsten
   // Intervall zu warten. Und den Bearbeiten-Modus IMMER aus: er ist ein
   // bewusster Griff, kein Zustand, in den man versehentlich zurueckkehrt.
@@ -996,7 +1046,7 @@ function navTo(view) {
   }
   const render = PANELS[view];
   if (render) {
-    try { render(document.querySelector(`.cp-view[data-view="${view}"]`)); }
+    try { render(el('cpPanelView')); }
     catch (err) { toast('Panel-Fehler: ' + err.message, 'error'); }
   }
   localStorage.setItem('bf-cp-view', view);
@@ -1044,9 +1094,8 @@ async function boot() {
   initSettings(settingsCtx);
   initEditor(editorCtx);
 
-  document.querySelectorAll('.cp-nav-btn').forEach((b) => { b.onclick = () => navTo(b.dataset.view); });
-  // Nicht erlaubte Punkte ausblenden statt deaktivieren — tote Buttons verrotten.
-  applyNavPermissions();
+  // Nicht erlaubte Punkte gar nicht erst erzeugen — tote Buttons verrotten.
+  renderNav();
 
   const lz = el('cpLabelZoom');
   lz.value = String(labelMinZoom);

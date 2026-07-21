@@ -8,20 +8,26 @@ import { baseClass, fmtGrow } from '../../shared/format.js';
 import * as U from '../ui.js';
 
 let C = null;
-let tab = 'suche';
+let tab = 'spieler';
 let users = [];
 
-// Rechte wie im Backend. Achtung auf die Feinheiten:
-//   /admin/users      = staff, aber /admin/user-info = INGAME+ — ein Supporter
-//                       darf also suchen, aber kein Profil oeffnen.
-//   /admin/staff-audit= ADMIN (requireAdminHuman, strenger als Player-Audit:
-//                       es zeigt, was jedes Staff-Mitglied getan hat).
-const TABS = [
-  { id: 'suche', label: 'Spieler', cap: 'team.users' },
-  { id: 'warnings', label: 'Verwarnungen', cap: 'team.warnings' },
-  { id: 'paudit', label: 'Player-Audit', cap: 'team.playerAudit' },
-  { id: 'taudit', label: 'Team-Audit', cap: 'team.staffAudit' },
-];
+// Frueher Reiter innerhalb eines Team-Panels, jetzt eigene Menuepunkte. Welcher
+// Punkt welchen Rang braucht, steht in companion/nav.js; hier bleibt nur die
+// Beschriftung.
+//
+// Die Feinheiten der Backend-Rechte, die dabei leicht untergehen:
+//   /admin/users       = staff, aber /admin/user-info = INGAME+ — ein Supporter
+//                        darf also suchen, aber kein Profil oeffnen (deshalb
+//                        pruefen wir 'team.userInfo' unten nochmal separat).
+//   /admin/staff-audit = ADMIN (requireAdminHuman, strenger als Player-Audit:
+//                        es zeigt, was jedes Staff-Mitglied getan hat) — darum
+//                        liegt Team-Audit in der Gruppe Administration.
+const TITLES = {
+  spieler: ['Spieler', 'Spieler nachschlagen und Profile öffnen.'],
+  warnings: ['Verwarnungen', 'Ausgesprochene Verwarnungen einsehen.'],
+  paudit: ['Player-Audit', 'Protokoll dessen, was Spieler getan haben.'],
+  taudit: ['Team-Audit', 'Protokoll dessen, was das Team getan hat.'],
+};
 
 // Beide Audits paginieren SERVERSEITIG (items/total/limit/offset) — nie alles
 // laden und lokal filtern, das sind schnell zehntausende Zeilen.
@@ -58,18 +64,14 @@ function pager(prefix, offset, total, onPage) {
 
 export function initTeam(ctx) { C = ctx; }
 
-export function renderTeam(root) {
-  const tabs = TABS.filter((t) => C.can(t.cap));
-  if (!tabs.some((t) => t.id === tab)) tab = tabs.length ? tabs[0].id : null;
+export function renderTeam(root, view) {
+  tab = TITLES[view] ? view : 'spieler';
+  const [h, s] = TITLES[tab];
   root.innerHTML = `<div class="cp-pad cp-pad-narrow">
-    ${U.header('Team', 'Spieler nachschlagen und Verwarnungen einsehen.')}
-    ${tabs.length ? U.tabs(tabs, tab) : ''}
+    ${U.header(h, s)}
     <div id="tmBody"></div>
   </div>`;
-  root.querySelectorAll('.cp-tab').forEach((b) => {
-    b.onclick = () => { tab = b.dataset.tab; renderTeam(root); };
-  });
-  if (tab === 'suche') renderSearch();
+  if (tab === 'spieler') renderSearch();
   else if (tab === 'warnings') renderWarnings();
   else if (tab === 'paudit') renderPlayerAudit();
   else renderTeamAudit();

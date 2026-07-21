@@ -17,14 +17,11 @@
   <div id="cpApp" hidden>
     <nav id="cpNav">
       <div class="cp-brand"><img src="assets/logo.png" alt="" width="28" height="28" /><span>Companion</span></div>
-      <button class="cp-nav-btn" data-view="map"><span class="cp-nav-ico">🗺️</span> Karte</button>
-      <button class="cp-nav-btn" data-view="team"><span class="cp-nav-ico">🛠️</span> Team</button>
-      <button class="cp-nav-btn" data-view="admin"><span class="cp-nav-ico">🖥️</span> Admin</button>
-      <button class="cp-nav-btn" data-view="server"><span class="cp-nav-ico">📢</span> Server</button>
-      <button class="cp-nav-btn" data-view="support"><span class="cp-nav-ico">🎫</span> Support</button>
-      <button class="cp-nav-btn" data-view="lexikon"><span class="cp-nav-ico">📖</span> Lexikon</button>
+      <!-- Gruppen und Punkte kommen aus companion/nav.js — nur was der Rang
+           hergibt, wird ueberhaupt erzeugt. -->
+      <div id="cpNavList"></div>
       <div class="cp-nav-spacer"></div>
-      <button class="cp-nav-btn" data-view="settings"><span class="cp-nav-ico">⚙️</span> Settings</button>
+      <div id="cpNavSettings"></div>
       <div class="cp-who"><div class="cp-who-name" id="cpWhoName">—</div><div id="cpWhoRank" class="cp-muted"></div></div>
     </nav>
 
@@ -56,14 +53,10 @@
         </div>
       </section>
 
-      <section class="cp-view" data-view="team" hidden></section>
-      <section class="cp-view" data-view="admin" hidden></section>
-      <section class="cp-view" data-view="server" hidden></section>
-      <section class="cp-view" data-view="support" hidden></section>
-      <section class="cp-view" data-view="lexikon" hidden></section>
-
-      <!-- Inhalt kommt aus companion/panels/settings.js (Reiter Software/Darstellung/Konto). -->
-      <section class="cp-view" data-view="settings" hidden></section>
+      <!-- Alle uebrigen Ansichten teilen sich EINEN Container: sie bringen ihr
+           Markup selbst mit, also braucht es keine leeren Huellen je Punkt.
+           Nur die Karte hat eigenes statisches Markup (oben). -->
+      <section class="cp-view" id="cpPanelView" hidden></section>
     </main>
   </div>
 

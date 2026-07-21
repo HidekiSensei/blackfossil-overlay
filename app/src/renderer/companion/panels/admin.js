@@ -11,11 +11,13 @@ let tab = 'welt';
 
 // Rechte wie im Backend: Welt = admin (WorldRoutes), Limits lesen = jeder
 // Angemeldete (/dino-limits), Betrieb = admin (internal/ops h.require).
-const TABS = [
-  { id: 'welt', label: 'Welt', cap: 'world.read' },
-  { id: 'limits', label: 'Class-Limits', cap: 'limits.read' },
-  { id: 'ops', label: 'Betrieb', cap: 'ops.read' },
-];
+// Frueher Reiter, jetzt eigene Menuepunkte (companion/nav.js) — die
+// Rechte-Zuordnung steht dort, hier nur die Beschriftung.
+const TITLES = {
+  welt: ['Welt', 'Welt-Einstellungen des laufenden Servers.'],
+  limits: ['Class-Limits', 'Erlaubte Arten und Obergrenzen.'],
+  ops: ['Betrieb', 'Zustand der Dienste hinter dem Server.'],
+};
 
 // Beschriftungen der Health-Checks. Das Backend liefert nur die ids.
 const OPS_LABEL = {
@@ -30,17 +32,13 @@ const WEATHER = ['clear', 'clouds', 'rain', 'storm', 'fog', 'snow', 'auto'];
 
 export function initAdmin(ctx) { C = ctx; }
 
-export function renderAdmin(root) {
-  const tabs = TABS.filter((t) => C.can(t.cap));
-  if (!tabs.some((t) => t.id === tab)) tab = tabs.length ? tabs[0].id : null;
+export function renderAdmin(root, view) {
+  tab = TITLES[view] ? view : 'welt';
+  const [h, s] = TITLES[tab];
   root.innerHTML = `<div class="cp-pad cp-pad-narrow">
-    ${U.header('Admin', 'Welt-Einstellungen des laufenden Servers.')}
-    ${tabs.length ? U.tabs(tabs, tab) : ''}
+    ${U.header(h, s)}
     <div id="adBody"></div>
   </div>`;
-  root.querySelectorAll('.cp-tab').forEach((b) => {
-    b.onclick = () => { tab = b.dataset.tab; renderAdmin(root); };
-  });
   if (tab === 'welt') renderWelt();
   else if (tab === 'limits') renderLimits();
   else renderOps();

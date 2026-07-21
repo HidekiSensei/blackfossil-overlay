@@ -585,3 +585,22 @@ input[type="range"] { accent-color: var(--accent); }
 .cp-color::-webkit-color-swatch-wrapper { padding: 3px; }
 .cp-color::-webkit-color-swatch { border: none; border-radius: 5px; }
 .cp-btn-on { background: rgba(var(--accent-rgb), .18); border-color: rgba(var(--accent-rgb), .45); color: #fff; }
+
+/* ── Navigationsgruppen ───────────────────────────────────────────────────── */
+/* Die Ueberschrift ist selbst der Auf-/Zuklapper. Sie sieht bewusst NICHT wie
+   ein Menuepunkt aus (kleiner, gesperrt, kein Icon-Slot) — sonst klickt man sie
+   an in der Erwartung, dass eine Ansicht aufgeht. */
+.cp-navgrp { display: flex; flex-direction: column; gap: 2px; }
+.cp-navgrp + .cp-navgrp { margin-top: var(--cp-s3); }
+.cp-navgrp-head {
+  display: flex; align-items: center; gap: var(--cp-s1);
+  width: 100%; text-align: left; padding: 0 var(--cp-s2); height: 24px;
+  font: inherit; font-size: 10.5px; font-weight: 650; letter-spacing: .07em;
+  text-transform: uppercase; color: var(--muted);
+  background: transparent; border: 0; border-radius: var(--cp-r-sm);
+  cursor: pointer; flex: none; opacity: .75;
+  transition: opacity .13s, color .13s;
+}
+.cp-navgrp-head:hover { opacity: 1; color: #ddd; }
+.cp-navgrp-caret { width: 11px; text-align: center; flex: none; font-size: 9px; }
+.cp-navgrp-body { display: flex; flex-direction: column; gap: 2px; }
