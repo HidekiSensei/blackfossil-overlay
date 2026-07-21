@@ -312,9 +312,9 @@ export function openEdit(kind, obj) {
       + U.field('zeName', 'Name', { value: obj.name || '' })
       + `<div style="height:var(--cp-s2)"></div>`
       + `<div class="cp-muted" id="zeCount">${(obj.points || []).length} Eckpunkte</div>`
-      + U.hint('Eckpunkte ziehen verschiebt sie. Die halbtransparenten Punkte auf den '
-             + 'Kanten werden beim Ziehen zu neuen Eckpunkten. Rechtsklick auf einen '
-             + 'Eckpunkt entfernt ihn. Ziehen innerhalb der Fläche verschiebt die ganze Zone.')
+      + U.hint('Weiße Punkte ziehen verschiebt sie. Grüne + auf den Kanten werden beim '
+             + 'Ziehen zu neuen Eckpunkten. Rechtsklick auf einen weißen Punkt entfernt ihn. '
+             + 'Ziehen innerhalb der Fläche verschiebt die ganze Zone.')
       + `<div style="height:var(--cp-s3)"></div>`
       + U.btnRow(U.btn('fmSave', 'Speichern', { variant: 'primary', size: 'sm' }),
                  U.btn('fmDel', 'Löschen', { variant: 'danger', size: 'sm' }))

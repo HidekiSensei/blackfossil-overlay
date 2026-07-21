@@ -693,12 +693,20 @@ export function drawZoneEdit(ctx, w, h, scale, zone, activeHandle) {
     const n = worldToNorm(p.x, p.y);
     return { x: n.nx * w, y: n.ny * h };
   });
-  const sm = 4 * scale;
+  // Deutlich sichtbar, aber erkennbar anders als die echten Eckpunkte: kleiner,
+  // gruen und mit einem "+". Der erste Wurf war 45 % weiss bei 7 px — auf dem
+  // hellen Satellitenbild schlicht nicht zu sehen.
+  const sm = 5 * scale;
   mids.forEach((p) => {
-    ctx.fillStyle = 'rgba(255,255,255,0.45)';
+    ctx.fillStyle = '#4ade80';
     ctx.fillRect(p.x - sm, p.y - sm, sm * 2, sm * 2);
-    ctx.lineWidth = 1.5 * scale; ctx.strokeStyle = 'rgba(0,0,0,0.6)';
+    ctx.lineWidth = 2 * scale; ctx.strokeStyle = '#0b1a0f';
     ctx.strokeRect(p.x - sm, p.y - sm, sm * 2, sm * 2);
+    ctx.lineWidth = 1.6 * scale; ctx.strokeStyle = '#0b1a0f';
+    ctx.beginPath();
+    ctx.moveTo(p.x - sm * 0.5, p.y); ctx.lineTo(p.x + sm * 0.5, p.y);
+    ctx.moveTo(p.x, p.y - sm * 0.5); ctx.lineTo(p.x, p.y + sm * 0.5);
+    ctx.stroke();
   });
 
   const s0 = 6 * scale;

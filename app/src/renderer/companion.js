@@ -925,8 +925,13 @@ function navTo(view) {
   document.querySelectorAll('.cp-nav-btn').forEach((b) => b.classList.toggle('active', b.dataset.view === view));
   document.querySelectorAll('.cp-view').forEach((s) => { s.hidden = s.dataset.view !== view; });
   // Beim Betreten der Karte sofort nachladen, statt bis zum naechsten
-  // Intervall zu warten.
-  if (view === 'map') { dirty = true; refreshMapObjects(); }
+  // Intervall zu warten. Und den Bearbeiten-Modus IMMER aus: er ist ein
+  // bewusster Griff, kein Zustand, in den man versehentlich zurueckkehrt.
+  if (view === 'map') {
+    setEditMode(false);
+    dirty = true;
+    refreshMapObjects();
+  }
   const render = PANELS[view];
   if (render) {
     try { render(document.querySelector(`.cp-view[data-view="${view}"]`)); }
