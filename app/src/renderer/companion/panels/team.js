@@ -6,6 +6,7 @@ import { el } from '../../shared/core.js';
 import { userLabel, matchUser, usersFrom } from '../../shared/users.js';
 import { baseClass, fmtGrow } from '../../shared/format.js';
 import * as U from '../ui.js';
+import { initAudit, renderPlayerAudit, renderTeamAudit } from './audit.js';
 
 let C = null;
 let tab = 'spieler';
@@ -29,52 +30,22 @@ const TITLES = {
   taudit: ['Team-Audit', 'Protokoll dessen, was das Team getan hat.'],
 };
 
-// Beide Audits paginieren SERVERSEITIG (items/total/limit/offset) — nie alles
-// laden und lokal filtern, das sind schnell zehntausende Zeilen.
-const PAGE = 50;
-let paOffset = 0, taOffset = 0;
-
-function fmtWhen(ms) {
-  return ms ? new Date(Number(ms)).toLocaleString('de-DE') : '—';
-}
-
-// details ist ein Objekt mit wechselnden Schluesseln — kompakt als "k=v" zeigen,
-// verschachtelte Werte als JSON.
-function fmtDetails(d) {
-  if (!d || typeof d !== 'object') return String(d || '');
-  return Object.entries(d)
-    .map(([k, v]) => `${k}=${v && typeof v === 'object' ? JSON.stringify(v) : v}`)
-    .join(' · ');
-}
-
-function pager(prefix, offset, total, onPage) {
-  const from = total ? offset + 1 : 0;
-  const to = Math.min(offset + PAGE, total);
-  return { html: `<div class="cp-row" style="margin-top:var(--cp-s3);align-items:center">`
-      + U.btn(prefix + 'Prev', 'Zurück', { size: 'sm', disabled: offset <= 0 })
-      + `<span class="cp-muted">${from}–${to} von ${total}</span>`
-      + U.btn(prefix + 'Next', 'Weiter', { size: 'sm', disabled: offset + PAGE >= total })
-      + `</div>`,
-    bind: () => {
-      const p = el(prefix + 'Prev'), n = el(prefix + 'Next');
-      if (p) p.onclick = () => onPage(Math.max(0, offset - PAGE));
-      if (n) n.onclick = () => onPage(offset + PAGE);
-    } };
-}
-
-export function initTeam(ctx) { C = ctx; }
+export function initTeam(ctx) { C = ctx; initAudit(ctx); }
 
 export function renderTeam(root, view) {
   tab = TITLES[view] ? view : 'spieler';
+  // Die Audits sind Vollflaechen-Tabellen (eigenes Layout in audit.js): volle
+  // Breite/Hoehe, nur die Tabelle scrollt — der cp-pad-narrow-Wrapper hier
+  // wuerde beides kaputt machen (max-width 780px + eigener Scroll).
+  if (tab === 'paudit') { renderPlayerAudit(root); return; }
+  if (tab === 'taudit') { renderTeamAudit(root); return; }
   const [h, s] = TITLES[tab];
   root.innerHTML = `<div class="cp-pad cp-pad-narrow">
     ${U.header(h, s)}
     <div id="tmBody"></div>
   </div>`;
   if (tab === 'spieler') renderSearch();
-  else if (tab === 'warnings') renderWarnings();
-  else if (tab === 'paudit') renderPlayerAudit();
-  else renderTeamAudit();
+  else renderWarnings();
 }
 
 async function ensureUsers() {
@@ -164,39 +135,3 @@ async function renderWarnings() {
   } catch (e) { box.innerHTML = U.card(U.muted('Nicht abrufbar: ' + e.message)); }
 }
 
-
-// ── Player-Audit: was Spieler mit ihren Dinos gemacht haben ────────────────
-async function renderPlayerAudit() {
-  const box = el('tmBody');
-  box.innerHTML = U.card(U.muted('Lade Player-Audit…'));
-  try {
-    const d = await C.api('GET', `/admin/player-audit?limit=${PAGE}&offset=${paOffset}`);
-    const items = d.items || [];
-    const pg = pager('pa', d.offset || 0, d.total || 0, (o) => { paOffset = o; renderPlayerAudit(); });
-    box.innerHTML = (items.length
-      ? U.card(`<div class="cp-list">` + items.map((it) => U.item(
-          it.playerName || it.discordName || '—',
-          [fmtWhen(it.createdAtMs), fmtDetails(it.details)].filter(Boolean).join(' · '),
-          it.via ? U.badge(it.via) : '')).join('') + `</div>`)
-      : U.card(U.empty('Keine Einträge.'))) + pg.html;
-    pg.bind();
-  } catch (e) { box.innerHTML = U.card(U.muted('Nicht abrufbar: ' + e.message)); }
-}
-
-// ── Team-Audit: Staff-Aktionen (dieselben Daten wie der Discord-Audit-Channel) ──
-async function renderTeamAudit() {
-  const box = el('tmBody');
-  box.innerHTML = U.card(U.muted('Lade Team-Audit…'));
-  try {
-    const d = await C.api('GET', `/admin/staff-audit?limit=${PAGE}&offset=${taOffset}`);
-    const items = d.items || [];
-    const pg = pager('ta', d.offset || 0, d.total || 0, (o) => { taOffset = o; renderTeamAudit(); });
-    box.innerHTML = (items.length
-      ? U.card(`<div class="cp-list">` + items.map((it) => U.item(
-          `${it.action || '—'} — ${it.actorName || it.actorDiscord || it.actorSteam || 'unbekannt'}`,
-          [fmtWhen(it.createdAtMs), fmtDetails(it.details)].filter(Boolean).join(' · '),
-          it.source ? U.badge(it.source) : '')).join('') + `</div>`)
-      : U.card(U.empty('Keine Einträge.'))) + pg.html;
-    pg.bind();
-  } catch (e) { box.innerHTML = U.card(U.muted('Nicht abrufbar: ' + e.message)); }
-}
