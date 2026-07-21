@@ -120,18 +120,86 @@ async function lookup() {
   } catch (e) { out.innerHTML = U.card(U.muted('Nicht abrufbar: ' + e.message)); }
 }
 
+// Vollwertige Verwarnungen — Formular + Suche, aus dem Overlay uebernommen
+// (renderWarnPane/warnSearch) und ins Companion-Design gebracht: Abschnitte mit
+// cp-colhead-Trennlinie, keine Cards. Namensaufloesung ueber die schon geladene
+// /admin/users-Liste (ensureUsers + matchUser), nicht per Keystroke-Suche.
 async function renderWarnings() {
   const box = el('tmBody');
-  box.innerHTML = U.card(U.muted('Lade Verwarnungen…'));
+  box.innerHTML = `
+    <div class="cp-colhead">⚠️ User verwarnen</div>
+    ${U.hint('Discord-ID, Steam-ID ODER Name reicht — die anderen werden automatisch verknüpft. Die laufende Nummer zählt das System.')}
+    ${U.row(U.field('wnDiscord', 'Discord-ID', { placeholder: 'z. B. 4785…' }),
+            U.field('wnSteam', 'Steam-ID', { placeholder: '7656…' }))}
+    <div class="cp-field"><label class="cp-label" for="wnName">oder Name (RP-, Ingame- oder Discord-Name)</label>
+      <input id="wnName" class="cp-input" list="wnNameList" autocomplete="off" placeholder="z. B. Complex-Slayer">
+      <datalist id="wnNameList"></datalist></div>
+    ${U.field('wnPara', 'Regel-Paragraph *', { placeholder: 'z. B. §3.2 Combat-Logging' })}
+    ${U.textarea('wnReason', 'Grund *', 'Was ist passiert?')}
+    ${U.btn('wnSubmit', '⚠️ Verwarnen', { variant: 'primary', block: true })}
+    <div class="cp-colhead" style="margin-top:var(--cp-s5)">🔎 Verwarnungen durchsuchen</div>
+    ${U.row(`<div class="cp-field" style="flex:1"><input id="wnSearch" class="cp-input" placeholder="Name / Steam / Grund / Paragraph…"></div>`,
+            U.btn('wnSearchBtn', 'Suchen', { size: 'sm' }))}
+    <div id="wnResults"></div>`;
+
+  // Namens-Autocomplete aus der geladenen Nutzerliste (wie im Spieler-Tab).
+  const list = await ensureUsers();
+  const nm = el('wnName');
+  if (nm) nm.oninput = () => {
+    const q = nm.value.trim().toLowerCase();
+    const dl = el('wnNameList'); if (!dl) return;
+    dl.innerHTML = q.length < 2 ? '' : list
+      .filter((u) => userLabel(u).toLowerCase().includes(q) || (u.steamId || '').includes(q))
+      .slice(0, 30).map((u) => `<option value="${U.esc(userLabel(u))}">`).join('');
+  };
+
+  el('wnSubmit').onclick = submitWarn;
+  el('wnSearchBtn').onclick = () => warnSearch(el('wnSearch').value.trim());
+  el('wnSearch').onkeydown = (e) => { if (e.key === 'Enter') warnSearch(el('wnSearch').value.trim()); };
+  warnSearch('');
+}
+
+async function submitWarn() {
+  const discordId = el('wnDiscord').value.trim();
+  let steamId = el('wnSteam').value.trim();
+  const name = el('wnName').value.trim();
+  const ruleParagraph = el('wnPara').value.trim();
+  const reason = el('wnReason').value.trim();
+  if (!ruleParagraph || !reason) { C.toast('Paragraph und Grund sind Pflicht.', 'error'); return; }
+  // Name → Steam nur, wenn keine ID direkt angegeben.
+  if (!discordId && !steamId && name) {
+    const u = matchUser(name, users);
+    if (!u) { C.toast('Name nicht gefunden — genauer tippen oder SteamID nutzen.', 'error'); return; }
+    steamId = u.steamId;
+  }
+  if (!discordId && !steamId) { C.toast('Discord-/Steam-ID oder Name nötig.', 'error'); return; }
   try {
-    const d = await C.api('GET', '/admin/warnings');
-    const rows = d.warnings || d.items || (Array.isArray(d) ? d : []);
-    box.innerHTML = rows.length
-      ? U.card(`<div class="cp-list cp-scroll">` + rows.slice(0, 100).map((wn) => U.item(
-          wn.playerName || wn.steamId || '—',
-          [wn.reason, wn.createdAt && new Date(wn.createdAt).toLocaleString('de-DE')].filter(Boolean).join(' · '),
-          wn.by ? U.badge(wn.by) : '')).join('') + `</div>`)
-      : U.card(U.empty('Keine Verwarnungen.'));
-  } catch (e) { box.innerHTML = U.card(U.muted('Nicht abrufbar: ' + e.message)); }
+    await C.api('POST', '/admin/warnings', { discordId, steamId, reason, ruleParagraph });
+    C.toast('⚠️ Verwarnung erfasst.', 'success');
+    ['wnDiscord', 'wnSteam', 'wnName', 'wnPara', 'wnReason'].forEach((id) => { const e = el(id); if (e) e.value = ''; });
+    warnSearch('');
+  } catch (e) { C.toast(e.message, 'error'); }
+}
+
+async function warnSearch(q) {
+  const box = el('wnResults'); if (!box) return;
+  box.innerHTML = U.muted('Lade…');
+  try {
+    const d = await C.api('GET', '/admin/warnings' + (q ? `?q=${encodeURIComponent(q)}` : ''));
+    const items = d.items || d.warnings || (Array.isArray(d) ? d : []);
+    if (!items.length) { box.innerHTML = U.empty(q ? 'Keine Treffer.' : 'Noch keine Verwarnungen erfasst.'); return; }
+    box.innerHTML = `<div class="cp-list">` + items.slice(0, 50).map((w) => {
+      const who = w.discordId ? `Discord ${w.discordId}` : (w.steamId ? `Steam ${w.steamId}` : '—');
+      const n = w.warnNumber || 0;
+      const kind = n >= 3 ? 'warn3' : (n === 2 ? 'warn2' : 'warn1');
+      const dt = w.createdAtMs ? new Date(w.createdAtMs).toLocaleDateString('de-DE') : '';
+      return `<div class="cp-warn-row">`
+        + `<div class="cp-warn-head"><span class="cp-warn-who">${U.esc(who)}</span>`
+        + `<span class="cp-warn-num cp-${kind}">${U.esc(String(n))}. Verwarnung</span></div>`
+        + `<div class="cp-warn-line">📖 ${U.esc(w.ruleParagraph || '—')}</div>`
+        + `<div class="cp-warn-line cp-muted">📝 ${U.esc(w.reason || '—')}</div>`
+        + `<div class="cp-warn-meta">${U.esc(w.issuedByName || 'Staff')}${dt ? ' · ' + dt : ''}</div></div>`;
+    }).join('') + `</div>`;
+  } catch (e) { box.innerHTML = U.muted('Nicht abrufbar: ' + e.message); }
 }
 
