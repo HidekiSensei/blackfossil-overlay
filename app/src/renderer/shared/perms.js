@@ -54,6 +54,7 @@ export const CAPS = {
   'limits.write':      'admin',   // POST /admin/dino-limits
   'ops.read':          'admin',   // GET  /admin/ops/*     (h.require "admin")
   'voice.listen':      'admin',   // POST /voice/listen    (voiceIsAdmin + Audit)
+  'dino.polymorph':    'admin',   // POST /admin/players/{id}/polymorph (WorldRoutes = admin)
 
   // ── Server ────────────────────────────────────────────────────────────
   'server.status':     'staff',   // GET  /admin/server/status
