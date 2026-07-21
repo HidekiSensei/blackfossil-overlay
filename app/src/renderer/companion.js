@@ -34,6 +34,7 @@ import { initAdmin, renderAdmin } from './companion/panels/admin.js';
 import { initTeam, renderTeam } from './companion/panels/team.js';
 import { initSupport, renderSupport, stopSupport } from './companion/panels/support.js';
 import { initLexikon, renderLexikon } from './companion/panels/lexikon.js';
+import { initHandbuch, renderHandbuch } from './companion/panels/handbuch.js';
 
 let config = { tokenBase: '' };
 let sessionToken = null;
@@ -879,6 +880,7 @@ const PANELS = {
   server: renderServer,
   support: renderSupport,
   lexikon: renderLexikon,
+  handbuch: renderHandbuch,
   settings: renderSettings,
 };
 
@@ -1119,7 +1121,7 @@ async function boot() {
   // ueber effectiveTier() alles frei (siehe shared/theme.js).
   theme.setFromToken(t);
   initTeam(panelCtx); initAdmin(panelCtx); initServer(panelCtx);
-  initSupport(panelCtx); initLexikon(panelCtx);
+  initSupport(panelCtx); initLexikon(panelCtx); initHandbuch(panelCtx);
   initSettings(settingsCtx);
   initListen({
     api, toast,
