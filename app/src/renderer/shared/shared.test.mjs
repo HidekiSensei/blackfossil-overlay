@@ -60,7 +60,8 @@ const P = {
   fossil:    makePerms({}),                                  // normaler Spieler
   supporter: makePerms({ team: true }),                      // TEAM_RANKS, nicht ingame
   moderator: makePerms({ team: true, ingame: true }),        // INGAME_RANKS
-  admin:     makePerms({ admin: true }),                     // ADMIN_RANKS
+  admin:     makePerms({ admin: true }),                     // ADMIN_RANKS (z.B. "Admin")
+  techie:    makePerms({ admin: true, rank: 'Owner' }),      // Developer/Owner = tech
 };
 
 eq(P.fossil.staff, false, 'Spieler ist kein Staff');
@@ -87,9 +88,15 @@ eq(can(P.moderator, 'server.wipe'), true, 'Moderator darf wipen');
 eq(can(P.moderator, 'server.control'), false, 'Moderator darf Server NICHT steuern');
 eq(can(P.admin, 'server.control'), true, 'Admin darf Server steuern');
 
+// Server-Gruppe (Betrieb/Steuerung/Evrima) ist eine Etage ueber admin: nur
+// Developer/Owner (tech). Reine Anzeige-Schranke, das Backend bleibt admin.
+eq(P.admin.tech, false, 'normaler Admin ist KEIN Techniker');
+eq(P.techie.tech, true, 'Owner/Developer ist Techniker');
+eq(can(P.admin, 'server.tech'), false, 'normaler Admin sieht die Server-Gruppe NICHT');
+eq(can(P.techie, 'server.tech'), true, 'Owner/Developer sieht die Server-Gruppe');
+
 // Welt und Betrieb sind admin-only
 eq(can(P.moderator, 'world.write'), false, 'Moderator darf Welt NICHT aendern');
-eq(can(P.moderator, 'ops.read'), false, 'Moderator sieht Betrieb NICHT');
 eq(can(P.admin, 'world.write'), true, 'Admin darf Welt aendern');
 
 // Spieler: nichts von alledem, aber Lesbares
@@ -100,7 +107,7 @@ eq(can(P.fossil, 'limits.read'), true, 'Spieler sieht Class-Limits');
 
 // Tippfehler duerfen NIE still freigeben
 eq(can(P.admin, 'gibtsNicht'), false, 'unbekannte Faehigkeit = verboten');
-eq(Object.values(CAPS).every((l) => ['any','staff','ingame','admin'].includes(l)), true,
+eq(Object.values(CAPS).every((l) => ['any','staff','ingame','admin','tech'].includes(l)), true,
    'alle CAPS nutzen bekannte Stufen');
 
 
@@ -189,7 +196,13 @@ const sichtbar = (p) => NAV_GROUPS
 
 const grpIds = (p) => sichtbar(p).map((g) => g.id).join(',');
 
-eq(grpIds(P.admin), 'arbeit,wissen,moderation,administration', 'Admin sieht alle Gruppen');
+// Normaler Admin sieht NICHT die Server-Gruppe (die ist tech = Developer/Owner).
+eq(grpIds(P.admin), 'arbeit,wissen,moderation,administration', 'Admin sieht alles ausser Server');
+eq(sichtbar(P.admin).find((g) => g.id === 'server'), undefined, 'Server-Gruppe ist fuer normale Admins weg');
+// Der Techniker (Developer/Owner) bekommt die Server-Gruppe zusaetzlich.
+eq(grpIds(P.techie), 'arbeit,wissen,moderation,administration,server', 'Techniker sieht zusaetzlich Server');
+eq(sichtbar(P.techie).find((g) => g.id === 'server').items.map((i) => i.view).join(','), 'ops,control,evrima',
+   'Server-Gruppe hat Betrieb, Steuerung und Evrima');
 eq(grpIds(P.fossil), 'arbeit,wissen', 'Spieler sieht nur Arbeitsmittel und Wissen');
 // Supporter (Team, aber weder ingame noch admin): darf suchen, aber nichts am Server.
 eq(grpIds(P.supporter), 'arbeit,wissen,moderation', 'Supporter sieht keine Administration');
@@ -197,7 +210,7 @@ eq(sichtbar(P.supporter).find((g) => g.id === 'administration'), undefined, 'Adm
 // Auch der Moderator nicht: Welt, Betrieb und Team-Audit sind samt und sonders admin.
 eq(grpIds(P.moderator), 'arbeit,wissen,moderation', 'Moderator sieht keine Administration');
 // Gegenprobe: die Gruppe ist nicht etwa generell leer.
-eq(sichtbar(P.admin).find((g) => g.id === 'administration').items.length, 4, 'Admin sieht vier Administrations-Punkte');
+eq(sichtbar(P.admin).find((g) => g.id === 'administration').items.length, 3, 'Admin sieht drei Administrations-Punkte');
 // Die Dino-Verwaltung ist ein Werkzeug zum Aendern, kein Nachschlagewerk —
 // auch wenn /dino-limits LESEND fuer jeden offen ist.
 eq(sichtbar(P.fossil).find((g) => g.id === 'wissen').items.map((i) => i.view).join(','), 'lexikon',
