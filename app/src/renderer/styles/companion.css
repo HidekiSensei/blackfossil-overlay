@@ -223,7 +223,25 @@ input[type="range"] { accent-color: var(--accent); }
 #cpMain { flex: 1; min-width: 0; display: flex; flex-direction: column; }
 .cp-view { flex: 1; min-height: 0; display: flex; flex-direction: column; }
 .cp-pad { padding: var(--cp-s5) var(--cp-s6); overflow-y: auto; }
-.cp-pad-narrow { max-width: 780px; }
+/* Breite: gedeckelt, aber grosszuegig. 780px liessen auf einem 1360er Fenster
+   die halbe Flaeche leer; voellig unbegrenzt waeren Fliesstext und Formulare
+   dagegen unlesbar breit. Listen und Raster sprengen den Deckel bewusst
+   (cp-pad-full), weil sie von Spalten profitieren statt von Zeilenlaenge. */
+.cp-pad-narrow { max-width: 1080px; }
+.cp-pad-full { max-width: none; }
+
+/* Abstand zwischen den Bloecken einer Ansicht. Vorher trugen einzelne
+   Bausteine ihre eigenen margins — was fehlte, sobald zwei davon
+   aufeinandertrafen, die beide keins hatten. */
+.cp-stack { display: flex; flex-direction: column; gap: var(--cp-s4); align-items: stretch; }
+.cp-stack > * { margin: 0; }
+
+/* Knopfleiste, die NICHT auf volle Breite zieht. cp-btn-row streckt seine
+   Knoepfe (flex:1) — richtig fuer zwei gleichrangige Aktionen in einer
+   schmalen Karte, falsch fuer "Speichern / Zuruecksetzen" ueber einer
+   breiten Liste, wo ein 500px breiter Speichern-Knopf entsteht. */
+.cp-btn-row-left { justify-content: flex-start; align-items: center; }
+.cp-btn-row-left > .cp-btn { flex: 0 0 auto; min-width: 0; }
 
 /* ── Karte ────────────────────────────────────────────────────────────── */
 .cp-bar {
@@ -242,8 +260,8 @@ input[type="range"] { accent-color: var(--accent); }
 #cpMapCanvas:active { cursor: grabbing; }
 
 /* ── Scrollbars ───────────────────────────────────────────────────────── */
-.cp-pad::-webkit-scrollbar, .cp-scroll::-webkit-scrollbar, .cp-lex-list::-webkit-scrollbar { width: 9px; }
-.cp-pad::-webkit-scrollbar-thumb, .cp-scroll::-webkit-scrollbar-thumb, .cp-lex-list::-webkit-scrollbar-thumb {
+.cp-pad::-webkit-scrollbar, .cp-scroll::-webkit-scrollbar, .cp-lex-list::-webkit-scrollbar, .cp-pl-list::-webkit-scrollbar { width: 9px; }
+.cp-pad::-webkit-scrollbar-thumb, .cp-scroll::-webkit-scrollbar-thumb, .cp-lex-list::-webkit-scrollbar-thumb, .cp-pl-list::-webkit-scrollbar-thumb {
   background: rgba(255, 255, 255, 0.13); border-radius: 999px;
 }
 .cp-pad::-webkit-scrollbar-thumb:hover, .cp-scroll::-webkit-scrollbar-thumb:hover, .cp-lex-list::-webkit-scrollbar-thumb:hover { background: rgba(255, 255, 255, 0.22); }
@@ -264,6 +282,17 @@ input[type="range"] { accent-color: var(--accent); }
 .cp-item-click.active { background: rgba(var(--accent-rgb), 0.16); }
 
 .cp-badge-row { display: flex; gap: var(--cp-s2); flex-wrap: wrap; }
+
+/* Spaltenueberschrift mit Trennlinie — spiegelt cp-tabs/cp-lex-topbar (gleiche
+   border-bottom + Abstaende), damit Support und Lexikon dasselbe Look-and-feel
+   haben: Ueberschrift, HR, dann Inhalt frei stehend (keine Card). */
+.cp-colhead {
+  font-weight: 600; font-size: 14px; color: #e8e6ef;
+  border-bottom: 1px solid var(--cp-line);
+  margin-bottom: var(--cp-s5); padding-bottom: var(--cp-s2);
+}
+/* Antwortformular unter dem Chat — dezenter Abstand statt eigener Card. */
+.cp-sup-reply { margin-top: var(--cp-s4); display: flex; flex-direction: column; gap: var(--cp-s3); }
 
 /* ── Ticket-Verlauf ────────────────────────────────────────────────────── */
 .cp-chat { display: flex; flex-direction: column; gap: var(--cp-s3); max-height: 420px; }
@@ -605,6 +634,33 @@ input[type="range"] { accent-color: var(--accent); }
 .cp-navgrp-caret { width: 11px; text-align: center; flex: none; font-size: 9px; }
 .cp-navgrp-body { display: flex; flex-direction: column; gap: 2px; }
 
+/* Mithör-Regler in der Kartenleiste — nur sichtbar, solange es läuft. */
+.cp-listen-box { display: inline-flex; align-items: center; gap: var(--cp-s2); }
+.cp-listen-box input[type=range] { width: 110px; }
+
+/* ── Class-Limits ─────────────────────────────────────────────────────────── */
+/* Raster statt einer langen Spalte: die 20 Arten passen auf einem breiten
+   Fenster in vier Spalten ohne Scrollen, waehrend eine einspaltige Liste zwei
+   Drittel der Flaeche leer liess und trotzdem scrollte. Die Spaltenzahl ergibt
+   sich aus der Breite (auto-fill), bricht also von selbst auf eine Spalte. */
+.cp-dl-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(230px, 1fr)); gap: var(--cp-s2) var(--cp-s4); }
+.cp-dl-row {
+  display: flex; align-items: center; gap: var(--cp-s3);
+  padding: 3px var(--cp-s3) 3px var(--cp-s2); border-radius: var(--cp-r-sm);
+}
+.cp-dl-row:hover { background: var(--cp-surface); }
+.cp-dl-name { flex: 1; font-size: 12.5px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.cp-dl-in { width: 72px; flex: none; text-align: right; }
+/* Gesetztes Limit hervorheben — auf einen Blick sichtbar, welche Arten
+   ueberhaupt begrenzt sind, ohne jedes Feld einzeln zu lesen. */
+.cp-dl-in:not(:placeholder-shown) { border-color: rgba(var(--accent-rgb), .45); color: #fff; }
+
+/* Eingabefeld mit angehaengtem Knopf ("Mich"). Der Knopf behaelt seine
+   natuerliche Breite, das Feld nimmt den Rest — sonst teilen sich beide die
+   Zeile haelftig und das Suchfeld wird unbrauchbar schmal. */
+.cp-row-tight { display: flex; gap: var(--cp-s2); align-items: center; }
+.cp-row-tight > .cp-input { flex: 1 1 auto; min-width: 0; }
+.cp-row-tight > .cp-btn { flex: 0 0 auto; }
 /* ── Lexikon ───────────────────────────────────────────────────────────────
    Optik bewusst nah am Overlay-Lexikon (Bild-Banner, Diaet-Punkt, gruene
    Staerken / rote Schwaechen, Tipp-/Wissenswert-Box) — dieselben Farben wie
@@ -659,5 +715,196 @@ input[type="range"] { accent-color: var(--accent); }
 
 .cp-lex-locked { color: var(--cp-danger); }
 
-.cp-lex-nav { display: flex; gap: var(--cp-s2); margin-top: var(--cp-s4); }
-.cp-lex-nav .cp-btn { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+/* Detail-Topbar: Nav-Buttons oben, buendig links/rechts mit Luecke in der
+   Mitte (space-between). Die untere Trennlinie spiegelt exakt .cp-tabs der
+   Liste links, damit beide Seiten als Paar wirken. */
+.cp-lex-topbar {
+  display: flex; justify-content: space-between; align-items: center; gap: var(--cp-s2);
+  border-bottom: 1px solid var(--cp-line);
+  margin-bottom: var(--cp-s5); padding-bottom: var(--cp-s2);
+}
+.cp-lex-topbar .cp-btn { flex: none; max-width: 46%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+/* ── Audit-Tabellen (Player-Audit / Team-Audit) ────────────────────────────
+   Vollflaechen-Layout: Kopf + Filterleiste + Fusszeile stehen fest, NUR der
+   Tabellen-Wrapper scrollt (flex:1 + min-height:0 + overflow:auto). Bewusst
+   KEIN cp-pad als Root — dessen overflow-y:auto wuerde die ganze Seite
+   scrollen lassen und cp-pad-narrow die Breite auf 780px kappen. */
+.cp-audit {
+  display: flex; flex-direction: column;
+  height: 100%; min-height: 0;
+  padding: var(--cp-s5) var(--cp-s5) var(--cp-s3);
+  gap: var(--cp-s3);
+}
+.cp-audit .cp-h1 { margin-bottom: 0; }
+.cp-audit .cp-sub { margin-top: 2px; margin-bottom: 0; }
+
+/* Filterleiste: Felder umbrechen frei; Eingaben kompakt halten. */
+.cp-audit-bar { flex: none; display: flex; flex-wrap: wrap; gap: var(--cp-s2) var(--cp-s3); align-items: flex-end; }
+.cp-audit-bar .cp-field { margin: 0; }
+.cp-audit-bar .cp-input, .cp-audit-bar .cp-select { min-width: 130px; }
+
+/* Aktionszeile der Filterleiste: eigene volle Zeile unter den Feldern.
+   Schnellbereiche links, Anwenden/Zuruecksetzen rechts (margin-left:auto). */
+.cp-audit-actions { flex-basis: 100%; display: flex; flex-wrap: wrap; gap: var(--cp-s2); align-items: center; }
+.cp-audit-actions .cp-btn { flex: none; }
+.cp-audit-ranges { display: flex; gap: var(--cp-s2); }
+.cp-audit-actions > .cp-btn:nth-last-child(2) { margin-left: auto; }
+
+.cp-table-wrap {
+  flex: 1 1 auto; min-height: 0; overflow: auto;
+  border: 1px solid var(--cp-line); border-radius: var(--cp-r-md);
+  background: var(--cp-surface);
+}
+.cp-table { width: 100%; border-collapse: collapse; font-size: 12.5px; }
+.cp-table thead th {
+  /* Sticky-Kopf im Scroll-Container. Der Hintergrund MUSS deckend sein, sonst
+     scheinen die Zeilen beim Scrollen durch den Kopf durch. */
+  position: sticky; top: 0; z-index: 1;
+  background: #191327;
+  text-align: left; font-weight: 600; white-space: nowrap;
+  padding: 8px 10px; border-bottom: 1px solid var(--cp-line);
+}
+.cp-th-sort { cursor: pointer; user-select: none; }
+.cp-th-sort:hover { color: #fff; }
+.cp-table tbody td {
+  padding: 6px 10px; border-bottom: 1px solid var(--cp-line);
+  vertical-align: top;
+}
+.cp-table tbody tr:hover { background: var(--cp-surface-2); }
+.cp-td-mono { font-family: ui-monospace, monospace; font-size: 11.5px; }
+.cp-td-name { font-weight: 550; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+/* Klickbare, kopierbare SteamID unter Akteur/Ziel. */
+.cp-copyid {
+  display: inline-block; max-width: 100%;
+  font-family: ui-monospace, monospace; font-size: 11px; color: var(--muted);
+  cursor: pointer; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  vertical-align: bottom;
+}
+.cp-copyid::before { content: '⧉ '; opacity: .55; }
+.cp-copyid:hover { color: #fff; text-decoration: underline; }
+.cp-td-details { word-break: break-word; color: var(--muted); }
+.cp-td-empty { text-align: center; color: var(--muted); padding: var(--cp-s5) !important; }
+
+.cp-audit-foot { flex: none; display: flex; align-items: center; gap: var(--cp-s3); }
+
+/* Aktions-Multi-Select: Knopf + Popup (Suchfeld + Checkbox-Liste). */
+.cp-msel { position: relative; }
+.cp-msel-pop {
+  position: absolute; top: calc(100% + 4px); left: 0; z-index: 20;
+  width: 240px; padding: var(--cp-s2);
+  background: #191327; border: 1px solid var(--cp-line);
+  border-radius: var(--cp-r-md); box-shadow: 0 8px 24px rgba(0, 0, 0, 0.45);
+  display: flex; flex-direction: column; gap: var(--cp-s2);
+}
+.cp-msel-q { width: 100%; }
+.cp-msel-list { max-height: 260px; overflow-y: auto; display: flex; flex-direction: column; gap: 2px; }
+.cp-msel-item { padding: 2px 4px; border-radius: var(--cp-r-sm); }
+.cp-msel-item:hover { background: var(--cp-surface-2); }
+
+/* ── Spielerliste (Moderation) ────────────────────────────────────────────── */
+/* Aufbau wie im Lexikon: Liste links, Detail rechts. Die Liste scrollt fuer
+   sich und laedt beim Scrollen nach — 1250 Zeilen auf einmal kosten spuerbar
+   und liest niemand. */
+.cp-pl-count { margin: var(--cp-s2) 0; font-size: 11.5px; }
+.cp-pl-list {
+  max-height: calc(100vh - 300px); min-height: 300px; overflow-y: auto;
+  display: flex; flex-direction: column; gap: 2px;
+}
+.cp-pl-row {
+  display: flex; align-items: center; gap: var(--cp-s3); width: 100%;
+  padding: var(--cp-s2) var(--cp-s3); height: 42px; flex: none;
+  font: inherit; color: inherit; text-align: left;
+  background: transparent; border: 1px solid transparent; border-radius: var(--cp-r-sm);
+  cursor: pointer; transition: background .12s, border-color .12s;
+}
+.cp-pl-row:hover { background: var(--cp-surface); }
+.cp-pl-row.on { background: rgba(var(--accent-rgb), .16); border-color: rgba(var(--accent-rgb), .38); }
+/* Punkt statt Text: der Zustand ist binaer und soll beim Ueberfliegen einer
+   langen Liste ohne Lesen erfassbar sein. */
+.cp-pl-status { width: 8px; height: 8px; border-radius: 50%; flex: none; background: #4b4658; }
+.cp-pl-status.on { background: var(--cp-ok); box-shadow: 0 0 0 2px rgba(74, 222, 128, .2); }
+.cp-pl-main { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 1px; }
+.cp-pl-name { font-size: 13px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.cp-pl-sub { font-size: 11px; color: var(--muted); }
+.cp-pl-more { padding: var(--cp-s3); text-align: center; font-size: 11px; color: var(--muted); }
+.cp-pl-title {
+  display: flex; align-items: center; gap: var(--cp-s3);
+  font-size: 16px; font-weight: 600; margin-bottom: var(--cp-s4);
+}
+.cp-pl-facts { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: var(--cp-s2) var(--cp-s4); }
+.cp-pl-fact { display: flex; gap: var(--cp-s2); font-size: 12.5px; }
+.cp-pl-fact-k { color: var(--muted); min-width: 62px; flex: none; }
+.cp-pl-fact-v { overflow: hidden; text-overflow: ellipsis; }
+
+/* Auswahl-Chips (Primes, Mutationen). Umbrechend statt scrollend: bei 40
+   Mutationen ist ein waagerechter Scroll unbedienbar. */
+.cp-chip-wrap { display: flex; flex-wrap: wrap; gap: var(--cp-s1); }
+.cp-chip {
+  padding: 4px var(--cp-s3); height: 26px; flex: none;
+  font: inherit; font-size: 11.5px; color: var(--muted);
+  background: var(--cp-surface); border: 1px solid var(--cp-line);
+  border-radius: 999px; cursor: pointer;
+  transition: background .12s, color .12s, border-color .12s;
+}
+.cp-chip:hover { background: var(--cp-surface-2); color: #ddd; }
+.cp-chip.on { background: rgba(var(--accent-rgb), .18); border-color: rgba(var(--accent-rgb), .45); color: #fff; }
+
+/* Betroffene Ziele einer Aktion. Als Abzeichen-Wolke statt als Liste: bei 50
+   Spielern braucht eine Liste den halben Bildschirm, die Namen sollen aber
+   VOR dem Klick vollstaendig lesbar sein. */
+.cp-pl-targets { display: flex; flex-wrap: wrap; gap: var(--cp-s1); max-height: 180px; overflow-y: auto; }
+
+/* Garage-Slot mit ausklappbarem Editor. Der Rahmen haelt Zeile und Formular
+   sichtbar zusammen — sonst wirkt das Formular wie ein eigener Abschnitt und
+   man verliert, zu welchem Slot es gehoert. */
+.cp-gar-slot { border-radius: var(--cp-r-sm); }
+.cp-gar-slot:has(.cp-gar-form) { background: var(--cp-surface); }
+.cp-gar-form { padding: 0 var(--cp-s3) var(--cp-s3); display: flex; flex-direction: column; gap: var(--cp-s3); }
+/* Roter Punkt am Settings-Eintrag, wenn ein Update anliegt.
+   Rechtsbuendig statt neben dem Text: so springt die Beschriftung nicht,
+   wenn der Punkt kommt oder geht. */
+.cp-nav-dot {
+  width: 7px; height: 7px; border-radius: 50%; flex: none; margin-left: auto;
+  background: #ef4444; box-shadow: 0 0 0 2px rgba(239, 68, 68, .22);
+}
+
+/* ── Handbuch ───────────────────────────────────────────────────────────────
+   Master/Detail wie Lexikon (cp-split). Rang-Plaketten in den HB_BADGE-Farben. */
+/* Suche oben, darunter Trennlinie (wie die Reiter im Lexikon); dann scrollt
+   nur die Liste darunter. */
+.cp-hb-search { border-bottom: 1px solid var(--cp-line); margin-bottom: var(--cp-s3); padding-bottom: var(--cp-s2); }
+.cp-hb-list { max-height: calc(100vh - 320px); min-height: 300px; overflow-y: auto; }
+.cp-hb-cat { font-size: 12px; font-weight: 700; color: var(--muted); margin: var(--cp-s3) 0 var(--cp-s1); }
+.cp-hb-cat:first-child { margin-top: 0; }
+
+/* Rang-Plakette (Farben aus shared/handbuch.js HB_BADGE). */
+.cp-hb-badge { flex: none; font-size: 10px; font-weight: 700; border: 1px solid currentColor; border-radius: var(--cp-r-sm); padding: 2px 6px; }
+.cp-hb-staff  { color: #22c55e; }
+.cp-hb-ingame { color: #3b82f6; }
+.cp-hb-admin  { color: #ef4444; }
+.cp-hb-any    { color: #9aa0a6; }
+
+.cp-hb-topbar {
+  display: flex; justify-content: space-between; align-items: center; gap: var(--cp-s2);
+  border-bottom: 1px solid var(--cp-line);
+  margin-bottom: var(--cp-s4); padding-bottom: var(--cp-s2);
+}
+.cp-hb-title { font-weight: 700; font-size: 16px; }
+.cp-hb-cat-line { font-size: 12px; color: var(--muted); margin: 0 0 var(--cp-s3); }
+.cp-hb-body { font-size: 13px; line-height: 1.5; margin-bottom: var(--cp-s3); }
+.cp-hb-ul { margin: var(--cp-s1) 0 var(--cp-s3); padding-left: 18px; font-size: 12.5px; line-height: 1.6; }
+.cp-hb-caveat {
+  border-left: 3px solid #f59e0b; background: rgba(245, 158, 11, 0.08);
+  border-radius: var(--cp-r-sm); padding: var(--cp-s2) var(--cp-s3); font-size: 12.5px;
+}
+
+/* ── Verwarnungen (Ergebniszeilen) ──────────────────────────────────────── */
+.cp-warn-row { padding: var(--cp-s2) var(--cp-s3); border-bottom: 1px solid var(--cp-line); }
+.cp-warn-row:last-child { border-bottom: none; }
+.cp-warn-head { display: flex; justify-content: space-between; align-items: center; gap: var(--cp-s2); }
+.cp-warn-who { font-weight: 550; }
+.cp-warn-num { font-weight: 700; font-size: 12px; flex: none; }
+.cp-warn1 { color: #f59e0b; } .cp-warn2 { color: #f97316; } .cp-warn3 { color: #ef4444; }
+.cp-warn-line { font-size: 12.5px; margin-top: 3px; }
+.cp-warn-meta { font-size: 10.5px; color: var(--muted); margin-top: 3px; }

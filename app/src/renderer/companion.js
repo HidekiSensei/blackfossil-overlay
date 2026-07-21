@@ -22,13 +22,26 @@ import {
 } from './map.js';
 import { baseClass, escapeHtml } from './shared/format.js';
 import { makeTheme } from './shared/theme.js';
-import { initSettings, renderSettings } from './companion/panels/settings.js';
+import { initSettings, renderSettings, openSoftwareTab } from './companion/panels/settings.js';
+import { initUpdates, hasUpdate, onUpdateChange } from './companion/updates.js';
+import {
+  initListen, startListening, stopListening, retarget, setRadius,
+  isListening, listenTarget, listenRadius, applyVolumes, audibleCount,
+} from './companion/listen.js';
+import { initDinos, renderDinos } from './companion/panels/dinos.js';
+import { initPlayers, renderPlayers } from './companion/panels/players.js';
+import { initTokens, renderTokens } from './companion/panels/tokens.js';
 import { NAV_GROUPS, NAV_SETTINGS, itemFor, collapsedGroups, saveCollapsed } from './companion/nav.js';
-import { initServer, renderServer, stopServer } from './companion/panels/server.js';
+import { initAnnounce, renderAnnounce } from './companion/panels/announce.js';
+import { initControl, renderControl, stopControl } from './companion/panels/control.js';
+import { initEvrima, renderEvrima } from './companion/panels/evrima.js';
 import { initAdmin, renderAdmin } from './companion/panels/admin.js';
+import { initEvents, renderEvents } from './companion/panels/events.js';
 import { initTeam, renderTeam } from './companion/panels/team.js';
 import { initSupport, renderSupport, stopSupport } from './companion/panels/support.js';
 import { initLexikon, renderLexikon } from './companion/panels/lexikon.js';
+import { initHandbuch, renderHandbuch } from './companion/panels/handbuch.js';
+import { initAccounts, renderAccounts } from './companion/panels/accounts.js';
 
 let config = { tokenBase: '' };
 let sessionToken = null;
@@ -440,6 +453,17 @@ async function pollPositions() {
     if (online !== perms.online) { perms.online = online; applyNavPermissions(); }
     // Die offene Spielerliste lebt von denselben Daten.
     if (plList && isPlayerListOpen()) plList.refresh();
+    // Mithoeren: Lautstaerken folgen den neuen Positionen. Wechselt die
+    // Auswahl auf genau einen anderen Spieler, wandert der Umkreis mit —
+    // ohne die Verbindung neu aufzubauen.
+    if (isListening()) {
+      if (highlight.size === 1) {
+        const sel = [...highlight][0];
+        if (sel !== listenTarget()) retarget(sel);
+      }
+      applyVolumes();
+      updateListenUi();
+    }
     dirty = true;
   } catch (err) {
     const s = el('cpMapStat');
@@ -853,16 +877,22 @@ const panelCtx = {
 // Menuepunkt -> Renderer. Team und Admin bedienen mehrere Punkte, deshalb
 // bekommen sie den Punkt als zweiten Parameter (frueher waren das ihre Reiter).
 const PANELS = {
-  spieler: (r) => renderTeam(r, 'spieler'),
+  spieler: renderPlayers,
+  tokens: renderTokens,
   warnings: (r) => renderTeam(r, 'warnings'),
   paudit: (r) => renderTeam(r, 'paudit'),
   taudit: (r) => renderTeam(r, 'taudit'),
   welt: (r) => renderAdmin(r, 'welt'),
-  limits: (r) => renderAdmin(r, 'limits'),
+  events: renderEvents,
   ops: (r) => renderAdmin(r, 'ops'),
-  server: renderServer,
+  dinos: renderDinos,
+  announce: renderAnnounce,
+  control: renderControl,
+  evrima: renderEvrima,
   support: renderSupport,
   lexikon: renderLexikon,
+  handbuch: renderHandbuch,
+  accounts: renderAccounts,
   settings: renderSettings,
 };
 
@@ -870,6 +900,7 @@ const PANELS = {
 const settingsCtx = {
   perms: () => perms,
   toast,
+  bf: window.bf,
   theme,
   tokenBase: () => config.tokenBase,
   version: () => window.bf.getVersion(),
@@ -935,9 +966,28 @@ function renderNav() {
   });
 }
 
+// Punkt an- oder abschalten, ohne die Navigation neu zu erzeugen.
+function zeichnePunkt() {
+  const b = document.querySelector('.cp-nav-btn[data-view="settings"]');
+  if (!b) return;
+  const da = b.querySelector('.cp-nav-dot');
+  if (hasUpdate() && !da) {
+    const d = document.createElement('span');
+    d.className = 'cp-nav-dot';
+    d.title = 'Update verfügbar';
+    b.appendChild(d);
+  } else if (!hasUpdate() && da) {
+    da.remove();
+  }
+}
+
 function navBtn(i) {
+  // Roter Punkt nur an Settings, und nur wenn wirklich etwas anliegt. Ein
+  // Punkt, der auch ohne Anlass leuchtet, wird binnen Tagen ignoriert.
+  const punkt = i.view === 'settings' && hasUpdate()
+    ? `<span class="cp-nav-dot" title="Update verfügbar"></span>` : '';
   return `<button class="cp-nav-btn" data-view="${i.view}">`
-    + `<span class="cp-nav-ico">${i.icon}</span> ${escapeHtml(i.label)}</button>`;
+    + `<span class="cp-nav-ico">${i.icon}</span> ${escapeHtml(i.label)}${punkt}</button>`;
 }
 
 // Nach einer Rechte-Aenderung (z. B. eigener Dino kam online) neu aufbauen.
@@ -946,6 +996,18 @@ function applyNavPermissions() {
   // Steht man auf einer Ansicht, die man nicht mehr sehen darf, zurueck zur Karte.
   const cur = itemFor(currentView);
   if (cur && !navAllowed(cur)) navTo('map');
+}
+
+// Zustand des Mithoerens in der Leiste nachziehen. Zeigt auch, WIE VIELE
+// gerade tatsaechlich zu hoeren sind — ohne das waere nicht erkennbar, ob der
+// Radius zu klein ist oder schlicht niemand in der Naehe steht.
+function updateListenUi() {
+  const lb = el('cpListen'), box = el('cpListenBox'), lv = el('cpListenVal');
+  if (!lb) return;
+  const an = isListening();
+  lb.setAttribute('aria-checked', an ? 'true' : 'false');
+  if (box) box.hidden = !an;
+  if (lv) lv.textContent = listenRadius() + ' m' + (an ? ` · ${audibleCount()} hörbar` : '');
 }
 
 // ── Legende & Layer ────────────────────────────────────────────────────────
@@ -1028,8 +1090,8 @@ function restoreZonePrefs() {
 // ── Navigation ─────────────────────────────────────────────────────────────
 function navTo(view) {
   // Polls haengen am offenen Panel — beim Wegnavigieren abstellen.
-  if (view !== 'server') stopServer();
   if (view !== 'support') stopSupport();
+  if (view !== 'control') stopControl();
   currentView = view;
   document.querySelectorAll('.cp-nav-btn').forEach((b) => b.classList.toggle('active', b.dataset.view === view));
   // Die Karte hat eigenes statisches Markup, alles andere teilt sich einen
@@ -1045,6 +1107,9 @@ function navTo(view) {
     dirty = true;
     refreshMapObjects();
   }
+  // Steht der Punkt an Settings, ist der Anlass ein Update — dann direkt in
+  // den Software-Reiter, statt den Nutzer suchen zu lassen.
+  if (view === 'settings' && hasUpdate()) openSoftwareTab();
   const render = PANELS[view];
   if (render) {
     try { render(el('cpPanelView')); }
@@ -1090,9 +1155,26 @@ async function boot() {
   // Themes waeren sonst dauerhaft auf Violett zurueckgefallen. Staff bekommt
   // ueber effectiveTier() alles frei (siehe shared/theme.js).
   theme.setFromToken(t);
-  initTeam(panelCtx); initAdmin(panelCtx); initServer(panelCtx);
-  initSupport(panelCtx); initLexikon(panelCtx);
+  initTeam(panelCtx); initAdmin(panelCtx); initAnnounce(panelCtx); initEvents(panelCtx);
+  initControl(panelCtx); initEvrima(panelCtx);
+  initSupport(panelCtx); initLexikon(panelCtx); initHandbuch(panelCtx); initAccounts(panelCtx);
   initSettings(settingsCtx);
+  // EINMAL registrieren, nicht erst beim Oeffnen des Software-Reiters: der
+  // stuendliche Timer im Hauptprozess meldet sich sonst ins Leere, und
+  // electron-updater wiederholt die Meldung nicht.
+  initUpdates(window.bf);
+  // Nur den Punkt nachziehen statt die ganze Navigation neu zu bauen — ein
+  // Neuaufbau wuerde den aufgeklappten Zustand der Gruppen anfassen.
+  onUpdateChange(() => zeichnePunkt());
+  initListen({
+    api, toast,
+    can: (c) => can(perms, c),
+    players: () => players,
+    onChange: updateListenUi,
+  });
+  initDinos(panelCtx);
+  initPlayers(panelCtx);
+  initTokens(panelCtx);
   initEditor(editorCtx);
 
   // Nicht erlaubte Punkte gar nicht erst erzeugen — tote Buttons verrotten.
@@ -1121,6 +1203,29 @@ async function boot() {
     }
     if (cb) cb.onclick = () => openCreateMenu();
     setEditMode(false);
+  }
+
+  // Mithoeren (Admin). Braucht genau EINEN ausgewaehlten Spieler: bei mehreren
+  // Umkreisen koennte man nicht mehr sagen, wem man gerade zuhoert.
+  {
+    const lb = el('cpListen'), lr = el('cpListenR'), lv = el('cpListenVal');
+    if (lb) {
+      lb.hidden = !can(perms, 'voice.listen');
+      lb.onclick = async () => {
+        if (isListening()) { await stopListening(); return; }
+        if (highlight.size !== 1) {
+          toast('Genau einen Spieler auswaehlen — Mithoeren gilt einem Umkreis.', 'error');
+          return;
+        }
+        await startListening([...highlight][0]);
+      };
+    }
+    if (lr) {
+      lr.value = String(listenRadius());
+      lr.oninput = () => { setRadius(lr.value); lv.textContent = lr.value + ' m'; updateListenUi(); };
+      lv.textContent = listenRadius() + ' m';
+    }
+    updateListenUi();
   }
 
   // Spielerliste (Team-only) — dieselbe Bedingung wie die Overwatch-Ansicht.

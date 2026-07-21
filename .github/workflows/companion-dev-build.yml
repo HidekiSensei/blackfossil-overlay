@@ -46,6 +46,11 @@ jobs:
           node-version: 20
 
       - run: npm ci
+      - name: Quell-Konfiguration prüfen
+        # Riegel gegen versehentlich committete Test-Umleitungen (Prod-API,
+        # verschobener Loopback-Port). MUSS vor patch-prod laufen — danach
+        # steht die Produktions-URL dort zu Recht.
+        run: node scripts/check-source-config.js
       - run: npm run build:renderer
       - run: npm run test:shared
 
@@ -103,6 +108,11 @@ jobs:
           node-version: 20
 
       - run: npm ci
+      - name: Quell-Konfiguration prüfen
+        # Riegel gegen versehentlich committete Test-Umleitungen (Prod-API,
+        # verschobener Loopback-Port). MUSS vor patch-prod laufen — danach
+        # steht die Produktions-URL dort zu Recht.
+        run: node scripts/check-source-config.js
       - run: npm run build:renderer
 
       - name: Dev-Version setzen

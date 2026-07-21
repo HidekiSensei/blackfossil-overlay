@@ -481,7 +481,6 @@
       <button data-stab="godvoice" class="secondary">📣 Gottstimme</button>
       <button data-stab="teamaudit" class="secondary">🛡️ Team-Audit</button>
       <button data-stab="evrima" class="secondary">🏷️ Evrima</button>
-      <button data-stab="ops" class="secondary">🛠️ Betrieb</button>
     </div>
     <div class="admin-panes">
       <div class="admin-pane" data-pane="welt"><div id="svWeltBody"><div class="dt-muted">Lade…</div></div></div>
@@ -509,27 +508,6 @@
         </div>
       </div>
       <div class="admin-pane" data-pane="evrima" hidden><div id="evrimaBody"><div class="dt-muted">Lade…</div></div></div>
-      <div class="admin-pane" data-pane="ops" hidden>
-        <div class="sec-title">🚦 Status-Matrix</div>
-        <div id="opsHealth" class="dt-muted" style="margin:8px 0 4px">Lade…</div>
-        <div style="margin:4px 0 14px">
-          <div style="font-size:11px;color:var(--muted);margin-bottom:3px">👥 Spieler (24 h)</div>
-          <canvas id="opsSpark" width="640" height="70" style="width:100%;height:70px;background:rgba(0,0,0,0.25);border:1px solid var(--border);border-radius:8px"></canvas>
-        </div>
-        <div class="sec-title">🏷️ Versionen &amp; Branches</div>
-        <div id="opsVersions" class="dt-muted" style="margin:8px 0 14px">Lade…</div>
-        <div class="sec-title">📜 Logs</div>
-        <div style="display:flex;gap:6px;align-items:center;margin:8px 0 6px;flex-wrap:wrap">
-          <select id="opsLogSel" class="bf-select" style="flex:0 0 190px"></select>
-          <input id="opsLogFilter" placeholder="🔍 Filter…" class="bf-select" style="cursor:text;flex:1;min-width:120px">
-          <label style="display:flex;align-items:center;gap:5px;font-size:12px;cursor:pointer;user-select:none">
-            <input id="opsLogFollow" type="checkbox" style="width:auto;cursor:pointer"> Folgen
-          </label>
-          <button id="opsLogReload" class="secondary" style="flex:none;width:auto;padding:6px 10px">🔄</button>
-          <button id="opsLogCopy" class="secondary" style="flex:none;width:auto;padding:6px 10px">📋</button>
-        </div>
-        <pre id="opsLogBox" style="max-height:300px;overflow:auto;background:rgba(0,0,0,0.35);border:1px solid var(--border);border-radius:8px;padding:8px;font-size:11px;line-height:1.35;white-space:pre-wrap;word-break:break-all;margin:0"></pre>
-      </div>
       <div class="admin-pane" data-pane="godvoice" hidden>
         <div class="sec-title">📣 Gottstimme — server-weite Durchsage</div>
         <div class="set-block" style="margin-top:8px">
@@ -551,32 +529,75 @@
   <div id="srvPanel">
     <button id="srvCloseBtn" class="secondary" style="position:absolute;top:16px;right:18px;flex:none;width:auto;padding:6px 12px">✕</button>
     <h2>🖥️ Server <span style="font-weight:400;font-size:12px;color:var(--muted)">— Steuerung &amp; Live-Status</span></h2>
-    <div class="admin-pane">
-      <div id="srvStatus" style="margin-bottom:16px"><div class="dt-muted">Lade Status…</div></div>
+    <div class="admin-tabs" id="srvTabs">
+      <button data-srvt="overview">📊 Übersicht</button>
+      <button data-srvt="players" class="secondary">👥 Spieler</button>
+      <button data-srvt="limits" class="secondary">🦖 Limits</button>
+      <button data-srvt="betrieb" class="secondary">🛠️ Betrieb</button>
+      <button data-srvt="control" class="secondary">⚙️ Steuerung</button>
+    </div>
+    <div class="admin-panes">
 
-      <div class="dt-sec">📢 Ansage (ingame)</div>
-      <div class="dt-form" style="margin-bottom:16px">
-        <input id="srvMsg" class="tm-input" placeholder="z.B. Event startet in 10 Min!">
-        <button id="srvAnnounce" style="width:100%;margin-top:8px">📢 Ansage senden</button>
+      <!-- 📊 Übersicht: Status + Last-Kacheln + Auslastungs-Kurve + Subsystem-Matrix -->
+      <div class="admin-pane" data-srvp="overview">
+        <div id="srvStatus" style="margin-bottom:14px"><div class="dt-muted">Lade Status…</div></div>
+        <div id="srvTiles" class="srv-tiles" style="margin-bottom:16px"><div class="dt-muted">Lade Kennzahlen…</div></div>
+        <div class="dt-sec">📈 Auslastung — Spieler (24 h)</div>
+        <canvas id="srvSpark" width="560" height="90" style="width:100%;height:90px;background:rgba(0,0,0,0.25);border:1px solid var(--border);border-radius:8px;margin:6px 0 16px"></canvas>
+        <div class="dt-sec">🩺 Subsysteme</div>
+        <div id="srvHealth" style="margin:6px 0 4px"><div class="dt-muted">Lade…</div></div>
+        <div id="srvHealthMeta" style="font-size:10px;color:var(--muted);margin-bottom:8px"></div>
       </div>
 
-      <div class="dt-sec">👥 Spieler online (<span id="srvPlayerCount">–</span>)</div>
-      <div id="srvPlayers" style="max-height:200px;overflow:auto;margin:6px 0 16px;font-size:12px"></div>
+      <!-- 👥 Spieler online (Live aus dem Positions-Poll) -->
+      <div class="admin-pane" data-srvp="players" hidden>
+        <div class="dt-sec">👥 Spieler online (<span id="srvPlayerCount">–</span>)</div>
+        <input id="srvPlayerSearch" class="tm-input" placeholder="🔎 Spieler oder Dino suchen…" style="width:100%;box-sizing:border-box;margin:6px 0 8px">
+        <div id="srvPlayers" style="max-height:440px;overflow:auto;font-size:12px"></div>
+      </div>
 
-      <div class="dt-sec">🦖 Class-Limits</div>
-      <div id="svClassBody" style="margin:6px 0 16px"></div>
+      <!-- 🦖 Class-Limits -->
+      <div class="admin-pane" data-srvp="limits" hidden>
+        <div id="svClassBody"><div class="dt-muted">Lade…</div></div>
+      </div>
 
-      <div class="dt-sec">🧹 Wartung</div>
-      <div class="dt-form" style="margin-bottom:16px"><button id="srvWipe" class="secondary" style="width:100%">🧹 Kadaver leeren (wipecorpses)</button></div>
-
-      <div class="dt-sec" style="color:#f87171">⚙️ Server-Steuerung (gefährlich)</div>
-      <div class="dt-form">
-        <div class="dt-row" style="display:flex;gap:6px">
-          <button id="srvStart" style="flex:1;background:#16a34a">▶️ Start</button>
-          <button id="srvRestart" class="secondary" style="flex:1">🔁 Restart</button>
-          <button id="srvStop" style="flex:1;background:#b91c1c">⏹️ Stop</button>
+      <!-- 🛠️ Betrieb: Versionen & Branches + Log-Viewer (Status-Matrix/Auslastung stehen im Übersichts-Tab) -->
+      <div class="admin-pane" data-srvp="betrieb" hidden>
+        <div class="sec-title">🏷️ Versionen &amp; Branches</div>
+        <div id="opsVersions" class="dt-muted" style="margin:8px 0 14px">Lade…</div>
+        <div class="sec-title">📜 Logs</div>
+        <div style="display:flex;gap:6px;align-items:center;margin:8px 0 6px;flex-wrap:wrap">
+          <select id="opsLogSel" class="bf-select" style="flex:0 0 190px"></select>
+          <input id="opsLogFilter" placeholder="🔍 Filter…" class="bf-select" style="cursor:text;flex:1;min-width:120px">
+          <label style="display:flex;align-items:center;gap:5px;font-size:12px;cursor:pointer;user-select:none">
+            <input id="opsLogFollow" type="checkbox" style="width:auto;cursor:pointer"> Folgen
+          </label>
+          <button id="opsLogReload" class="secondary" style="flex:none;width:auto;padding:6px 10px">🔄</button>
+          <button id="opsLogCopy" class="secondary" style="flex:none;width:auto;padding:6px 10px">📋</button>
         </div>
-        <div class="dt-muted" style="margin-top:4px">Stop/Restart trennt ALLE Spieler!</div>
+        <pre id="opsLogBox" style="max-height:340px;overflow:auto;background:rgba(0,0,0,0.35);border:1px solid var(--border);border-radius:8px;padding:8px;font-size:11px;line-height:1.35;white-space:pre-wrap;word-break:break-all;margin:0"></pre>
+      </div>
+
+      <!-- ⚙️ Steuerung: Ansage / Wartung / Start-Stop -->
+      <div class="admin-pane" data-srvp="control" hidden>
+        <div class="dt-sec">📢 Ansage (ingame)</div>
+        <div class="dt-form" style="margin-bottom:18px">
+          <input id="srvMsg" class="tm-input" placeholder="z.B. Event startet in 10 Min!">
+          <button id="srvAnnounce" style="width:100%;margin-top:8px">📢 Ansage senden</button>
+        </div>
+
+        <div class="dt-sec">🧹 Wartung</div>
+        <div class="dt-form" style="margin-bottom:18px"><button id="srvWipe" class="secondary" style="width:100%">🧹 Kadaver leeren (wipecorpses)</button></div>
+
+        <div class="dt-sec" style="color:#f87171">⚙️ Server-Steuerung (gefährlich)</div>
+        <div class="dt-form">
+          <div class="dt-row" style="display:flex;gap:6px">
+            <button id="srvStart" style="flex:1;background:#16a34a">▶️ Start</button>
+            <button id="srvRestart" class="secondary" style="flex:1">🔁 Restart</button>
+            <button id="srvStop" style="flex:1;background:#b91c1c">⏹️ Stop</button>
+          </div>
+          <div class="dt-muted" style="margin-top:4px">Stop/Restart trennt ALLE Spieler!</div>
+        </div>
       </div>
     </div>
   </div>

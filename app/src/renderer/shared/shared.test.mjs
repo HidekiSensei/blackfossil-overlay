@@ -3,6 +3,8 @@ import { userLabel, matchUser, warnItemUser } from './users.js';
 import { apiErr, armConfirm } from './core.js';
 import { makePerms, can, CAPS } from './perms.js';
 import { NAV_GROUPS, NAV_SETTINGS, itemFor } from '../companion/nav.js';
+import { clean, canon } from '../companion/panels/dinos.js';
+import { initUpdates, getUpdate, hasUpdate, onUpdateChange, updateText, kurzFehler } from '../companion/updates.js';
 import { makeTheme, themeFromHex, hexToRgb, effectiveTier, surfacesFromAccent, THEMES, ABO_ORDER } from './theme.js';
 let fail = 0;
 const eq = (a, b, n) => { const ok = a === b; if (!ok) fail++; console.log(`${ok?'ok  ':'FAIL'} ${n}: ${JSON.stringify(a)} ${ok?'==':'!='} ${JSON.stringify(b)}`); };
@@ -58,7 +60,8 @@ const P = {
   fossil:    makePerms({}),                                  // normaler Spieler
   supporter: makePerms({ team: true }),                      // TEAM_RANKS, nicht ingame
   moderator: makePerms({ team: true, ingame: true }),        // INGAME_RANKS
-  admin:     makePerms({ admin: true }),                     // ADMIN_RANKS
+  admin:     makePerms({ admin: true }),                     // ADMIN_RANKS (z.B. "Admin")
+  techie:    makePerms({ admin: true, rank: 'Owner' }),      // Developer/Owner = tech
 };
 
 eq(P.fossil.staff, false, 'Spieler ist kein Staff');
@@ -85,9 +88,15 @@ eq(can(P.moderator, 'server.wipe'), true, 'Moderator darf wipen');
 eq(can(P.moderator, 'server.control'), false, 'Moderator darf Server NICHT steuern');
 eq(can(P.admin, 'server.control'), true, 'Admin darf Server steuern');
 
+// Server-Gruppe (Betrieb/Steuerung/Evrima) ist eine Etage ueber admin: nur
+// Developer/Owner (tech). Reine Anzeige-Schranke, das Backend bleibt admin.
+eq(P.admin.tech, false, 'normaler Admin ist KEIN Techniker');
+eq(P.techie.tech, true, 'Owner/Developer ist Techniker');
+eq(can(P.admin, 'server.tech'), false, 'normaler Admin sieht die Server-Gruppe NICHT');
+eq(can(P.techie, 'server.tech'), true, 'Owner/Developer sieht die Server-Gruppe');
+
 // Welt und Betrieb sind admin-only
 eq(can(P.moderator, 'world.write'), false, 'Moderator darf Welt NICHT aendern');
-eq(can(P.moderator, 'ops.read'), false, 'Moderator sieht Betrieb NICHT');
 eq(can(P.admin, 'world.write'), true, 'Admin darf Welt aendern');
 
 // Spieler: nichts von alledem, aber Lesbares
@@ -98,7 +107,7 @@ eq(can(P.fossil, 'limits.read'), true, 'Spieler sieht Class-Limits');
 
 // Tippfehler duerfen NIE still freigeben
 eq(can(P.admin, 'gibtsNicht'), false, 'unbekannte Faehigkeit = verboten');
-eq(Object.values(CAPS).every((l) => ['any','staff','ingame','admin'].includes(l)), true,
+eq(Object.values(CAPS).every((l) => ['any','staff','ingame','admin','tech'].includes(l)), true,
    'alle CAPS nutzen bekannte Stufen');
 
 
@@ -187,7 +196,13 @@ const sichtbar = (p) => NAV_GROUPS
 
 const grpIds = (p) => sichtbar(p).map((g) => g.id).join(',');
 
-eq(grpIds(P.admin), 'arbeit,wissen,moderation,administration', 'Admin sieht alle Gruppen');
+// Normaler Admin sieht NICHT die Server-Gruppe (die ist tech = Developer/Owner).
+eq(grpIds(P.admin), 'arbeit,wissen,moderation,administration', 'Admin sieht alles ausser Server');
+eq(sichtbar(P.admin).find((g) => g.id === 'server'), undefined, 'Server-Gruppe ist fuer normale Admins weg');
+// Der Techniker (Developer/Owner) bekommt die Server-Gruppe zusaetzlich.
+eq(grpIds(P.techie), 'arbeit,wissen,moderation,administration,server', 'Techniker sieht zusaetzlich Server');
+eq(sichtbar(P.techie).find((g) => g.id === 'server').items.map((i) => i.view).join(','), 'ops,control,evrima',
+   'Server-Gruppe hat Betrieb, Steuerung und Evrima');
 eq(grpIds(P.fossil), 'arbeit,wissen', 'Spieler sieht nur Arbeitsmittel und Wissen');
 // Supporter (Team, aber weder ingame noch admin): darf suchen, aber nichts am Server.
 eq(grpIds(P.supporter), 'arbeit,wissen,moderation', 'Supporter sieht keine Administration');
@@ -195,10 +210,15 @@ eq(sichtbar(P.supporter).find((g) => g.id === 'administration'), undefined, 'Adm
 // Auch der Moderator nicht: Welt, Betrieb und Team-Audit sind samt und sonders admin.
 eq(grpIds(P.moderator), 'arbeit,wissen,moderation', 'Moderator sieht keine Administration');
 // Gegenprobe: die Gruppe ist nicht etwa generell leer.
-eq(sichtbar(P.admin).find((g) => g.id === 'administration').items.length, 3, 'Admin sieht drei Administrations-Punkte');
-// Class-Limits sind Nachschlagewerk, kein Eingriff — auch ein Spieler sieht sie.
-eq(sichtbar(P.fossil).find((g) => g.id === 'wissen').items.map((i) => i.view).join(','), 'lexikon,limits',
-   'Spieler sieht Lexikon und Class-Limits');
+eq(sichtbar(P.admin).find((g) => g.id === 'administration').items.length, 4, 'Admin sieht vier Administrations-Punkte');
+// Die Dino-Verwaltung ist ein Werkzeug zum Aendern, kein Nachschlagewerk —
+// auch wenn /dino-limits LESEND fuer jeden offen ist.
+eq(sichtbar(P.fossil).find((g) => g.id === 'wissen').items.map((i) => i.view).join(','), 'lexikon',
+   'Spieler sieht nur das Lexikon');
+eq(sichtbar(P.moderator).some((g) => g.items.some((i) => i.view === 'dinos')), false,
+   'Moderator sieht keine Dino-Verwaltung');
+eq(sichtbar(P.admin).find((g) => g.id === 'administration').items.some((i) => i.view === 'dinos'), true,
+   'Admin sieht die Dino-Verwaltung');
 
 // Jeder Punkt muss auffindbar sein und eine bekannte Faehigkeit nutzen.
 eq(NAV_GROUPS.flatMap((g) => g.items).every((i) => itemFor(i.view) === i), true, 'itemFor findet jeden Punkt');
@@ -208,6 +228,97 @@ eq(NAV_GROUPS.flatMap((g) => g.items).every((i) => !i.cap || CAPS[i.cap] !== und
 // Doppelte view-Ids wuerden dazu fuehren, dass ein Klick die falsche Ansicht oeffnet.
 const views = [...NAV_GROUPS.flatMap((g) => g.items), NAV_SETTINGS].map((i) => i.view);
 eq(views.length, new Set(views).size, 'keine doppelten Menuepunkt-Ids');
+
+// ── Class-Limits ───────────────────────────────────────────────────────────
+// Der Vergleich "geaendert?" darf NICHT an der Schluesselreihenfolge haengen:
+// der Server liefert die Limits anders sortiert als die Eingabefelder stehen,
+// wodurch das Formular sonst direkt nach dem Laden als geaendert galt.
+eq(canon({ Rex: 4, Allo: 8 }), canon({ Allo: 8, Rex: 4 }), 'Reihenfolge aendert den Vergleich nicht');
+eq(canon({ Rex: 4 }) === canon({ Rex: 5 }), false, 'ein anderer Wert wird erkannt');
+eq(canon({ Rex: 4 }) === canon({ Rex: 4, Allo: 8 }), false, 'eine zusaetzliche Art wird erkannt');
+
+// 0 ist eine Falle: die Datenbank nimmt es an, der Abgleich zum Spielserver
+// ueberspringt es aber — es darf gar nicht erst gesendet werden.
+eq(canon(clean({ Rex: 0, Allo: 8 })), 'Allo=8', 'Nullwerte fallen raus');
+eq(canon(clean({})), '', 'leere Karte bleibt leer');
+eq(canon(clean({ Rex: -1 })), '', 'negative Werte fallen raus');
+
+
+// ── Updates ────────────────────────────────────────────────────────────────
+// Kern des Umbaus: die IPC-Zuhoerer werden EINMAL registriert. Vorher tat das
+// der Software-Reiter bei jedem Oeffnen neu (und vor dem ersten Oeffnen gar
+// nicht) — der stuendliche Timer meldete sich also ins Leere, und die
+// Zuhoerer stapelten sich.
+const gefeuert = {};
+const bfStub = {
+  onUpdateAvailable: (f) => { gefeuert.avail = f; zaehl('avail'); },
+  onUpdateNone: (f) => { gefeuert.none = f; zaehl('none'); },
+  onUpdateProgress: (f) => { gefeuert.prog = f; zaehl('prog'); },
+  onUpdateReady: (f) => { gefeuert.ready = f; zaehl('ready'); },
+  onUpdateError: (f) => { gefeuert.err = f; zaehl('err'); },
+};
+const zaehler = {};
+function zaehl(k) { zaehler[k] = (zaehler[k] || 0) + 1; }
+
+initUpdates(bfStub);
+initUpdates(bfStub);   // zweiter Aufruf darf NICHTS zusaetzlich registrieren
+initUpdates(bfStub);
+eq(zaehler.avail, 1, 'IPC-Zuhoerer nur einmal registriert, auch bei Mehrfach-Init');
+
+eq(getUpdate().state, 'idle', 'Startzustand ist idle');
+eq(hasUpdate(), false, 'ohne Update kein roter Punkt');
+
+gefeuert.avail('1.9.9');
+eq(getUpdate().state, 'verfuegbar', 'Meldung setzt den Zustand');
+eq(getUpdate().version, '1.9.9', 'Version uebernommen');
+eq(hasUpdate(), true, 'verfuegbar => roter Punkt');
+eq(updateText(getUpdate()), 'Version 1.9.9 verfügbar.', 'Statustext passt');
+
+gefeuert.prog(42);
+eq(hasUpdate(), false, 'waehrend des Ladens KEIN Punkt — es laeuft ja schon');
+eq(updateText(getUpdate()), 'Lädt… 42%', 'Fortschritt im Text');
+
+gefeuert.ready('1.9.9');
+eq(hasUpdate(), true, 'bereit => Punkt wieder da (Neustart noetig)');
+
+gefeuert.none();
+eq(hasUpdate(), false, 'aktuell => kein Punkt');
+eq(getUpdate().state, 'aktuell', 'Zustand aktuell');
+
+gefeuert.err('Netzwerk weg');
+eq(updateText(getUpdate()), 'Update fehlgeschlagen: Netzwerk weg', 'Fehlertext');
+eq(hasUpdate(), false, 'Fehler ist kein Grund fuer einen Punkt');
+
+// Abmelden muss wirken, sonst waechst die Liste mit jedem Reiterwechsel.
+let n = 0;
+const ab = onUpdateChange(() => { n++; });
+gefeuert.none();
+eq(n, 1, 'angemeldeter Horcher wird benachrichtigt');
+ab();
+gefeuert.none();
+eq(n, 1, 'nach dem Abmelden nicht mehr');
+
+// Ein kaputter Horcher darf die anderen nicht mitreissen.
+const ab2 = onUpdateChange(() => { throw new Error('kaputt'); });
+let m = 0;
+const ab3 = onUpdateChange(() => { m++; });
+gefeuert.none();
+eq(m, 1, 'ein werfender Horcher blockiert die uebrigen nicht');
+ab2(); ab3();
+
+
+// Fehlermeldungen von electron-updater sind 400+ Zeichen Stacktrace und landen
+// in einer Statuszeile. Der haeufigste Fall (404) hat zudem eine Ursache, die
+// die Rohmeldung nicht nennt.
+eq(kurzFehler('HttpError: 404 Not Found "method: GET url: https://x/y.yml" at createHttpError (/tmp/a.js:1)').includes('404'),
+   true, '404 wird erkannt');
+eq(kurzFehler('irgendwas 404 irgendwo').length < 120, true, '404-Meldung ist kurz');
+eq(kurzFehler('ENOTFOUND host\n    at ClientRequest.emit (node:events:518)'), 'ENOTFOUND host',
+   'Stack nach echtem Umbruch abgeschnitten');
+eq(kurzFehler('Kaputt\\n    at Foo (/x.js:1)'), 'Kaputt', 'Stack nach ausgeschriebenem \\n abgeschnitten');
+eq(kurzFehler('Sehr lange Meldung ' + 'x'.repeat(300)).length <= 160, true, 'gedeckelt auf 160 Zeichen');
+eq(kurzFehler(''), '', 'leer bleibt leer');
+eq(kurzFehler(null), '', 'null bleibt leer');
 
 console.log(fail ? `\n${fail} FEHLGESCHLAGEN` : '\nalle bestanden');
 process.exit(fail ? 1 : 0);

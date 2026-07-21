@@ -28,36 +28,60 @@ export const NAV_GROUPS = [
   {
     id: 'wissen',
     label: 'Wissen',
-    // Class-Limits stehen hier und nicht unter Administration: /dino-limits ist
-    // `any`, also Spielerinformation ("welche Art darf ich, wie viele gibt es
-    // schon") — nachschlagen, nicht eingreifen. Das AENDERN der Limits ist
-    // admin und sitzt im Welt-Punkt.
     items: [
       { view: 'lexikon', icon: '📖', label: 'Lexikon', cap: null },
-      { view: 'limits', icon: '🦖', label: 'Class-Limits', cap: 'limits.read' },
     ],
   },
   {
     id: 'moderation',
     label: 'Moderation',
-    // Alles hier faengt bei staff/ingame an. Server gehoert dazu, weil sein
-    // Einstieg (Status, Ansage) staff ist — die harten Eingriffe darin
-    // (Neustart, Steuerung) sind admin und blenden sich im Panel selbst aus.
+    // Alles hier faengt bei staff/ingame an. Die Ankuendigung (Server-Broadcast)
+    // gehoert dazu, weil sie staff ist; die harten Server-Eingriffe (Neustart,
+    // Betrieb, Build-Infos) liegen eine Etage hoeher in der Gruppe "Server".
     items: [
       { view: 'spieler', icon: '👥', label: 'Spieler', cap: 'team.users' },
       { view: 'warnings', icon: '⚠️', label: 'Verwarnungen', cap: 'team.warnings' },
+      { view: 'accounts', icon: '🔗', label: 'Accounts', cap: 'team.accounts' },
       { view: 'paudit', icon: '🔍', label: 'Player-Audit', cap: 'team.playerAudit' },
-      { view: 'server', icon: '📢', label: 'Server', cap: 'server.status' },
+      { view: 'tokens', icon: '🎁', label: 'Tokens', cap: 'token.dino' },
+      { view: 'announce', icon: '📢', label: 'Ankündigung', cap: 'server.announce' },
+      // Handbuch: Nachschlagewerk aller Staff-Funktionen. Staff-Cap (nicht null),
+      // sonst waere die Moderation-Gruppe auch fuer Nicht-Staff sichtbar.
+      { view: 'handbuch', icon: '📖', label: 'Handbuch', cap: 'team.handbuch' },
     ],
   },
   {
     id: 'administration',
     label: 'Administration',
     // Ausschliesslich admin — diese Gruppe ist fuer alle anderen unsichtbar.
+    //
+    // Dino-Verwaltung haengt bewusst an `limits.write` (admin), nicht an
+    // `limits.read` (any): der Punkt ist ein Werkzeug zum Aendern, kein
+    // Nachschlagewerk. Dass jeder die Limits LESEN darf, macht ihn nicht zur
+    // Spielerinformation.
     items: [
       { view: 'welt', icon: '🌍', label: 'Welt', cap: 'world.read' },
-      { view: 'ops', icon: '📊', label: 'Betrieb', cap: 'ops.read' },
+      // Events haengt an world.read (admin): der Reiter "Funktional" schaltet mit
+      // dem Grow-Stop einen Welt-Overwrite. Free Gender Swap allein waere schon
+      // ab Staff erlaubt — die Seite als Ganzes ist aber Administration.
+      { view: 'events', icon: '🎉', label: 'Events', cap: 'world.read' },
+      { view: 'dinos', icon: '🦖', label: 'Dino-Verwaltung', cap: 'limits.write' },
       { view: 'taudit', icon: '📜', label: 'Team-Audit', cap: 'team.staffAudit' },
+    ],
+  },
+  {
+    id: 'server',
+    label: 'Server',
+    // Die technischste Etage: Betrieb (Dienste-Zustand), Steuerung (Neustart)
+    // und die Evrima-Build-Infos. Bewusst NICHT admin, sondern `server.tech`
+    // (Developer/Owner) — das sind Eingriffe und Diagnosen, die selbst fuer
+    // einen normalen Admin zu tief liegen. Reine Anzeige-Schranke: das Backend
+    // gated die Endpunkte weiterhin auf admin (bzw. laesst /evrima-versions fuer
+    // jeden Authentifizierten zu), hier wird nur strenger AUSGEBLENDET.
+    items: [
+      { view: 'ops', icon: '📊', label: 'Betrieb', cap: 'server.tech' },
+      { view: 'control', icon: '⚙️', label: 'Steuerung', cap: 'server.tech' },
+      { view: 'evrima', icon: '🏷️', label: 'Evrima', cap: 'server.tech' },
     ],
   },
 ];

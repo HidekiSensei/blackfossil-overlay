@@ -5,6 +5,7 @@ import { el, apiErr, makeApi, makeApiAction, armConfirm } from './shared/core.js
 import { baseClass, fmtGrow, escapeHtml, fmtTod } from './shared/format.js';
 import { USER_POOLS, userLabel, warnItemUser, matchUser } from './shared/users.js';
 import { DINO_LEXIKON, LEX_ORDER, lexOrderedNames } from './shared/lexikon.js';
+import { HANDBUCH, HB_BADGE } from './shared/handbuch.js';
 
 // Generischer Server-Panel-API-Call. tokenBase/sessionToken werden als Getter
 // durchgereicht, weil beide erst asynchron gesetzt werden (siehe shared/core.js).
@@ -707,6 +708,12 @@ let micEnabled = false;
 let settingsOpen = false;
 let deafened = false;                                   // eingehenden Ton stummschalten
 let amDead = false;                                     // tot / kein Dino → Voice komplett aus (weder hören noch senden)
+// Entprellung fuer amDead: der Rohwert kommt aus dem 0,1s-Positions-Poll und kann flattern.
+// Jeder Wechsel republiziert den Mic-Track und reisst die 3D-Plugin-Kette der Sprecher mit —
+// nach ein paar Zyklen bleibt die Voice-Session verbunden, aber tot. Erst DEAD_DEBOUNCE gleiche
+// Polls in Folge schalten wirklich um (~0,3 s; fuer echten Tod/Respawn unerheblich).
+const DEAD_DEBOUNCE = 3;
+let deadStreak = 0;
 let godVoiceId = '';                                    // steamId des aktiven Gottstimme-Sprechers ('' = keine Durchsage) — aus /positions
 let godVoiceMine = false;                               // ob ICH gerade die Gottstimme sende (Admin-Button-Zustand)
 let godVoiceReverbActive = false;                       // Himmels-Hall bei der AKTIVEN Durchsage an? (aus /positions, für alle konsistent)
@@ -1016,9 +1023,12 @@ function startPositionPolling() {
         const gvMine = !!(godVoiceId && me && godVoiceId === me.steamId);
         if (gvMine !== godVoiceMine) { godVoiceMine = gvMine; if (serverOpen && serverTab === 'godvoice') renderGodVoice(); }
         // Tot / kein Dino → Voice komplett aus (weder hören noch senden). Wechsel → Mic umschalten + Hinweis.
-        const wasDead = amDead;
-        amDead = !me || !!me.isDead;
-        if (amDead !== wasDead) {
+        // Entprellt (s. DEAD_DEBOUNCE): ein einzelner Ausreisser im Poll darf die Voice-Kette nicht anfassen.
+        const rawDead = !me || !!me.isDead;
+        if (rawDead === amDead) deadStreak = 0;
+        else if (++deadStreak >= DEAD_DEBOUNCE) {
+          deadStreak = 0;
+          amDead = rawDead;
           if (room) applyMic();                              // sofort aufhören/wieder senden
           if (amDead && voiceConnected) showToast('💀 Tot — Voice ist stumm bis zum Respawn.', 'warn');
           else if (!amDead && voiceConnected) showToast('🎙️ Wieder im Spiel — Voice aktiv.', 'success');
@@ -2543,100 +2553,13 @@ async function warnSearch(q) {
 // ── Staff-Handbuch ───────────────────────────────────────────────────────────
 // Katalog aller Staff-Funktionen (aus dem echten Code). need = benötigter Rang; angezeigt werden
 // nur Funktionen, die der Aufrufer mit seinem Rang wirklich ausführen darf.
-const HB_BADGE = { staff: ['Support-Team', '#22c55e'], ingame: ['Moderator+', '#3b82f6'], admin: ['Admin', '#ef4444'], any: ['Staff', '#9aa0a6'] };
+// HB_BADGE + HANDBUCH liegen jetzt in shared/handbuch.js (von Overlay UND Companion genutzt).
 function hbCanDo(need) {
   if (need === 'admin') return isAdmin;
   if (need === 'ingame') return isIngame;
   if (need === 'staff') return isTeam;
   return isStaff;
 }
-const HANDBUCH = [
-  // 🦕 Dino-Token
-  { id: 'token_create', cat: '🦕 Dino-Token', title: 'Dino-Token geben', need: 'staff',
-    where: ['Overlay → Admin → 🦕 Dino-Token', 'Discord → Support-Panel → DINO TOKEN GEBEN'],
-    short: 'Kompletten Dino als Garage-Token an einen Spieler vergeben.',
-    details: 'Erstellt einen frei konfigurierten Dino und legt ihn als Token in die Garage des Ziel-Spielers. Spezies, Wachstum, Geschlecht, Prime-Bedingungen, Elder-Stacks und alle Mutationen (Base/Parent/Elder) sind wählbar. Ziel per Spieler-Auswahl, SteamID oder ganzer Rolle.',
-    steps: ['Ziel wählen (Spieler / SteamID / Rolle)', 'Dino-Spezies wählen', 'Wachstum & Geschlecht', 'Prime-Bedingungen & Elder-Stacks', 'Mutationen wählen', 'Bestätigen'],
-    caveat: 'Der Token landet in der Garage — der Spieler spielt ihn selbst auf. Jede Vergabe wird im Audit-Log protokolliert.' },
-  { id: 'token_edit', cat: '🦕 Dino-Token', title: 'Dino-Token bearbeiten', need: 'staff',
-    where: ['Overlay → Admin → 🦕 Dino-Token', 'Discord → Support-Panel → DINO TOKEN BEARBEITEN'],
-    short: 'Vitals, Grow, Prime & Mutationen eines vorhandenen Garage-Tokens ändern.',
-    details: 'Öffnet einen bestehenden Garage-Token eines Spielers und passt Wachstum, Geschlecht, Elder-Stacks, Prime-Bedingungen und Mutationen an.', steps: ['Spieler/SteamID wählen', 'Garage-Slot wählen', 'Werte anpassen', 'Speichern'], caveat: '' },
-  { id: 'token_delete', cat: '🦕 Dino-Token', title: 'Dino-Token löschen', need: 'staff',
-    where: ['Overlay → Admin → 🦕 Dino-Token', 'Discord → Support-Panel → DINO TOKEN LÖSCHEN'],
-    short: 'Einen Token aus der Garage eines Spielers entfernen.', details: 'Löscht einen einzelnen Garage-Slot eines Spielers unwiderruflich.', steps: ['Spieler/SteamID wählen', 'Slot wählen', 'Bestätigen'], caveat: 'Unwiderruflich — der eingelagerte Dino ist danach weg.' },
-  // 🏆 PvP / Prime
-  { id: 'pvp_grant', cat: '🏆 PvP / Prime', title: 'PvP-Build verteilen', need: 'staff',
-    where: ['Overlay → Admin → 🏆 PvP / Prime', 'Discord → Support-Panel → PVP-BUILD VERTEILEN'],
-    short: 'Vordefinierten Turnier-Dino (100 %, Elder 3×, 16 Mutationen) vergeben.', details: 'Verteilt einen fertig konfigurierten Turnier-Build an einen Spieler, eine SteamID oder eine ganze Rolle — für PvP-Events.', steps: ['Build wählen', 'Ziel wählen (User/SteamID/Rolle)', 'Bestätigen'], caveat: 'Als Garage-Token. Über „PvP-Build entfernen" wieder einsammelbar.' },
-  { id: 'pvp_remove', cat: '🏆 PvP / Prime', title: 'PvP-Build entfernen', need: 'staff',
-    where: ['Overlay → Admin → 🏆 PvP / Prime', 'Discord → Support-Panel → PVP-BUILD ENTFERNEN'],
-    short: 'Alle verteilten Turnier-Builds bei User/SteamID/Rolle wieder einsammeln.', details: 'Entfernt die per „PvP-Build verteilen" vergebenen Turnier-Token wieder aus den Garagen.', steps: ['Ziel wählen', 'Bestätigen'], caveat: '' },
-  { id: 'prime', cat: '🏆 PvP / Prime', title: 'Prime-Bedingungen setzen', need: 'staff',
-    where: ['Overlay → Admin → 🏆 PvP / Prime', 'Discord → Support-Panel → PRIME CONDITIONS'],
-    short: 'Prime-Bedingungen auf dem AKTIVEN Ingame-Dino eines Spielers freischalten.', details: 'Setzt die gewählten Prime-Bedingungen (1–10) direkt auf den Dino, den der Spieler gerade ingame spielt.', steps: ['Spieler wählen', 'Bedingungen anhaken', 'Anwenden'], caveat: 'Der Spieler muss lebend ingame auf einem Dino sein.' },
-  // ⚔️ Ingame-Eingriffe
-  { id: 'lightning', cat: '⚔️ Ingame-Eingriffe', title: 'Lightning Strike (Slay)', need: 'ingame',
-    where: ['Overlay → Admin → 🛠️ Tools', 'Discord → Support-Panel → LIGHTNING STRIKE'],
-    short: 'Den aktiven Dino eines Spielers per Blitz töten.', details: 'Tötet den aktuell gespielten Dino eines Spielers (Slay) — z. B. bei Regelverstoß oder Steckenbleiben.', steps: ['Spieler wählen', 'Bestätigen'], caveat: 'Der Dino stirbt. Wird protokolliert.' },
-  { id: 'gift', cat: '⚔️ Ingame-Eingriffe', title: 'Beschenken (Punkte/Token)', need: 'ingame',
-    where: ['Overlay → Admin → 🛠️ Tools'],
-    short: 'Punkte oder Token an einen User oder eine ganze Rolle vergeben.', details: 'Schenkt Punkte oder Inventar-Token (z. B. Grow-Boost, Lootbox) an einzelne Spieler oder alle Mitglieder einer Rolle.', steps: ['Ziel wählen (User/Rolle)', 'Typ & Menge', 'Bestätigen'], caveat: 'Wird protokolliert.' },
-  { id: 'wipecorpses', cat: '⚔️ Ingame-Eingriffe', title: 'Leichen-Wipe', need: 'ingame',
-    where: ['Overlay → Admin → 📢 Server'],
-    short: 'KI-Dinos & Kadaver auf dem Server leeren.', details: 'Räumt herumliegende Kadaver und KI-Dinos ab (Performance/Aufräumen).', steps: ['Im Server-Tab auslösen'], caveat: 'Kann kurz ruckeln, während der Server aufräumt.' },
-  // ⚠️ Verwarnungen & Moderation
-  { id: 'warn', cat: '⚠️ Verwarnungen & Moderation', title: 'User verwarnen', need: 'staff',
-    where: ['Overlay → Admin → ⚠️ Verwarnungen', 'Discord → Support-Panel → VERWARNEN'],
-    short: 'Verwarnung mit Grund + Regel-Paragraph erfassen (laufende Nummer automatisch).', details: 'Erfasst eine Verwarnung für einen User. Steam- und Discord-ID werden automatisch verknüpft, die laufende Nummer (1./2./3. …) zählt das System. Jede Verwarnung wird im Doku-Channel als Embed festgehalten.', steps: ['User wählen oder SteamID eingeben', 'Regel-Paragraph angeben', 'Grund angeben', 'Erfassen'], caveat: 'Doku-Channel vorher per /verwarn-channel setzen.' },
-  { id: 'warn_search', cat: '⚠️ Verwarnungen & Moderation', title: 'Verwarnungen durchsuchen', need: 'staff',
-    where: ['Overlay → Admin → ⚠️ Verwarnungen', 'Discord → Support-Panel → VERWARNUNGEN'],
-    short: 'Liste der verwarnten User durchsuchen (User-ID, Steam, Grund, Paragraph).', details: 'Zeigt alle Verwarnungen, filterbar per Suchbegriff — inkl. Anzahl je User, Grund, Paragraph, Aussteller und Datum.', steps: ['Suchbegriff eingeben (leer = neueste)', 'Ergebnisse ansehen'], caveat: '' },
-  { id: 'ban', cat: '⚠️ Verwarnungen & Moderation', title: 'Bann / Timeout', need: 'ingame',
-    where: ['Discord → Support-/Admin-Panel'],
-    short: 'Einen User vom Discord bannen oder timeouten.', details: 'Discord-Moderation: dauerhafter Bann oder temporärer Timeout eines Users. Wird ins Audit-Log geschrieben.', steps: ['User wählen', 'Dauer/Grund', 'Bestätigen'], caveat: 'Discord-seitige Aktion — betrifft nicht den Game-Server.' },
-  { id: 'ticket', cat: '⚠️ Verwarnungen & Moderation', title: 'Support-Tickets bearbeiten', need: 'staff',
-    where: ['Discord → Ticket-System', 'Overlay → Support (Tickets)'],
-    short: 'Tickets übernehmen (claim), übergeben (forward) und schließen.', details: 'Support-Tickets der Spieler bearbeiten: übernehmen, an ein anderes Team-Mitglied übergeben, oder mit Grund schließen (Transcript wird archiviert).', steps: ['Ticket öffnen', 'Übernehmen / Übergeben / Schließen'], caveat: '' },
-  // 🖥️ Server & KI
-  { id: 'announce', cat: '🖥️ Server & KI', title: 'Ingame-Ankündigung', need: 'staff',
-    where: ['Overlay → Team → 🛠️ Tools', 'Discord → Support-Panel → ANNOUNCEMENT'],
-    short: 'Nachricht an alle Spieler ingame senden.', details: 'Sendet einen Broadcast an alle Spieler auf dem Server (z. B. Event-Hinweis, Restart-Warnung).', steps: ['Text eingeben', 'Senden'], caveat: '' },
-  { id: 'srv_status', cat: '🖥️ Server & KI', title: 'Server-Status', need: 'staff',
-    where: ['Overlay → Admin → 📢 Server'],
-    short: 'Aktuellen Server-Status & Spielerzahl ansehen.', details: 'Zeigt, ob der Game-Server läuft, wie viele Spieler online sind usw.', steps: ['Server-Tab öffnen'], caveat: '' },
-  { id: 'srv_control', cat: '🖥️ Server & KI', title: 'Server-Steuerung (Start/Stop/Restart)', need: 'admin',
-    where: ['Overlay → Admin → 📢 Server'],
-    short: 'Den Game-Server starten, stoppen oder neu starten.', details: 'Steuert den Game-Server-Prozess über den control-server. Nur für Admins/Owner.', steps: ['Aktion wählen', 'Bestätigen'], caveat: 'Betrifft ALLE Spieler — Restart trennt jeden. Mit Ankündigung vorwarnen.' },
-  { id: 'ai_control', cat: '🖥️ Server & KI', title: 'KI-Dino-Steuerung', need: 'ingame',
-    where: ['Overlay → Admin → 📢 Server'],
-    short: 'KI-Dino-Dichte / -Spawns steuern.', details: 'Status und Steuerung der KI-Dinos (Dichte, Spawns). Gefährlichere Aktionen sind Admin-beschränkt.', steps: ['KI-Status ansehen', 'Aktion auslösen'], caveat: '' },
-  { id: 'dino_limits', cat: '🖥️ Server & KI', title: 'Dino-Limits', need: 'ingame',
-    where: ['Overlay → Admin', 'Discord → /dino-limits'],
-    short: 'Maximale gleichzeitige Anzahl je Spezies festlegen.', details: 'Setzt Server-weite Caps, wie viele Dinos einer Spezies gleichzeitig gespielt werden dürfen (z. B. Rex-Limit).', steps: ['Spezies-Limit eintragen', 'Speichern'], caveat: 'Greift beim Swappen/Spawnen.' },
-  // 👤 Spieler
-  { id: 'user_info', cat: '👤 Spieler', title: 'Spieler-Info', need: 'ingame',
-    where: ['Overlay → Admin → 🛠️ Tools'],
-    short: 'Discord↔Steam, Punkte, Abo-Rang & mehr zu einem Spieler nachschlagen.', details: 'Zeigt die verknüpften IDs, Punktestand, Abo-Rang, Inventar und weitere Infos zu einem Spieler.', steps: ['Spieler/SteamID wählen', 'Infos ansehen'], caveat: '' },
-  // 🔗 Accounts (Admin)
-  { id: 'accounts_find', cat: '🔗 Accounts', title: 'Account suchen', need: 'admin',
-    where: ['Overlay → Admin → 🔗 Accounts'],
-    short: 'Discord↔Steam-Verknüpfung eines Users finden.', details: 'Sucht die Verknüpfung eines Accounts (per Discord-, Steam-ID oder Name).', steps: ['Suchbegriff eingeben'], caveat: '' },
-  { id: 'accounts_link', cat: '🔗 Accounts', title: 'Account verknüpfen', need: 'admin',
-    where: ['Overlay → Admin → 🔗 Accounts'],
-    short: 'Discord- und Steam-ID manuell verknüpfen.', details: 'Legt eine Verknüpfung zwischen Discord- und Steam-Account an (falls die automatische Verknüpfung nicht griff).', steps: ['Discord-ID + Steam-ID eingeben', 'Verknüpfen'], caveat: 'Überschreibt eine bestehende Verknüpfung.' },
-  { id: 'accounts_unlink', cat: '🔗 Accounts', title: 'Account trennen', need: 'admin',
-    where: ['Overlay → Admin → 🔗 Accounts'],
-    short: 'Eine Discord↔Steam-Verknüpfung aufheben.', details: 'Trennt die Verknüpfung eines Accounts.', steps: ['Account wählen', 'Trennen'], caveat: '' },
-  { id: 'accounts_dups', cat: '🔗 Accounts', title: 'Doppel-Accounts finden', need: 'admin',
-    where: ['Overlay → Admin → 🔗 Accounts'],
-    short: 'Mehrfach-Verknüpfungen / verdächtige Accounts aufspüren.', details: 'Listet Accounts mit auffälligen Mehrfach-Verknüpfungen (Multi-Account-Verdacht).', steps: ['Liste ansehen'], caveat: '' },
-  // 🎁 Wirtschaft
-  { id: 'lootbox_config', cat: '🎁 Wirtschaft', title: 'Lootbox-Drop-Gewichte', need: 'admin',
-    where: ['Overlay → Admin → 🎁 Lootbox'],
-    short: 'Preis & Drop-Wahrscheinlichkeiten der Lootbox einstellen.', details: 'Konfiguriert den Preis pro Lootbox und die Gewichte der einzelnen Belohnungen.', steps: ['Kosten & Gewichte anpassen', 'Speichern'], caveat: 'Betrifft die Wirtschaft — mit Bedacht ändern.' },
-];
-
 let hbSearchTerm = '';
 function renderHandbuch() {
   const box = el('hbBody'); if (!box) return;
@@ -2712,65 +2635,171 @@ function closeServerPanel() {
 }
 
 // ── 🖥️ Server-Steuerung: eigenständiger Dock-Bereich (aus dem Admin-Untermenü herausgelöst) ──
+// Aufgeteilt in Tabs: 📊 Übersicht (Status + Last-Kacheln + 24h-Auslastungskurve + Subsystem-Matrix),
+// 👥 Spieler, 🦖 Limits, ⚙️ Steuerung. Alle Daten kommen aus vorhandenen Endpunkten
+// (/admin/server/status, /admin/ops/health, /admin/ops/metrics/players, /public/status).
 let srvOpen = false;
+let srvTab = 'overview';
 function openSrvPanel() {
   if (!isAdmin) { showToast('Nur für Admins', 'error'); return; }
   srvOpen = true;
   el('srvPanel').style.display = 'flex';
   updateInteractive();
   renderSrv();
-  // Live-Status alle 5 s aktualisieren, nur solange offen (Selbstabschaltung).
+  // Aktiven Tab alle 8 s aktualisieren, nur solange offen (Selbstabschaltung).
   if (!openSrvPanel._t) openSrvPanel._t = setInterval(() => {
     if (!srvOpen) { clearInterval(openSrvPanel._t); openSrvPanel._t = null; return; }
-    srvLoadStatus(); renderSrvPlayers();
-  }, 5000);
+    srvRefreshTab();
+  }, 8000);
 }
 function closeSrvPanel() {
   srvOpen = false;
   el('srvPanel').style.display = 'none';
   updateInteractive();
 }
-// Baut den Server-Bereich einmal auf (Status + Class-Limits laden, Spielerliste rendern).
+// Verdrahtet Tab-Buttons + Steuer-Aktionen (einmalig) und zeigt den aktiven Tab.
 function renderSrv() {
-  srvLoadStatus();
-  renderSrvPlayers();
-  svRenderClassLimits(); // schreibt weiter in #svClassBody (jetzt im Server-Panel)
+  if (!renderSrv._wired) {
+    renderSrv._wired = 1;
+    document.querySelectorAll('#srvTabs [data-srvt]').forEach((b) => { b.onclick = () => srvShowTab(b.dataset.srvt); });
+    const s = el('srvPlayerSearch'); if (s) s.oninput = () => renderSrvPlayers();
+  }
   { const b = el('srvAnnounce'); if (b && !b._w) { b._w = 1; b.onclick = () => { const m = el('srvMsg').value.trim(); if (!m) { showToast('Nachricht eingeben', 'error'); return; } apiAction('/admin/server/announce', { message: m }, '📢 Ansage gesendet', () => { el('srvMsg').value = ''; }); }; } }
   { const b = el('srvWipe'); if (b && !b._w) { b._w = 1; b.onclick = () => svArmConfirm(b, 'Sicher? Kadaver leeren', () => apiAction('/admin/server/wipecorpses', {}, '🧹 Kadaver geleert', null)); } }
   { const b = el('srvStart'); if (b && !b._w) { b._w = 1; b.onclick = () => apiAction('/admin/server/control', { action: 'start' }, '▶️ Server-Start ausgelöst', srvLoadStatus); } }
   { const b = el('srvRestart'); if (b && !b._w) { b._w = 1; b.onclick = () => svArmConfirm(b, 'Sicher? Restart', () => apiAction('/admin/server/control', { action: 'restart' }, '🔁 Restart ausgelöst', srvLoadStatus)); } }
   { const b = el('srvStop'); if (b && !b._w) { b._w = 1; b.onclick = () => svArmConfirm(b, 'Sicher? Stop', () => apiAction('/admin/server/control', { action: 'stop' }, '⏹️ Stop ausgelöst', srvLoadStatus)); } }
+  srvShowTab(srvTab || 'overview');
 }
-// Live-Status: Prozess-Zustand + (falls erreichbar) Ops-Health für Game-Box-Details.
+function srvShowTab(t) {
+  srvTab = t;
+  document.querySelectorAll('#srvTabs [data-srvt]').forEach((b) => b.classList.toggle('secondary', b.dataset.srvt !== t));
+  document.querySelectorAll('#srvPanel .admin-pane[data-srvp]').forEach((p) => { p.hidden = p.dataset.srvp !== t; });
+  // Voll-Render beim Wechsel (inkl. Limits/Betrieb — die werden EINMAL geladen, nicht im Poll).
+  if (t === 'overview') srvRenderOverview();
+  else if (t === 'players') renderSrvPlayers();
+  else if (t === 'limits') svRenderClassLimits();
+  else if (t === 'betrieb') srvRenderBetrieb();
+  bfScheduleFrameSync && bfScheduleFrameSync();
+}
+// 8s-Poll: nur Live-Tabs auffrischen. Limits/Steuerung bleiben stehen (kein Überschreiben von Eingaben).
+function srvRefreshTab() {
+  if (srvTab === 'overview') srvRenderOverview();
+  else if (srvTab === 'players') renderSrvPlayers();
+}
+
+// ── 📊 Übersicht: Status + Last-Kacheln + Auslastungskurve + Subsystem-Matrix ──
+async function srvRenderOverview() {
+  srvLoadStatus();
+  let health = null, pub = null;
+  try { health = await svApi('GET', '/admin/ops/health'); } catch {}
+  try { pub = await svApi('GET', '/public/status'); } catch {}
+  srvRenderTiles(health, pub);
+  srvRenderHealth(health);
+  srvRenderSpark();
+}
+function srvChk(health, id) { return ((health && health.checks) || []).find((c) => c.id === id) || null; }
+// Farbe für eine Health-Prüfung: rot (down) / gelb (warn) / grün (ok).
+function srvDotColor(c) { return !c ? 'var(--muted)' : (!c.ok ? '#f87171' : (c.warn ? '#fbbf24' : '#4ade80')); }
+function srvRenderTiles(health, pub) {
+  const box = el('srvTiles'); if (!box) return;
+  const gp = srvChk(health, 'game_process'), cs = srvChk(health, 'control_server');
+  const db = srvChk(health, 'db'), mod = srvChk(health, 'mod_api'), lk = srvChk(health, 'livekit');
+  const online = (pub && typeof pub.online === 'number') ? pub.online : (players || []).filter((p) => p.steamId).length;
+  const max = (pub && pub.max) ? pub.max : null;
+  const pct = max ? Math.min(100, Math.round((online / max) * 100)) : null;
+  const loadCol = pct == null ? 'var(--accent)' : (pct >= 90 ? '#f87171' : pct >= 70 ? '#fbbf24' : '#4ade80');
+  const diskGB = (cs && cs.detail && (cs.detail.match(/([\d.]+)\s*GB/) || [])[1]) || null;
+  const tile = (accent, icon, label, val, sub) =>
+    `<div class="srv-tile" style="border-left-color:${accent}"><div class="srv-tile-h">${icon} ${escapeHtml(label)}</div>` +
+    `<div class="srv-tile-v">${val}</div>${sub ? `<div class="srv-tile-s">${sub}</div>` : ''}</div>`;
+  const tiles = [];
+  // Spieler-Auslastung (der Kern von „Server-Last")
+  tiles.push(tile(loadCol, '👥', 'Spieler online',
+    `${online}${max ? ` <span style="font-size:12px;color:var(--muted)">/ ${max}</span>` : ''}`,
+    pct == null ? 'Auslastung unbekannt'
+      : `<div class="srv-bar"><i style="width:${pct}%;background:${loadCol}"></i></div><span>${pct}% ausgelastet</span>`));
+  // Disk der Game-Box
+  tiles.push(tile(srvDotColor(cs), '💾', 'Speicher (Game-Box)',
+    diskGB != null ? `${diskGB} <span style="font-size:12px;color:var(--muted)">GB frei</span>` : '—',
+    cs && cs.warn ? '⚠️ wenig frei' : (cs && !cs.ok ? 'control-server offline' : 'ok')));
+  // DB-Latenz
+  tiles.push(tile(srvDotColor(db), '🗄️', 'Datenbank',
+    db ? `${db.latencyMs} <span style="font-size:12px;color:var(--muted)">ms</span>` : '—',
+    db && !db.ok ? 'Fehler' : 'Ping'));
+  // Mod-Poller-Frische
+  tiles.push(tile(srvDotColor(mod), '📡', 'Mod-Poller',
+    mod ? (mod.ok ? (mod.warn ? 'träge' : 'frisch') : 'stockt') : '—',
+    mod && mod.detail ? escapeHtml(mod.detail) : ''));
+  // Voice
+  tiles.push(tile(srvDotColor(lk), '🎧', 'Voice (LiveKit)',
+    lk ? (lk.ok ? 'online' : 'offline') : '—', lk ? `${lk.latencyMs} ms` : 'kein Check'));
+  box.innerHTML = tiles.join('');
+}
+// Subsystem-Matrix (identische Quelle wie der Betrieb-Tab: /admin/ops/health).
+function srvRenderHealth(health) {
+  const box = el('srvHealth'); if (!box) return;
+  if (!health) { box.innerHTML = '<span style="color:#f87171">Health nicht ladbar.</span>'; return; }
+  const dot = (c) => (c.ok ? (c.warn ? '🟡' : '🟢') : '🔴');
+  const label = { db: 'Datenbank', mod_api: 'Mod-API (Poller)', game_process: 'Game-Server', control_server: 'Game-Box (control)', livekit: 'Voice (LiveKit)', peer_backend: 'Peer-Backend' };
+  box.innerHTML = `<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(215px,1fr));gap:6px">` +
+    (health.checks || []).map((c) =>
+      `<div style="border:1px solid var(--border);border-radius:8px;padding:7px 9px;font-size:12px">${dot(c)} <b>${escapeHtml(label[c.id] || c.id)}</b>` +
+      `<span style="color:var(--muted)"> ${c.latencyMs} ms</span>` +
+      (c.detail ? `<div style="color:var(--muted);font-size:11px;margin-top:2px">${escapeHtml(c.detail)}</div>` : '') + `</div>`
+    ).join('') + `</div>`;
+  const meta = el('srvHealthMeta'); if (meta) meta.textContent = `Umgebung: ${health.env || '?'} · ${new Date().toLocaleTimeString()}`;
+}
+// 24h-Auslastungskurve (Spielerzahl) — gleiche Metrik wie der Betrieb-Tab.
+async function srvRenderSpark() {
+  const cv = el('srvSpark'); if (!cv) return;
+  try {
+    const d = await svApi('GET', '/admin/ops/metrics/players?hours=24');
+    const pts = d.points || [];
+    const ctx = cv.getContext('2d'); ctx.clearRect(0, 0, cv.width, cv.height);
+    if (!pts.length) { ctx.fillStyle = 'rgba(255,255,255,0.35)'; ctx.font = '12px sans-serif'; ctx.fillText('Noch keine Daten', 10, cv.height / 2); return; }
+    const maxN = Math.max(5, ...pts.map((p) => p.n));
+    const t0 = new Date(pts[0].t).getTime(), t1 = new Date(pts[pts.length - 1].t).getTime() || t0 + 1;
+    const px = (p) => ((new Date(p.t).getTime() - t0) / Math.max(1, t1 - t0)) * (cv.width - 8) + 4;
+    const py = (p) => cv.height - 8 - (p.n / maxN) * (cv.height - 22);
+    // Flächenfüllung unter der Kurve
+    ctx.beginPath(); ctx.moveTo(px(pts[0]), cv.height);
+    pts.forEach((p) => ctx.lineTo(px(p), py(p)));
+    ctx.lineTo(px(pts[pts.length - 1]), cv.height); ctx.closePath();
+    ctx.fillStyle = 'rgba(125,211,252,0.12)'; ctx.fill();
+    ctx.strokeStyle = '#7dd3fc'; ctx.lineWidth = 1.5; ctx.beginPath();
+    pts.forEach((p, i) => { i ? ctx.lineTo(px(p), py(p)) : ctx.moveTo(px(p), py(p)); });
+    ctx.stroke();
+    ctx.fillStyle = 'rgba(255,255,255,0.5)'; ctx.font = '10px sans-serif';
+    ctx.fillText(`max ${maxN}`, 6, 12);
+    ctx.fillText(`aktuell ${pts[pts.length - 1].n}`, cv.width - 72, 12);
+  } catch {}
+}
+// Live-Status-Banner: Prozess-Zustand (läuft/AUS/unbekannt).
 async function srvLoadStatus() {
   const box = el('srvStatus'); if (!box) return;
   let running = null, detail = '';
   try { const d = await svApi('GET', '/admin/server/status'); running = !!d.running; } catch { detail = ' · Status nicht abrufbar'; }
-  // Optional: Game-Box-Disk + Spielerzahl aus der Ops-Health (nur wenn Betrieb-Backend erreichbar).
-  let extra = '';
-  try {
-    const h = await svApi('GET', '/admin/ops/health');
-    const gc = (h.checks || []).find((c) => c.id === 'control_server');
-    const gp = (h.checks || []).find((c) => c.id === 'game_process');
-    if (gp && gp.detail) extra += ` · ${escapeHtml(gp.detail)}`;
-    if (gc && gc.detail) extra += ` · 💾 ${escapeHtml(gc.detail)}`;
-  } catch {}
   const dot = running === null ? '⚪' : (running ? '🟢' : '🔴');
   const txt = running === null ? 'unbekannt' : (running ? 'läuft' : 'AUS');
-  box.innerHTML = `<div style="font-size:14px">${dot} <b>Server ${txt}</b><span style="color:var(--muted);font-size:12px">${extra}${detail}</span></div>`;
+  const col = running ? 'rgba(74,222,128,0.10)' : (running === false ? 'rgba(248,113,113,0.10)' : 'rgba(255,255,255,0.04)');
+  box.innerHTML = `<div style="font-size:14px;padding:9px 12px;border:1px solid var(--border);border-radius:10px;background:${col}">${dot} <b>Server ${txt}</b><span style="color:var(--muted);font-size:12px">${detail}</span></div>`;
 }
-// Online-Spieler aus dem laufenden Positions-Poll (read-only Liste; Kick gibt es serverseitig (noch) nicht).
+// Online-Spieler aus dem laufenden Positions-Poll (read-only Liste + Suche).
 function renderSrvPlayers() {
   const box = el('srvPlayers'), cnt = el('srvPlayerCount'); if (!box) return;
   const list = (players || []).filter((p) => p.steamId);
   if (cnt) cnt.textContent = String(list.length);
   if (!list.length) { box.innerHTML = '<div class="dt-muted">Keine Spieler online (oder Game-Server nicht erreichbar).</div>'; return; }
-  box.innerHTML = list.slice().sort((a, b) => (a.name || a.playerName || '').localeCompare(b.name || b.playerName || ''))
-    .map((p) => {
-      const nm = p.name || p.playerName || p.steamId;
-      const dino = p.dino ? ` <span style="color:var(--muted)">· ${escapeHtml(p.dino)}</span>` : '';
-      return `<div style="padding:3px 0;border-bottom:1px solid rgba(255,255,255,0.06)">👤 ${escapeHtml(nm)}${dino}${p.isDead ? ' <span style="color:#f87171">†</span>' : ''}</div>`;
-    }).join('');
+  const q = ((el('srvPlayerSearch') && el('srvPlayerSearch').value) || '').trim().toLowerCase();
+  let rows = list.slice().sort((a, b) => (a.name || a.playerName || '').localeCompare(b.name || b.playerName || ''));
+  if (q) rows = rows.filter((p) => `${p.name || p.playerName || p.steamId} ${p.dino || ''}`.toLowerCase().includes(q));
+  if (!rows.length) { box.innerHTML = '<div class="dt-muted">Kein Treffer.</div>'; return; }
+  box.innerHTML = rows.map((p) => {
+    const nm = p.name || p.playerName || p.steamId;
+    const dino = p.dino ? ` <span style="color:var(--muted)">· ${escapeHtml(p.dino)}</span>` : '';
+    return `<div style="padding:3px 0;border-bottom:1px solid rgba(255,255,255,0.06)">👤 ${escapeHtml(nm)}${dino}${p.isDead ? ' <span style="color:#f87171">†</span>' : ''}</div>`;
+  }).join('');
 }
 let serverTab = 'welt';
 function showServerTab(t) {
@@ -2785,71 +2814,28 @@ function showServerTab(t) {
   else if (t === 'godvoice') renderGodVoice();
   else if (t === 'teamaudit') renderTeamAudit();
   else if (t === 'evrima') renderEvrima();
-  else if (t === 'ops') renderOps();
   bfScheduleFrameSync && bfScheduleFrameSync();
 }
 
-// ── 🛠️ Betrieb (Ops-Interface): Status-Matrix + Versionen/Branches + Log-Viewer ──────────────
-// Read-only-Diagnose ohne SSH: Backend /admin/ops/* (admin-gated). Polling läuft NUR solange
-// der Tab offen ist (Guard in den Intervallen — Tab-/Panel-Wechsel stoppt von selbst).
+// ── 🛠️ Betrieb (Ops-Interface): Versionen/Branches + Log-Viewer ─────────────────────────────
+// Read-only-Diagnose ohne SSH: Backend /admin/ops/* (admin-gated). Sitzt jetzt als Tab im
+// Server-Panel (Status-Matrix + Auslastung stehen im Übersichts-Tab). Der Log-Follow-Poll läuft
+// nur, solange der Betrieb-Tab offen ist (Guard schaltet sich selbst ab).
 let opsLogState = { name: '', nextByte: null, lines: [] }; // Follow-Zustand je gewähltem Log
 const OPS_LOG_MAX_LINES = 4000;
 
-function opsActive() { return serverOpen && serverTab === 'ops'; }
+function srvBetriebActive() { return srvOpen && srvTab === 'betrieb'; }
 
-function renderOps() {
-  renderOpsHealth(); renderOpsSpark(); renderOpsVersions(); opsInitLogs();
-  // 10s-Health-Poll, nur solange der Tab offen ist (Selbstabschaltung über Guard).
-  if (!renderOps._timer) {
-    renderOps._timer = setInterval(() => {
-      if (!opsActive()) { clearInterval(renderOps._timer); renderOps._timer = null; return; }
-      renderOpsHealth();
-    }, 10000);
-  }
-  if (!renderOps._logTimer) {
-    renderOps._logTimer = setInterval(() => {
-      if (!opsActive()) { clearInterval(renderOps._logTimer); renderOps._logTimer = null; return; }
+function srvRenderBetrieb() {
+  renderOpsVersions(); opsInitLogs();
+  // Log-Follow-Poll (2s), nur solange der Betrieb-Tab offen ist (Selbstabschaltung über Guard).
+  if (!srvRenderBetrieb._logTimer) {
+    srvRenderBetrieb._logTimer = setInterval(() => {
+      if (!srvBetriebActive()) { clearInterval(srvRenderBetrieb._logTimer); srvRenderBetrieb._logTimer = null; return; }
       const f = el('opsLogFollow');
       if (f && f.checked) opsLoadLog(false); // inkrementell (fromByte)
     }, 2000);
   }
-}
-
-async function renderOpsHealth() {
-  const box = el('opsHealth'); if (!box) return;
-  try {
-    const d = await svApi('GET', '/admin/ops/health');
-    const dot = (c) => (c.ok ? (c.warn ? '🟡' : '🟢') : '🔴');
-    const label = { db: 'Datenbank', mod_api: 'Mod-API (Poller)', game_process: 'Game-Server', control_server: 'Game-Box (control)', livekit: 'Voice (LiveKit)', peer_backend: 'Peer-Backend' };
-    box.innerHTML = `<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(215px,1fr));gap:6px">` +
-      (d.checks || []).map((c) =>
-        `<div style="border:1px solid var(--border);border-radius:8px;padding:7px 9px;font-size:12px">${dot(c)} <b>${escapeHtml(label[c.id] || c.id)}</b>` +
-        `<span style="color:var(--muted)"> ${c.latencyMs} ms</span>` +
-        (c.detail ? `<div style="color:var(--muted);font-size:11px;margin-top:2px">${escapeHtml(c.detail)}</div>` : '') + `</div>`
-      ).join('') + `</div><div style="font-size:10px;color:var(--muted);margin-top:4px">Umgebung: ${escapeHtml(d.env || '?')} · ${new Date().toLocaleTimeString()}</div>`;
-  } catch (e) { box.innerHTML = `<span style="color:#f87171">Health nicht ladbar: ${escapeHtml(e.message || '?')}</span>`; }
-}
-
-async function renderOpsSpark() {
-  const cv = el('opsSpark'); if (!cv) return;
-  try {
-    const d = await svApi('GET', '/admin/ops/metrics/players?hours=24');
-    const pts = d.points || [];
-    const ctx = cv.getContext('2d'); ctx.clearRect(0, 0, cv.width, cv.height);
-    if (!pts.length) { ctx.fillStyle = 'rgba(255,255,255,0.35)'; ctx.font = '12px sans-serif'; ctx.fillText('Noch keine Daten', 10, 40); return; }
-    const maxN = Math.max(5, ...pts.map((p) => p.n));
-    const t0 = new Date(pts[0].t).getTime(), t1 = new Date(pts[pts.length - 1].t).getTime() || t0 + 1;
-    ctx.strokeStyle = '#7dd3fc'; ctx.lineWidth = 1.5; ctx.beginPath();
-    pts.forEach((p, i) => {
-      const x = ((new Date(p.t).getTime() - t0) / Math.max(1, t1 - t0)) * (cv.width - 8) + 4;
-      const y = cv.height - 6 - (p.n / maxN) * (cv.height - 16);
-      i ? ctx.lineTo(x, y) : ctx.moveTo(x, y);
-    });
-    ctx.stroke();
-    ctx.fillStyle = 'rgba(255,255,255,0.45)'; ctx.font = '10px sans-serif';
-    ctx.fillText(`max ${maxN}`, 6, 12);
-    ctx.fillText(`aktuell ${pts[pts.length - 1].n}`, cv.width - 70, 12);
-  } catch {}
 }
 
 async function renderOpsVersions() {
