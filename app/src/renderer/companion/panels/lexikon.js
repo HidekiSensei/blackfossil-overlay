@@ -68,7 +68,7 @@ function renderList() {
       + (disabled.has(n) ? ` <span class="cp-lex-locked">· gesperrt</span>` : '') + `</div></div></div>`;
   }).join('') || U.empty('Keine Arten in dieser Gruppe.');
 
-  el('lexList').innerHTML = tabs + U.card(`<div class="cp-list cp-lex-list">${items}</div>`);
+  el('lexList').innerHTML = tabs + `<div class="cp-list cp-lex-list">${items}</div>`;
 
   el('lexList').querySelectorAll('[data-tab]').forEach((t) => {
     t.onclick = () => { filter = t.dataset.tab; renderList(); renderDetail(); };
@@ -91,25 +91,31 @@ function renderDetail() {
   const next = ord[(idx + 1) % ord.length];
 
   const li = (arr) => (arr || []).map((s) => `<li>${U.esc(s)}</li>`).join('');
-  box.innerHTML = U.card(
-    `<img class="cp-lex-img" src="${imgSrc(sel)}" alt="" onerror="this.style.display='none'">`
-    + `<div class="cp-lex-head">${U.esc(sel)} <span class="cp-muted">· ${idx + 1}/${ord.length}</span></div>`
-    + `<div class="cp-lex-meta"><span class="cp-diet-${d.diet}">●</span> `
-      + `${U.esc(DIET[d.diet] || d.diet)} · <b>${U.esc(d.role || '')}</b> · Wachstum: ${U.esc(d.growth || '—')}`
+  // Keine Card mehr: der Inhalt (v. a. das grosse Bild) soll frei stehen.
+  // Nav-Buttons oben, buendig links/rechts mit Luecke in der Mitte, darunter
+  // dieselbe Trennlinie wie die Reiter der Liste links (cp-lex-topbar spiegelt
+  // .cp-tabs) — so wirken Liste und Detail als ein Paar.
+  box.innerHTML =
+    `<div class="cp-lex-topbar">`
+      + `<button id="lexPrev" class="cp-btn cp-btn-sm">← ${U.esc(prev)}</button>`
+      + `<button id="lexNext" class="cp-btn cp-btn-sm">${U.esc(next)} →</button>`
     + `</div>`
-    + `<div class="cp-badge-row">${disabled.has(sel)
-        ? U.badge('Auf diesem Server gesperrt', 'off')
-        : U.badge(lim != null ? `Limit ${lim}` : 'kein Limit', lim != null ? '' : 'ok')}</div>`
-    + `<div class="cp-lex-cols">`
-      + `<div class="cp-lex-col cp-lex-good"><div class="cp-lex-col-head">Stärken</div><ul>${li(d.strengths)}</ul></div>`
-      + `<div class="cp-lex-col cp-lex-bad"><div class="cp-lex-col-head">Schwächen</div><ul>${li(d.weaknesses)}</ul></div>`
-    + `</div>`
-    + (d.tip ? `<div class="cp-lex-tip">💡 ${U.esc(d.tip)}</div>` : '')
-    + (d.fact ? `<div class="cp-lex-fact"><b>📚 Wissenswert</b><br>${U.esc(d.fact)}</div>` : '')
-    + `<div class="cp-lex-nav">`
-      + `<button id="lexPrev" class="cp-btn">← ${U.esc(prev)}</button>`
-      + `<button id="lexNext" class="cp-btn">${U.esc(next)} →</button>`
-    + `</div>`);
+    + `<div class="cp-lex-body">`
+      + `<img class="cp-lex-img" src="${imgSrc(sel)}" alt="" onerror="this.style.display='none'">`
+      + `<div class="cp-lex-head">${U.esc(sel)} <span class="cp-muted">· ${idx + 1}/${ord.length}</span></div>`
+      + `<div class="cp-lex-meta"><span class="cp-diet-${d.diet}">●</span> `
+        + `${U.esc(DIET[d.diet] || d.diet)} · <b>${U.esc(d.role || '')}</b> · Wachstum: ${U.esc(d.growth || '—')}`
+      + `</div>`
+      + `<div class="cp-badge-row">${disabled.has(sel)
+          ? U.badge('Auf diesem Server gesperrt', 'off')
+          : U.badge(lim != null ? `Limit ${lim}` : 'kein Limit', lim != null ? '' : 'ok')}</div>`
+      + `<div class="cp-lex-cols">`
+        + `<div class="cp-lex-col cp-lex-good"><div class="cp-lex-col-head">Stärken</div><ul>${li(d.strengths)}</ul></div>`
+        + `<div class="cp-lex-col cp-lex-bad"><div class="cp-lex-col-head">Schwächen</div><ul>${li(d.weaknesses)}</ul></div>`
+      + `</div>`
+      + (d.tip ? `<div class="cp-lex-tip">💡 ${U.esc(d.tip)}</div>` : '')
+      + (d.fact ? `<div class="cp-lex-fact"><b>📚 Wissenswert</b><br>${U.esc(d.fact)}</div>` : '')
+    + `</div>`;
 
   const nav = (name) => { sel = name; renderList(); renderDetail(); };
   box.querySelector('#lexPrev').onclick = () => nav(prev);
