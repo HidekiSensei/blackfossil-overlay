@@ -42,7 +42,8 @@ body.companion button::before { content: none !important; }
 
 body.companion {
   margin: 0; height: 100vh; overflow: hidden;
-  background: #0d0918; color: #e8e6ef;
+  /* Faellt dem Farbschema; der Rueckfallwert ist das bisherige Violett. */
+  background: var(--cp-bg, #0d0918); color: #e8e6ef;
   font-family: system-ui, -apple-system, "Segoe UI", sans-serif;
   font-size: 13px; line-height: 1.5;
   -webkit-font-smoothing: antialiased;
@@ -176,7 +177,7 @@ input[type="range"] { accent-color: var(--accent); }
 #cpToasts { position: fixed; right: var(--cp-s5); bottom: var(--cp-s5); display: flex; flex-direction: column; gap: var(--cp-s2); z-index: 90; }
 .cp-toast {
   padding: var(--cp-s3) var(--cp-s4); border-radius: var(--cp-r-md);
-  background: #1c1630; border: 1px solid var(--cp-line);
+  background: var(--cp-bg-2, #1c1630); border: 1px solid var(--cp-line);
   box-shadow: 0 8px 26px rgba(0, 0, 0, 0.45);
   font-size: 12.5px; max-width: 380px;
   animation: cpToastIn .16s ease-out;
@@ -235,7 +236,7 @@ input[type="range"] { accent-color: var(--accent); }
 #cpMapWrap {
   flex: 1; min-height: 0; position: relative;
   display: flex; align-items: center; justify-content: center;
-  background: #08050f; overflow: hidden;
+  background: var(--cp-bg-0, #08050f); overflow: hidden;
 }
 #cpMapCanvas { max-width: 100%; max-height: 100%; aspect-ratio: 1 / 1; cursor: grab; touch-action: none; }
 #cpMapCanvas:active { cursor: grabbing; }
@@ -526,7 +527,7 @@ input[type="range"] { accent-color: var(--accent); }
    deshalb ausdruecklich gesetzt werden. */
 .cp-select option,
 .cp-select optgroup {
-  background: #1c1630;
+  background: var(--cp-bg-2, #1c1630);
   color: #e8e6ef;
   padding: 6px 10px;
 }
@@ -546,3 +547,41 @@ input[type="range"] { accent-color: var(--accent); }
 .cp-rel-li::before { content: '·'; position: absolute; left: 4px; color: var(--muted); }
 .cp-rel-ver { color: var(--accent-2); font-weight: 700; }
 .cp-rel-body strong { color: #e8e6ef; }
+
+/* ── Farbschema-Auswahl (Settings › Darstellung) ──────────────────────────── */
+/* Ein Feld pro Schema: Farbtupfer + Name. Nur der Tupfer traegt die Themefarbe,
+   damit gesperrte Eintraege nicht wie aktive aussehen. Gleiche Breite ueber
+   auto-fit — die Felder sollen ein Raster bilden, keine Treppe. */
+.cp-sw-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(132px, 1fr)); gap: var(--cp-s2); }
+.cp-sw {
+  display: flex; align-items: center; gap: var(--cp-s2);
+  padding: var(--cp-s2) var(--cp-s3); height: 40px;
+  font: inherit; font-size: 12.5px; font-weight: 550; color: var(--muted);
+  background: var(--cp-surface); border: 1px solid var(--cp-line);
+  border-radius: var(--cp-r-sm); cursor: pointer; flex: none;
+  transition: background .13s, color .13s, border-color .13s;
+}
+.cp-sw:hover { background: var(--cp-surface-2); color: #ddd; }
+.cp-sw-dot {
+  width: 16px; height: 16px; border-radius: 50%; flex: none;
+  background: linear-gradient(135deg, var(--sw-a), var(--sw-b));
+  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, .18);
+}
+.cp-sw-name { flex: 1; text-align: left; }
+.cp-sw-lock { font-size: 11px; opacity: .75; }
+.cp-sw.on { background: rgba(var(--accent-rgb), .16); color: #fff; border-color: rgba(var(--accent-rgb), .4); }
+/* Gesperrt bleibt anklickbar: der Klick erklaert per Hinweis, ab welchem Rang
+   es das gibt. Ein disabled-Attribut wuerde stattdessen gar nichts sagen. */
+.cp-sw.locked { opacity: .5; }
+.cp-sw.locked .cp-sw-dot { filter: grayscale(.7); }
+
+.cp-sw-custom { align-items: center; gap: var(--cp-s3); }
+/* Der native Farbwaehler bringt in Chromium einen dicken Rahmen und Innenrand
+   mit — beides weg, sonst passt er zu keinem anderen Element. */
+.cp-color {
+  width: 44px; height: 32px; flex: none; padding: 0; cursor: pointer;
+  background: transparent; border: 1px solid var(--cp-line); border-radius: var(--cp-r-sm);
+}
+.cp-color::-webkit-color-swatch-wrapper { padding: 3px; }
+.cp-color::-webkit-color-swatch { border: none; border-radius: 5px; }
+.cp-btn-on { background: rgba(var(--accent-rgb), .18); border-color: rgba(var(--accent-rgb), .45); color: #fff; }

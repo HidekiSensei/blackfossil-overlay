@@ -1,6 +1,21 @@
 // Karten-Rendering: Welt-Koordinaten → Bild, Zonen, Spieler, Minimap.
 // Kalibrierung wird in localStorage gespeichert und ist live justierbar.
 
+// ── Akzentfarbe (folgt dem Theme) ───────────────────────────────────────────
+// Canvas kennt keine CSS-Variablen: --accent wirkt auf Markup, nicht auf
+// ctx.fillStyle. Der Wert muss also aktiv hereingereicht werden, sonst bleibt
+// die Karte violett, waehrend der Rest der App laengst Gold ist.
+//
+// Bewusst NICHT eingefaerbt werden Zonen-, Rang- und Wegpunktfarben sowie
+// SELF_COLOR: die sind semantisch (Rot = PvP, Rot = Admin) bzw. sollen sich
+// gerade vom Theme abheben. Nur reines Dekor folgt dem Akzent.
+const ACCENT = { fill: 'rgba(139,92,246,0.92)', hot: '#a78bfa' };
+export function setAccent(theme) {
+  if (!theme) return;
+  if (theme.rgb) ACCENT.fill = `rgba(${theme.rgb},0.92)`;
+  if (theme.accent2) ACCENT.hot = theme.accent2;
+}
+
 // ── Zonen (Welt-Koordinaten, vom Server) ────────────────────────────────────
 // Mehrere benannte Zonen über 5 Typen. Array wird IN PLACE mutiert (ES-Module-
 // Live-Binding: niemals neu zuweisen). Jedes Element: { id, type, name, points }.
@@ -955,7 +970,7 @@ function drawWaypoint(ctx, px, py, scale = 1) {
 function drawTeleport(ctx, px, py, number, highlight, scale = 1) {
   const r = (highlight ? 13 : 10) * scale;
   ctx.beginPath(); ctx.arc(px, py, r, 0, Math.PI * 2);
-  ctx.fillStyle = highlight ? '#c084fc' : 'rgba(139,92,246,0.92)';
+  ctx.fillStyle = highlight ? ACCENT.hot : ACCENT.fill;
   ctx.fill();
   ctx.lineWidth = (highlight ? 3 : 2) * scale; ctx.strokeStyle = '#fff'; ctx.stroke();
   ctx.fillStyle = '#fff'; ctx.font = `bold ${(highlight ? 13 : 11) * scale}px system-ui`;
