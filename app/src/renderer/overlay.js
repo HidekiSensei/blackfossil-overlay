@@ -5446,6 +5446,10 @@ function renderDinoInfo() {
       <div style="flex:1;min-width:0">
         <div class="di-head"><span class="di-dino" id="di-dino">Dino</span><span class="di-sub" id="di-grow"></span></div>
         <div class="di-sub" id="di-name"></div>
+        <div class="di-rename">
+          <input id="diNameInput" class="di-name-input" maxlength="24" placeholder="🏷️ Deinem Dino einen Namen geben…">
+          <button id="diNameSave" class="di-btn di-name-save" title="Namen speichern">💾 Speichern</button>
+        </div>
         <div class="di-actions">
           <button id="diEntombBtn" class="di-btn di-entomb" title="Dino entomben">⚰️ Entomben</button>
           <button id="diSlayBtn" class="di-btn di-slay-btn" title="Aktuellen Dino töten">💀 Slay</button>
@@ -5490,6 +5494,16 @@ function renderDinoInfo() {
       title: '⚰️ Dino entomben?', confirmLabel: 'Ja, entomben',
       body: 'Dein <b>aktueller Dino</b> wird entombt (Entomb).',
       onConfirm: entombMyDino }); }
+  // 🏷️ Dino-Name: aktuellen Custom-Namen des aktiven Dinos laden + Speichern verdrahten.
+  // Einmalig beim Öffnen laden (der 2s-Poll fasst das Feld NICHT an → kein Überschreiben beim Tippen).
+  { const inp = el('diNameInput'), sv = el('diNameSave');
+    if (inp) svApi('GET', '/me/migration').then((d) => { if (document.activeElement !== inp) inp.value = d.dinoName || ''; }).catch(() => {});
+    if (sv && inp) sv.onclick = async () => {
+      try { const r = await svApi('POST', '/me/dino/name', { name: inp.value.trim() }); inp.value = r.name || ''; showToast('🏷️ Dino-Name gespeichert', 'success'); }
+      catch (e) { showToast(e.message || 'Fehler', 'error'); }
+    };
+    if (inp) inp.onkeydown = (e) => { if (e.key === 'Enter' && sv) sv.click(); };
+  }
   updateDinoInfo();
   if (dinoTimer) clearInterval(dinoTimer);
   dinoTimer = setInterval(updateDinoInfo, 2000);
