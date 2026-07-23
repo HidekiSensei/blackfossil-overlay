@@ -866,6 +866,14 @@ async function init() {
     if (!focused) { toggleSettings(false); toggleMap(false); closeAllFeatures(); toggleOverlayMode(false); }
   });
 
+  // Warnungen aus dem Main-Prozess (natives Fenster-Tracking): z. B. UIPI —
+  // The Isle läuft als Administrator, das Overlay nicht → Overlay kann dem
+  // Spielfenster nicht folgen. Bisher scheiterte genau das STILL ("run as admin
+  // half, aber niemand wusste warum"); jetzt sieht der Spieler die Ursache.
+  window.bf.onOverlayWarning?.((w) => {
+    if (w && w.message) showToast(w.message, 'warn');
+  });
+
   // The Isle wurde geschlossen → Voice trennen (Overlay blendet das Main-Prozess aus)
   window.bf.onGameClosed?.(() => {
     if (room) { try { room.disconnect(); } catch {} room = null; micEnabled = false; }
