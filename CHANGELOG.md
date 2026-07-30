@@ -7,7 +7,13 @@
 
 ## [Unreleased]
 
-## v1.10.1 — Geschlechtswechsel pausiert 🔧
+## v1.10.1 — Dino-Namen im Panel & Geschlechtswechsel pausiert 🏷️
+
+### ✨ Neu
+
+- **Dino benennen, direkt im Dino-Panel**: oben im Panel gibt es ein Namensfeld für deinen
+  aktiven Dino — Enter oder „Speichern" genügt. Der Name bleibt am Dino und wandert beim
+  Einparken mit in den Garagen-Slot.
 
 ### ⚠️ Vorübergehend deaktiviert
 
