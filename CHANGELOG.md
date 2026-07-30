@@ -7,6 +7,31 @@
 
 ## [Unreleased]
 
+## v1.10.1 — Dino-Namen im Panel & Geschlechtswechsel pausiert 🏷️
+
+### ✨ Neu
+
+- **Dino benennen, direkt im Dino-Panel**: oben im Panel gibt es ein Namensfeld für deinen
+  aktiven Dino — Enter oder „Speichern" genügt. Der Name bleibt am Dino und wandert beim
+  Einparken mit in den Garagen-Slot.
+
+### ⚠️ Vorübergehend deaktiviert
+
+- **Geschlechtswechsel** im Skin-Editor ist bis auf Weiteres abgeschaltet — für alle Ränge und
+  auch während eines „Free Gender Swap"-Events. Dein aktuelles Geschlecht bleibt unverändert; an
+  deinem Dino, seinen Farben und seinem Wachstum ändert sich nichts. Alles andere im Skin-Editor
+  (Farben, Muster, Variation, Rollplay-Name, Zombie-Look) funktioniert wie gehabt. Wir melden
+  uns, sobald der Geschlechtswechsel zurückkommt.
+
+### Intern
+
+- Riegel sitzt doppelt. Im Overlay ein Kill-Switch `GENDER_SWAP_DISABLED` (Buttons echt
+  `disabled`, Klick-Handler wird nicht mehr gebunden, `changeGender()` bricht zusätzlich ab), im
+  Backend das Flag `GENDER_SWAP_ENABLED` — ohne das antwortet `POST /me/gender` mit 403, auch für
+  die älteren Overlay-Versionen, die noch draußen laufen.
+- Wiederaktivieren: Konstante auf `false` **und** `GENDER_SWAP_ENABLED=1` + Neustart. Der
+  Admin-Schalter „Free Gender Swap" bleibt bestehen, ist bis dahin aber wirkungslos.
+
 ## v1.10.0 — Wandern & Server-Übersicht 🥾
 
 ### ✨ Neu

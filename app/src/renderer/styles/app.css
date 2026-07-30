@@ -498,6 +498,12 @@ body.bf-edit #growTimer, body.bf-edit #goldenHud, body.bf-edit #parkWarn, body.b
 #dinoInfo { position: relative; }
 .di-actions { display: flex; gap: 8px; justify-content: flex-end; margin: 10px 0 2px; }
 .di-btn { width: auto; flex: none; padding: 6px 13px; font-size: 12.5px; font-weight: 700; }
+/* 🏷️ Dino benennen (Dino-Panel) */
+.di-rename { display: flex; gap: 6px; align-items: center; margin: 2px 0 4px; }
+.di-name-input { flex: 1; min-width: 0; padding: 7px 10px; border-radius: 8px; border: 1px solid var(--border);
+  background: var(--input-bg, #160d28); color: #eee; font-size: 13px; }
+.di-name-input:focus { outline: none; border-color: var(--accent); }
+.di-name-save { flex: none; width: auto; padding: 7px 12px; font-size: 12px; font-weight: 700; }
 .di-slay-btn { background: linear-gradient(135deg, #ef4444, #b91c1c); box-shadow: 0 4px 14px -4px rgba(239,68,68,0.8); }
 .di-slay-btn:hover { box-shadow: 0 6px 18px -4px rgba(239,68,68,0.95), 0 0 16px rgba(239,68,68,0.5); }
 .di-entomb { background: linear-gradient(135deg, #78716c, #44403c); box-shadow: 0 4px 14px -4px rgba(120,113,108,0.75); }
