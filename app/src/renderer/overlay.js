@@ -3921,8 +3921,13 @@ async function loadServerZones() {
 }
 
 // Zentrale Kalibrierung vom Server laden (alle Clients beim Start)
+// 🔴 QUICK-FIX: Geschlechtswechsel im Skin-Editor ist vorübergehend KOMPLETT deaktiviert —
+// unabhängig von Rang und Free-Gender-Swap-Event. Zum Wiederaktivieren einzig diese Konstante
+// auf false setzen (Buttons, Tooltip und changeGender() hängen alle daran).
+const GENDER_SWAP_DISABLED = true;
 // Free-Gender-Swap-Event: server-weites Flag (Administration→Welt). Aktiv → alle dürfen kostenlos
 // das Geschlecht wechseln (Skin-Editor überspringt dann die Rang-Grenze).
+// Wirkungslos, solange GENDER_SWAP_DISABLED gesetzt ist.
 let freeGenderSwap = false;
 async function loadFreeGenderSwap() {
   try {
@@ -6224,8 +6229,14 @@ async function renderSkinEditor() {
   skinPays = !mySkinFree;                    // Free (Fossil) = gratis Live-Vorschau + „Bestätigen" zahlt; ab Knochen/Beta-Tester live & gratis
   skinConfirmed = false; skinPreviewed = false;   // neue Editier-Sitzung: nichts bestätigt/vorschau
   const obsidian = myAboIdx() >= 3;
-  const canGender = freeGenderSwap || myAboIdx() >= 2; // Event aktiv → für alle frei, sonst ab Bernstein
-  const genderTip = canGender ? 'Geschlecht wechseln (Respawn)' : '🔒 Geschlechtswechsel ist ab Rang Bernstein freigeschaltet';
+  // Quick-Fix: GENDER_SWAP_DISABLED schlägt Rang UND Event → für niemanden anklickbar.
+  const canGender = !GENDER_SWAP_DISABLED && (freeGenderSwap || myAboIdx() >= 2); // Event aktiv → für alle frei, sonst ab Bernstein
+  const genderTip = GENDER_SWAP_DISABLED
+    ? '⛔ Geschlechtswechsel ist derzeit deaktiviert'
+    : (canGender ? 'Geschlecht wechseln (Respawn)' : '🔒 Geschlechtswechsel ist ab Rang Bernstein freigeschaltet');
+  const genderNote = GENDER_SWAP_DISABLED
+    ? '<span style="color:var(--muted);font-weight:400;font-size:11px">⛔ derzeit deaktiviert</span>'
+    : (canGender ? '' : '<span style="color:var(--muted);font-weight:400;font-size:11px">🔒 ab Bernstein</span>');
   // Aktuellen Rollplay-Namen aus den Live-Positionen vorbelegen (globales `players`, NICHT das
   // hier lokal geshadowte `me`). realName ist nur gesetzt, wenn ein RP-Name aktiv ist → dann ist
   // name der RP-Name.
@@ -6245,11 +6256,12 @@ async function renderSkinEditor() {
       <button id="rpSave" style="width:auto;padding:8px 12px">💾 Speichern</button>
       <button id="rpClear" class="secondary" style="width:auto;padding:8px 12px">Zurücksetzen</button>
     </div>
-    <div class="sec-title">Geschlecht ${canGender ? '' : '<span style="color:var(--muted);font-weight:400;font-size:11px">🔒 ab Bernstein</span>'}</div>
-    <div style="display:flex;gap:6px;margin:8px 0 14px">
-      <button data-gender="Female" title="${genderTip}" style="flex:1${canGender ? '' : ';opacity:.5'}" class="${skinState.gender === 'Female' ? '' : 'secondary'}">♀ Female</button>
-      <button data-gender="Male" title="${genderTip}" style="flex:1${canGender ? '' : ';opacity:.5'}" class="${skinState.gender === 'Male' ? '' : 'secondary'}">♂ Male</button>
+    <div class="sec-title">Geschlecht ${genderNote}</div>
+    <div style="display:flex;gap:6px;margin:8px 0 ${GENDER_SWAP_DISABLED ? '4px' : '14px'}">
+      <button data-gender="Female" title="${genderTip}" ${GENDER_SWAP_DISABLED ? 'disabled' : ''} style="flex:1${canGender ? '' : ';opacity:.5'}${GENDER_SWAP_DISABLED ? ';cursor:not-allowed' : ''}" class="${skinState.gender === 'Female' ? '' : 'secondary'}">♀ Female</button>
+      <button data-gender="Male" title="${genderTip}" ${GENDER_SWAP_DISABLED ? 'disabled' : ''} style="flex:1${canGender ? '' : ';opacity:.5'}${GENDER_SWAP_DISABLED ? ';cursor:not-allowed' : ''}" class="${skinState.gender === 'Male' ? '' : 'secondary'}">♂ Male</button>
     </div>
+    ${GENDER_SWAP_DISABLED ? '<div style="font-size:11px;color:var(--muted);margin-bottom:14px">Der Geschlechtswechsel ist vorübergehend abgeschaltet. Dein aktuelles Geschlecht bleibt unverändert.</div>' : ''}
     <div class="sec-title">Farben</div>
     <div style="display:grid;grid-template-columns:1fr 1fr;gap:6px;margin:8px 0 14px">${swatches}</div>
     <div class="sec-title">Muster & Variation</div>
@@ -6289,7 +6301,7 @@ async function renderSkinEditor() {
   panel.querySelectorAll('[data-col]').forEach((inp) => inp.oninput = () => { skinState.colors[inp.dataset.col] = hexToLin(inp.value); updateSkinPreview(); onEdit(); });
   panel.querySelectorAll('[data-pat]').forEach((b) => b.onclick = () => { skinState.patternIndex = parseInt(b.dataset.pat); panel.querySelectorAll('[data-pat]').forEach((x) => x.className = x === b ? '' : 'secondary'); onEdit(); });
   el('skVar').oninput = () => { skinState.skinVariation = parseInt(el('skVar').value) || 0; onEdit(); };
-  panel.querySelectorAll('[data-gender]').forEach((b) => b.onclick = () => changeGender(b.dataset.gender, panel));
+  if (!GENDER_SWAP_DISABLED) panel.querySelectorAll('[data-gender]').forEach((b) => b.onclick = () => changeGender(b.dataset.gender, panel));
   // 🧟 Zombie-Slider (Obsidian) — debounced; sonst Upsell.
   const zin = el('skZombie');
   if (obsidian) zin.oninput = () => { el('skZombieVal').textContent = Math.round(zin.value * 100) + '%'; clearTimeout(zombieTimer); zombieTimer = setTimeout(() => setZombie(parseFloat(zin.value)), 500); };
@@ -6314,6 +6326,7 @@ async function saveRpName() {
 // Geschlecht wechseln: The Isle kann das nur per Respawn → /me/gender (selber Dino,
 // selbes Wachstum, neues Geschlecht), danach Skin erneut anwenden (Farben behalten).
 async function changeGender(gender, panel) {
+  if (GENDER_SWAP_DISABLED) { showToast('⛔ Der Geschlechtswechsel ist derzeit deaktiviert.', 'error'); return; }
   if (!skinState || skinState.gender === gender) return;
   if (!freeGenderSwap && myAboIdx() < 2) { showToast('🔒 Geschlechtswechsel gibt es ab Rang Bernstein.', 'error'); return; }
   setSkinLive('… Geschlecht wird gewechselt (Respawn)', '#f59e0b');
