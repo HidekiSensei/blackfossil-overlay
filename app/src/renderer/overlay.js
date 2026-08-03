@@ -745,6 +745,36 @@ function renderDistHud() {
   box.innerHTML = `<div class="dh-head">${head}</div>${rows}`;
 }
 
+// ── 🎗️ Paten-Rückkehr-Teleport ──────────────────────────────────────────────
+// Solange ein Pate in der Patenzone steckt, hält das Backend ein einmaliges, gratis
+// Rückkehr-Grant zur Position vor dem Eintritt (siehe internal/patenzone). Taucht hier nur auf,
+// wenn genau das gerade zutrifft — verschwindet automatisch, sobald die Zone verlassen wird
+// (Grant verfällt serverseitig) oder nach Nutzung.
+let patenReturnBusy = false;
+async function pollPatenReturn() {
+  const box = el('patenReturnHud'); if (!box) return;
+  if (!me) { box.style.display = 'none'; return; } // off-server
+  let d;
+  try { d = await svApi('GET', '/me/paten-return'); } catch { return; }
+  box.style.display = (d && d.available && !patenReturnBusy) ? 'block' : 'none';
+}
+function initPatenReturn() {
+  const btn = el('patenReturnBtn'); if (!btn) return;
+  btn.onclick = async () => {
+    if (patenReturnBusy) return;
+    patenReturnBusy = true;
+    try {
+      await svApi('POST', '/me/paten-return/use');
+      showToast('↩️ Zurückteleportiert', 'success');
+      el('patenReturnHud').style.display = 'none';
+    } catch (e) {
+      showToast(e.message, 'error');
+    } finally {
+      patenReturnBusy = false;
+    }
+  };
+}
+
 let config = { hotkeys: {} };
 let room = null;
 let micEnabled = false;
@@ -1106,6 +1136,8 @@ function startPositionPolling() {
   setInterval(updateParkWarn, 1000); // Countdown flüssig runterzählen (unabhängig vom Positions-Poll)
   setInterval(updateGoldenHud, 1000); // Golden-Timer flüssig zwischen den Polls interpolieren
   setInterval(pollDistHud, 2500);     // Wander-Distanz-HUD: plopt beim Sammeln auf, blendet bei Ruhe aus
+  initPatenReturn();
+  setInterval(pollPatenReturn, 3000); // Paten-Rückkehr-Teleport: nur sichtbar, solange ein Grant besteht
   setInterval(renderDistHud, 1000);   // flüssiges Ausblenden zwischen den Polls
 }
 
