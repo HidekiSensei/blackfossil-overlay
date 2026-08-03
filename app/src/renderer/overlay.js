@@ -673,7 +673,10 @@ function tickGrowTimer() {
 }
 
 // ── Event-Timer-Panel (server-weite Events mit Countdown) ────────────────────
-let activeEventsList = []; // [{ key, name, expiresAtMs }]
+// Zwei Eintrags-Formen: einfache enabled/expiresAtMs-Toggles (Free Gender Swap) ODER
+// Event-Gruppen mit mode:'upcoming'|'active' + startsAtMs (Terminplanung, showInOverlay).
+// { key, name, expiresAtMs } ODER { key, name, mode, startsAtMs }
+let activeEventsList = [];
 async function loadActiveEvents() {
   if (!sessionToken) return;
   try {
@@ -692,13 +695,23 @@ function fmtEventCountdown(expiresAtMs) {
   if (min >= 60) return Math.floor(min / 60) + ' Std';        // ≥ 1 Stunde
   return Math.max(1, min) + ' Min';                           // sonst Minuten (min. 1)
 }
+// Eine Zeile für einen Event-Eintrag. mode:'upcoming'/'active' (Event-Gruppen) haben Vorrang vor
+// dem alten expiresAtMs-Countdown (Free Gender Swap & Co.) — fmtEventCountdown wird für "in X"
+// wiederverwendet (gleiche Ein-Einheit-Formatierung, nur auf startsAtMs statt expiresAtMs).
+function eventRowHtml(e) {
+  const name = escapeHtml(e.name || e.key);
+  if (e.mode === 'upcoming') return `<div class="ev-row"><span class="ev-name">${name}</span><span class="ev-time">in ${fmtEventCountdown(e.startsAtMs)}</span></div>`;
+  if (e.mode === 'active') return `<div class="ev-row"><span class="ev-name">${name}</span><span class="ev-time">aktiv</span></div>`;
+  return `<div class="ev-row"><span class="ev-name">${name}</span><span class="ev-time">${fmtEventCountdown(e.expiresAtMs)}</span></div>`;
+}
 function renderEventPanel() {
   const box = el('eventPanel'); if (!box) return;
-  const evs = (activeEventsList || []).filter((e) => !e.expiresAtMs || e.expiresAtMs > Date.now()); // lokal abgelaufene raus
+  // Lokal abgelaufene raus: klassische Toggles über expiresAtMs, mode-Eintraege lässt das Backend
+  // schon nur solange geliefert, wie ends_at_ms noch nicht erreicht ist (siehe OverlayEntries).
+  const evs = (activeEventsList || []).filter((e) => e.mode || !e.expiresAtMs || e.expiresAtMs > Date.now());
   if (!evs.length) { box.style.display = 'none'; box.innerHTML = ''; return; }
   box.style.display = 'block';
-  box.innerHTML = `<div class="ev-head">🎉 Aktive Events</div>` + evs.map((e) =>
-    `<div class="ev-row"><span class="ev-name">${escapeHtml(e.name || e.key)}</span><span class="ev-time">${fmtEventCountdown(e.expiresAtMs)}</span></div>`).join('');
+  box.innerHTML = `<div class="ev-head">🎉 Aktive Events</div>` + evs.map(eventRowHtml).join('');
   ensureTimerLayout('eventPanel'); // nach display → Breite messbar (Rand-Klemmung, wie growTimer)
 }
 
@@ -743,6 +756,36 @@ function renderDistHud() {
   }).join('');
   const head = distHudState.name ? `🏷️ ${escapeHtml(distHudState.name)}` : '🐾 Wanderung';
   box.innerHTML = `<div class="dh-head">${head}</div>${rows}`;
+}
+
+// ── 🎗️ Paten-Rückkehr-Teleport ──────────────────────────────────────────────
+// Solange ein Pate in der Patenzone steckt, hält das Backend ein einmaliges, gratis
+// Rückkehr-Grant zur Position vor dem Eintritt (siehe internal/patenzone). Taucht hier nur auf,
+// wenn genau das gerade zutrifft — verschwindet automatisch, sobald die Zone verlassen wird
+// (Grant verfällt serverseitig) oder nach Nutzung.
+let patenReturnBusy = false;
+async function pollPatenReturn() {
+  const box = el('patenReturnHud'); if (!box) return;
+  if (!me) { box.style.display = 'none'; return; } // off-server
+  let d;
+  try { d = await svApi('GET', '/me/paten-return'); } catch { return; }
+  box.style.display = (d && d.available && !patenReturnBusy) ? 'block' : 'none';
+}
+function initPatenReturn() {
+  const btn = el('patenReturnBtn'); if (!btn) return;
+  btn.onclick = async () => {
+    if (patenReturnBusy) return;
+    patenReturnBusy = true;
+    try {
+      await svApi('POST', '/me/paten-return/use');
+      showToast('↩️ Zurückteleportiert', 'success');
+      el('patenReturnHud').style.display = 'none';
+    } catch (e) {
+      showToast(e.message, 'error');
+    } finally {
+      patenReturnBusy = false;
+    }
+  };
 }
 
 let config = { hotkeys: {} };
@@ -1106,6 +1149,8 @@ function startPositionPolling() {
   setInterval(updateParkWarn, 1000); // Countdown flüssig runterzählen (unabhängig vom Positions-Poll)
   setInterval(updateGoldenHud, 1000); // Golden-Timer flüssig zwischen den Polls interpolieren
   setInterval(pollDistHud, 2500);     // Wander-Distanz-HUD: plopt beim Sammeln auf, blendet bei Ruhe aus
+  initPatenReturn();
+  setInterval(pollPatenReturn, 3000); // Paten-Rückkehr-Teleport: nur sichtbar, solange ein Grant besteht
   setInterval(renderDistHud, 1000);   // flüssiges Ausblenden zwischen den Polls
 }
 
