@@ -7,6 +7,25 @@
 
 ## [Unreleased]
 
+## v1.10.2 — Patenzone & Event-Zonen 🎗️
+
+### ✨ Neu
+
+- **Patenzone**: eine neue Kartenzone nur für Paten. Betrittst du sie — egal ob zu Fuß, im
+  Flug oder per Teleport — werden Leben, Hunger, Durst und Blut eingefroren, bis du sie wieder
+  verlässt. Beim Verlassen gibt es einmalig einen kostenlosen Rückkehr-Teleport zurück zu deiner
+  Position von davor.
+- **Paten-Teleport**: ein exklusiver, kostenloser Teleportpunkt nur für Paten.
+- **Event-Zonen sichtbar**: nimmst du gerade an einer laufenden Event-Gruppe mit zugewiesener
+  Zone teil, siehst du deren Umriss jetzt auch auf deiner Karte.
+
+### Intern
+
+- Neue Permission `core.paten.perks.use.self` (Rolle "Pate") steuert Patenzone-Sichtbarkeit/
+  -Freeze und Paten-Teleport-Nutzung serverseitig; Event-Zonen-Sichtbarkeit jetzt per-Zone
+  geprüft (aktive Event-Gruppen-Mitgliedschaft), vorher kategorisch nie an den Overlay
+  ausgeliefert. Backend-Gegenstück: bf-backend!71.
+
 ## v1.10.1 — Dino-Namen im Panel & Geschlechtswechsel pausiert 🏷️
 
 ### ✨ Neu
