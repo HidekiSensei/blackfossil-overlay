@@ -13,7 +13,7 @@ const TP_COLOR_HOT = '#c084fc';
 // ── Zonen (Welt-Koordinaten, vom Server) ────────────────────────────────────
 // Mehrere benannte Zonen über 5 Typen. Array wird IN PLACE mutiert (ES-Module-
 // Live-Binding: niemals neu zuweisen). Jedes Element: { id, type, name, points }.
-export const ZONE_TYPES = ['pvp', 'pve', 'sanctuary', 'patrol', 'migration', 'patenzone'];
+export const ZONE_TYPES = ['pvp', 'pve', 'sanctuary', 'patrol', 'migration', 'patenzone', 'event'];
 export const ZONE_META = {
   pvp:       { color: '#ef4444', label: 'PvP' },
   pve:       { color: '#22c55e', label: 'PvE' },
@@ -23,6 +23,10 @@ export const ZONE_META = {
   // Patenzone: eigene Farbe, damit sie nicht mit Sanctuary/Patrol verwechselt wird — das Backend
   // liefert sie ohnehin nur dem Paten selbst aus (siehe canSeePatenzone im Backend).
   patenzone: { color: '#ec4899', label: 'Patenzone' },
+  // Event: das Backend liefert sie nur an aktive Teilnehmer der zugehörigen Event-Gruppe aus
+  // (siehe canSeeEventZone im Backend) — vorher fiel jeder unbekannte Typ auf den pvp-Fallback
+  // zurück und wurde faelschlich rot gerendert.
+  event:     { color: '#facc15', label: 'Event' },
 };
 export const ZONES = [];
 
@@ -166,6 +170,7 @@ export const ZONE_LAYERS = {
   patrol:    { visible: true, label: '🐾 Patrol' },
   migration: { visible: true, label: '🧭 Migration' },
   patenzone: { visible: true, label: '🎗️ Patenzone' },
+  event:     { visible: true, label: '🎉 Event' },
 };
 
 export function loadZoneLayer() { return Promise.resolve(true); } // No-Op (keine Bilder mehr)
@@ -173,7 +178,7 @@ export function setZoneLayer(key, on) { if (ZONE_LAYERS[key]) ZONE_LAYERS[key].v
 export function isZoneLayerVisible(key) { return !!(ZONE_LAYERS[key] && ZONE_LAYERS[key].visible); }
 
 // Typen, die nur als Umriss (ohne Name-Label, ohne Füllung) gezeichnet werden.
-const OUTLINE_TYPES = new Set(['sanctuary', 'patrol', 'migration', 'patenzone']);
+const OUTLINE_TYPES = new Set(['sanctuary', 'patrol', 'migration', 'patenzone', 'event']);
 
 // Goldene Patrol-Zone (pro Betrachter, aus /positions). Wird immer hervorgehoben gezeichnet,
 // auch wenn der Patrol-Layer ausgeblendet ist.
