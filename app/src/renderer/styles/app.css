@@ -92,6 +92,12 @@ body.bf-noblur .map-panel {
 #distHud .dh-cat { color: var(--muted); }
 #distHud .dh-val { font-weight: 700; font-variant-numeric: tabular-nums; }
 #distHud .dh-inc { color: #4ade80; font-weight: 700; font-size: 11px; }
+/* Paten-Rückkehr-Teleport: taucht nur auf, solange ein unbenutztes Rückkehr-Grant besteht. */
+#patenReturnHud { position: fixed; bottom: 90px; left: 50%; transform: translateX(-50%); z-index: 6; }
+#patenReturnHud .pr-btn { background: var(--panel); border: 1px solid var(--border); border-radius: 14px;
+  padding: 8px 14px; box-shadow: var(--glow); font-size: 12px; font-weight: 700; color: var(--accent-2);
+  cursor: pointer; white-space: nowrap; }
+#patenReturnHud .pr-btn:hover { filter: brightness(1.15); }
 /* Event-Timer-Panel: default links, etwa mittig (unter der Lebensanzeige), verschieb-/skalierbar. */
 #eventPanel { position: fixed; left: 16px; top: 45%; display: none; transform-origin: top left;
   background: var(--panel); border: 1px solid var(--border); border-radius: 14px; padding: 8px 12px;

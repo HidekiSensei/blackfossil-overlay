@@ -13,13 +13,16 @@ const TP_COLOR_HOT = '#c084fc';
 // ── Zonen (Welt-Koordinaten, vom Server) ────────────────────────────────────
 // Mehrere benannte Zonen über 5 Typen. Array wird IN PLACE mutiert (ES-Module-
 // Live-Binding: niemals neu zuweisen). Jedes Element: { id, type, name, points }.
-export const ZONE_TYPES = ['pvp', 'pve', 'sanctuary', 'patrol', 'migration'];
+export const ZONE_TYPES = ['pvp', 'pve', 'sanctuary', 'patrol', 'migration', 'patenzone'];
 export const ZONE_META = {
   pvp:       { color: '#ef4444', label: 'PvP' },
   pve:       { color: '#22c55e', label: 'PvE' },
   sanctuary: { color: '#3b82f6', label: 'Sanctuary' },
   patrol:    { color: '#a855f7', label: 'Patrol' },
   migration: { color: '#f59e0b', label: 'Migration' },
+  // Patenzone: eigene Farbe, damit sie nicht mit Sanctuary/Patrol verwechselt wird — das Backend
+  // liefert sie ohnehin nur dem Paten selbst aus (siehe canSeePatenzone im Backend).
+  patenzone: { color: '#ec4899', label: 'Patenzone' },
 };
 export const ZONES = [];
 
@@ -162,6 +165,7 @@ export const ZONE_LAYERS = {
   sanctuary: { visible: true, label: '🛡️ Sanctuary' },
   patrol:    { visible: true, label: '🐾 Patrol' },
   migration: { visible: true, label: '🧭 Migration' },
+  patenzone: { visible: true, label: '🎗️ Patenzone' },
 };
 
 export function loadZoneLayer() { return Promise.resolve(true); } // No-Op (keine Bilder mehr)
@@ -169,7 +173,7 @@ export function setZoneLayer(key, on) { if (ZONE_LAYERS[key]) ZONE_LAYERS[key].v
 export function isZoneLayerVisible(key) { return !!(ZONE_LAYERS[key] && ZONE_LAYERS[key].visible); }
 
 // Typen, die nur als Umriss (ohne Name-Label, ohne Füllung) gezeichnet werden.
-const OUTLINE_TYPES = new Set(['sanctuary', 'patrol', 'migration']);
+const OUTLINE_TYPES = new Set(['sanctuary', 'patrol', 'migration', 'patenzone']);
 
 // Goldene Patrol-Zone (pro Betrachter, aus /positions). Wird immer hervorgehoben gezeichnet,
 // auch wenn der Patrol-Layer ausgeblendet ist.
