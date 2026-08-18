@@ -7,6 +7,17 @@
 
 ## [Unreleased]
 
+## v1.11.0 — Umstieg auf das neue BlackFossil HUD 🦖
+
+### ✨ Neu
+
+- **Das alte Overlay geht in Rente.** Diese Version lädt beim Start automatisch das neue
+  **BlackFossil HUD (Overlay 2.0)** herunter, installiert es, startet es — und entfernt das
+  alte Overlay danach von selbst. Du musst nichts tun. Deine Punkte, Dinos, Skins und Token
+  sind alle da.
+- Klappt der automatische Umstieg nicht (kein Netz o. ä.), bleibt das alte Overlay installiert
+  und zeigt dir den Download-Link: https://blackfossil.de/profil
+
 ## v1.10.2 — Patenzone & Event-Zonen 🎗️
 
 ### ✨ Neu

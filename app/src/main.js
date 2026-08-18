@@ -770,7 +770,16 @@ ipcMain.on('set-interactive', (_e, interactive) => {
 });
 
 // ── App-Start ─────────────────────────────────────────────────────────────
-app.whenReady().then(() => {
+app.whenReady().then(async () => {
+  // 🦖 Umstieg auf das neue HUD (Overlay 2.0, Release 18.08.2026): diese Version des alten
+  // Overlays laedt das neue HUD, installiert es still, startet es und deinstalliert sich.
+  // Nur im gepackten Build; scheitert der Umstieg, laeuft das alte Overlay normal weiter.
+  if (app.isPackaged) {
+    try {
+      const { umstiegAusfuehren } = require('./umstieg');
+      if (await umstiegAusfuehren(TOKEN_BASE)) { isQuitting = true; app.quit(); return; }
+    } catch (e) { console.error('[umstieg]', e && e.message ? e.message : e); }
+  }
   setupAutoUpdate();
   try { createTray(); } catch (err) { console.error('Tray fehlgeschlagen:', err?.message || err); }
   startLoopbackServer();
