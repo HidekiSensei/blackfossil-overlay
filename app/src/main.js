@@ -771,15 +771,11 @@ ipcMain.on('set-interactive', (_e, interactive) => {
 
 // ── App-Start ─────────────────────────────────────────────────────────────
 app.whenReady().then(async () => {
-  // 🦖 Umstieg auf das neue HUD (Overlay 2.0, Release 18.08.2026): diese Version des alten
-  // Overlays laedt das neue HUD, installiert es still, startet es und deinstalliert sich.
-  // Nur im gepackten Build; scheitert der Umstieg, laeuft das alte Overlay normal weiter.
-  if (app.isPackaged) {
-    try {
-      const { umstiegAusfuehren } = require('./umstieg');
-      if (await umstiegAusfuehren(TOKEN_BASE)) { isQuitting = true; app.quit(); return; }
-    } catch (e) { console.error('[umstieg]', e && e.message ? e.message : e); }
-  }
+  // 🔴 UMSTIEG AUSGESETZT (19.08.2026, Owner-Entscheid): Das neue HUD ist derzeit nicht
+  // spielbar (Abstuerze mit „Out of Memory"), deshalb geht der Server vorerst auf dieses
+  // Overlay zurueck. Wuerde hier weiterhin umgestiegen, holte sich jeder, der zurueckkehrt,
+  // sofort wieder das HUD — und dieses Overlay deinstallierte sich dabei selbst.
+  // Der Code bleibt liegen (src/umstieg.js) und wird beim Re-Release wieder eingehaengt.
   setupAutoUpdate();
   try { createTray(); } catch (err) { console.error('Tray fehlgeschlagen:', err?.message || err); }
   startLoopbackServer();

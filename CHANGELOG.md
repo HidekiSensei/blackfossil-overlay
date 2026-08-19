@@ -7,6 +7,14 @@
 
 ## [Unreleased]
 
+## v1.11.1 — Overlay bleibt vorerst 🔙
+
+### 🔧 Geändert
+
+- **Der automatische Umstieg auf das neue HUD ist ausgesetzt.** Das HUD hat derzeit Abstürze, deshalb
+  bleibt vorerst dieses Overlay im Einsatz. Es installiert nichts mehr nach und entfernt sich nicht
+  mehr selbst. Sobald das HUD stabil läuft, kommt der Umstieg zurück.
+
 ## v1.11.0 — Umstieg auf das neue BlackFossil HUD 🦖
 
 ### ✨ Neu
