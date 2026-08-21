@@ -771,11 +771,19 @@ ipcMain.on('set-interactive', (_e, interactive) => {
 
 // ── App-Start ─────────────────────────────────────────────────────────────
 app.whenReady().then(async () => {
-  // 🔴 UMSTIEG AUSGESETZT (19.08.2026, Owner-Entscheid): Das neue HUD ist derzeit nicht
-  // spielbar (Abstuerze mit „Out of Memory"), deshalb geht der Server vorerst auf dieses
-  // Overlay zurueck. Wuerde hier weiterhin umgestiegen, holte sich jeder, der zurueckkehrt,
-  // sofort wieder das HUD — und dieses Overlay deinstallierte sich dabei selbst.
-  // Der Code bleibt liegen (src/umstieg.js) und wird beim Re-Release wieder eingehaengt.
+  // 🦖 Umstieg auf das neue HUD — WIEDER SCHARF seit 21.08.2026 (Owner-Entscheid nach dem
+  // Re-Release HUD 2.0.1). Am 19.08. war er ausgesetzt worden, weil das HUD mit „Out of
+  // Memory" abstuerzte; diese Ursache (Minimap-Rasterung) ist behoben und mit einer
+  // Testrunde auf dem Prod-Backend abgenommen.
+  // Ablauf: HUD-Installer laden, still installieren, HUD starten, sich selbst deinstallieren.
+  // Nur im gepackten Build; scheitert der Umstieg, laeuft dieses Overlay normal weiter —
+  // niemand soll ohne Overlay dastehen.
+  if (app.isPackaged) {
+    try {
+      const { umstiegAusfuehren } = require('./umstieg');
+      if (await umstiegAusfuehren(TOKEN_BASE)) { isQuitting = true; app.quit(); return; }
+    } catch (e) { console.error('[umstieg]', e && e.message ? e.message : e); }
+  }
   setupAutoUpdate();
   try { createTray(); } catch (err) { console.error('Tray fehlgeschlagen:', err?.message || err); }
   startLoopbackServer();

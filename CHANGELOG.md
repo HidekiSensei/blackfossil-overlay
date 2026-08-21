@@ -7,6 +7,18 @@
 
 ## [Unreleased]
 
+## v1.11.2 — Umstieg auf das neue HUD 🦖
+
+### ✨ Neu
+
+- **Der automatische Umstieg ist wieder da.** Beim nächsten Start lädt dieses Overlay das neue
+  **BlackFossil HUD 2.0.1**, installiert es, startet es — und entfernt sich danach selbst.
+  Du musst nichts tun. Deine Punkte, Dinos, Skins und Token sind alle da.
+- Die Abstürze, wegen derer der Umstieg am 19.08. ausgesetzt wurde, sind behoben (Ursache war
+  die Minimap) und mit einer Testrunde auf dem echten Server abgenommen.
+- Sollte der Umstieg schiefgehen, bleibt dieses Overlay installiert und startet normal weiter —
+  mit einem Link zum HUD zum Selbst-Laden. Niemand steht ohne Overlay da.
+
 ## v1.11.1 — Overlay bleibt vorerst 🔙
 
 ### 🔧 Geändert
